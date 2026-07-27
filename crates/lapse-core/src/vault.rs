@@ -81,11 +81,34 @@ impl VaultFile {
     }
 }
 
+/// What kind of thing an item is, which drives how the UI groups it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ItemKind {
+    #[default]
+    Login,
+    Card,
+    Note,
+}
+
+impl ItemKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Login => "login",
+            Self::Card => "card",
+            Self::Note => "note",
+        }
+    }
+}
+
 /// One stored credential.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Item {
     pub id: Uuid,
     pub name: String,
+    /// Defaulted so vaults written before kinds existed still load.
+    #[serde(default)]
+    pub kind: ItemKind,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub username: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -108,6 +131,7 @@ impl Item {
         Self {
             id: Uuid::new_v4(),
             name: name.into(),
+            kind: ItemKind::Login,
             username: None,
             password: None,
             url: None,
@@ -117,6 +141,11 @@ impl Item {
             created_at: now,
             updated_at: now,
         }
+    }
+
+    pub fn with_kind(mut self, kind: ItemKind) -> Self {
+        self.kind = kind;
+        self
     }
 
     pub fn with_username(mut self, username: impl Into<String>) -> Self {
@@ -162,6 +191,18 @@ impl Item {
                 .iter()
                 .any(|tag| tag.to_lowercase().contains(&query))
     }
+}
+
+/// Item counts by kind, for the sidebar.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VaultCounts {
+    pub total: usize,
+    pub logins: usize,
+    pub cards: usize,
+    pub notes: usize,
+    /// Items carrying a second factor. Cuts across kinds rather than being one.
+    pub authenticator: usize,
 }
 
 /// The decrypted contents of a vault.
@@ -286,6 +327,32 @@ impl UnlockedVault {
 
     pub fn items(&self) -> &[Item] {
         &self.data.items
+    }
+
+    /// Item counts by kind, for the sidebar.
+    pub fn counts(&self) -> VaultCounts {
+        let items = &self.data.items;
+        VaultCounts {
+            total: items.len(),
+            logins: items.iter().filter(|i| i.kind == ItemKind::Login).count(),
+            cards: items.iter().filter(|i| i.kind == ItemKind::Card).count(),
+            notes: items.iter().filter(|i| i.kind == ItemKind::Note).count(),
+            // Not a kind — any item can carry a second factor.
+            authenticator: items.iter().filter(|i| i.totp.is_some()).count(),
+        }
+    }
+
+    /// Audits the vault's passwords. See [`crate::health`].
+    pub fn health(&self) -> crate::health::VaultHealth {
+        crate::health::audit(&self.data.items)
+    }
+
+    /// The most recently updated items first.
+    pub fn recent(&self, limit: usize) -> Vec<&Item> {
+        let mut items: Vec<&Item> = self.data.items.iter().collect();
+        items.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+        items.truncate(limit);
+        items
     }
 
     pub fn get(&self, id: Uuid) -> Option<&Item> {

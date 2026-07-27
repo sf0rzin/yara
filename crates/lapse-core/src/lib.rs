@@ -22,15 +22,19 @@
 
 pub mod crypto;
 pub mod error;
+pub mod health;
 pub mod secret;
 pub mod totp;
 pub mod vault;
 
 pub use crypto::{KdfParams, Key, Sealed};
 pub use error::{Error, Result};
+pub use health::{Strength, VaultHealth};
 pub use secret::SecretString;
 pub use totp::{TotpAlgorithm, TotpConfig};
-pub use vault::{Item, KdfHeader, UnlockedVault, VaultData, VaultFile, FORMAT_VERSION};
+pub use vault::{
+    Item, ItemKind, KdfHeader, UnlockedVault, VaultCounts, VaultData, VaultFile, FORMAT_VERSION,
+};
 
 /// Serde helper that stores byte arrays as base64 strings, so a vault file stays
 /// readable enough to inspect and diff.
