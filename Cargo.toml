@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/lapse-core", "apps/desktop/src-tauri"]
+members = ["crates/lapse-core", "crates/lapse-broker", "apps/desktop/src-tauri"]
 
 [workspace.package]
 version = "0.1.0"
@@ -11,6 +11,7 @@ repository = "https://github.com/sf0rzin/lapse"
 
 [workspace.dependencies]
 lapse-core = { path = "crates/lapse-core" }
+lapse-broker = { path = "crates/lapse-broker" }
 
 argon2 = "0.5"
 base64 = "0.22"
@@ -32,6 +33,15 @@ sha1 = "0.10"
 sha2 = "0.10"
 subtle = "2"
 thiserror = "2"
+tokio = { version = "1", features = [
+  "io-util",
+  "macros",
+  "net",
+  "process",
+  "rt-multi-thread",
+  "sync",
+  "time",
+] }
 url = "2"
 uuid = { version = "1", features = ["v4", "serde"] }
 zeroize = { version = "1", features = ["derive"] }

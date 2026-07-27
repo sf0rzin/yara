@@ -27,32 +27,23 @@ An agent never receives a secret by default. It receives an *outcome*.
 
 Three access modes, in increasing order of exposure:
 
-### 1. Injection — the agent sees nothing
+### 1. Run — the agent sees nothing
 
 The agent asks lapse to run a command with a credential injected into the child
-process environment. lapse spawns the process; the value never crosses back.
+process environment. **The broker spawns the process itself**, so this is
+enforced rather than promised: the client receives an exit code and captured
+output, and there is no code path that returns the value to it.
 
 ```
 agent → broker: run `npm run migrate` with item "db-prod" as $DATABASE_URL
 user  → approves in the lapse window
-broker: spawns the child with the variable set, streams stdout/stderr back
+broker: spawns the child with the variable set, returns exit code and output
 ```
 
 The agent's context ends up holding the command and its output. Not the secret.
 This is the default mode and it covers most of what agents actually need.
 
-### 2. Handle — the agent sees a reference
-
-The agent receives an opaque, single-use, short-lived reference:
-
-```
-lapse://grant/01J8XZ.../field/password
-```
-
-It can pass that handle to anything lapse-aware, which resolves it at the point
-of use. The handle is worthless once used or once it expires.
-
-### 3. Reveal — the agent sees the value
+### 2. Reveal — the agent sees the value
 
 Sometimes there is no alternative. This mode exists, it requires a distinct and
 deliberately heavier confirmation, and it is recorded prominently in the audit
@@ -121,14 +112,49 @@ it without special integration:
 | --- | --- |
 | `lapse_list_items` | Names, usernames, ids. Never secrets. |
 | `lapse_run_with` | Exit code and output of a command run with the secret injected. |
-| `lapse_request_handle` | A single-use reference. |
 | `lapse_reveal` | The plaintext, after heavy confirmation. |
 
 `lapse_list_items` is deliberately unprivileged: an agent needs to be able to
 discover that `db-prod` exists in order to ask for it, and item names are not
 secrets.
 
+## Grants
+
+Approving "run the migration" should not mean answering a prompt once per query,
+so an approval can produce a grant. A grant is pinned to one item, one field,
+one requesting executable, a deadline, and a use count. There is no "always
+allow" and no way to widen a grant after the fact.
+
+Three rules are worth stating because they are the ones that would be tempting
+to relax:
+
+- **Permission to run is not permission to reveal.** A grant covering `Run` never
+  authorises `Reveal`; being allowed to *use* a password is not being allowed to
+  *see* it. Reveal always goes back to the user.
+- **Identity is the executable, not the process id.** A pid is reused and means
+  nothing across invocations. If the caller cannot be identified at all, it
+  never matches a stored grant, so it is prompted every time.
+- **Locking the vault destroys every grant.** A permission that outlived the key
+  it unlocks would be a permission with nothing behind it.
+
 ## Status
 
-Designed, not yet built. The vault and crypto layer this sits on top of is
-implemented and tested in `crates/lapse-core`.
+Built and tested, not yet wired into the desktop app:
+
+| Piece | State |
+| --- | --- |
+| Wire protocol | Done |
+| Grants: scope, expiry, use counts, revocation | Done |
+| Audit log | Done, in memory |
+| Named pipe transport | Done |
+| Caller identification | Done, Windows only |
+| Approval UI in the desktop app | Not started |
+| Client (CLI and MCP server) | Not started |
+
+Until the last two exist there is nothing for an agent to talk to. The broker is
+a tested library at this point, not a running feature.
+
+The audit log is held in memory. Persisting it belongs *inside* the encrypted
+vault — a log naming every credential an agent touched is itself sensitive, and
+writing it next to the vault in the clear would leak the shape of a vault nobody
+could otherwise read.

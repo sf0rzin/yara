@@ -1,0 +1,26 @@
+[package]
+name = "lapse-broker"
+description = "Approval-gated credential broker for AI agents"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+lapse-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+uuid.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = [
+  "Win32_Foundation",
+  "Win32_System_Pipes",
+  "Win32_System_Threading",
+] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full"] }
