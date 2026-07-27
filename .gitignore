@@ -1,0 +1,19 @@
+# Rust
+/target
+**/target
+
+# Node
+node_modules
+dist
+dist-ssr
+*.local
+
+# Editors
+.DS_Store
+.idea
+*.swp
+
+# Local vault data must never be committed
+*.lapse
+*.vault
+/local

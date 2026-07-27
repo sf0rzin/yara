@@ -1,0 +1,15 @@
+# Normalize to LF in the repository, check out native on Windows.
+* text=auto
+
+*.rs      text eol=lf
+*.ts      text eol=lf
+*.tsx     text eol=lf
+*.css     text eol=lf
+*.json    text eol=lf
+*.toml    text eol=lf
+*.md      text eol=lf
+*.html    text eol=lf
+
+*.png     binary
+*.ico     binary
+*.icns    binary

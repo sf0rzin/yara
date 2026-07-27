@@ -1,0 +1,36 @@
+[workspace]
+resolver = "2"
+members = ["crates/lapse-core", "apps/desktop/src-tauri"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.80"
+license = "MIT"
+repository = "https://github.com/sf0rzin/lapse"
+
+[workspace.dependencies]
+lapse-core = { path = "crates/lapse-core" }
+
+argon2 = "0.5"
+base64 = "0.22"
+chacha20poly1305 = "0.10"
+data-encoding = "2"
+hmac = "0.12"
+percent-encoding = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha1 = "0.10"
+sha2 = "0.10"
+subtle = "2"
+thiserror = "2"
+url = "2"
+uuid = { version = "1", features = ["v4", "serde"] }
+zeroize = { version = "1", features = ["derive"] }
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true
