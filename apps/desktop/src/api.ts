@@ -1,14 +1,18 @@
 import { invoke } from "@tauri-apps/api/core";
 
+export type ItemKind = "login" | "card" | "note";
+
 /**
- * An item as the backend hands it over: no secrets.
+ * An item as the backend hands it over.
  *
- * There is no `password` field here by design. Plaintext only crosses the IPC
- * boundary through `revealPassword`, one item at a time.
+ * There is no password field here, and that is deliberate rather than an
+ * oversight: secrets cannot reach the UI through ordinary listing, only through
+ * `revealPassword` for one named item.
  */
 export interface ItemSummary {
   id: string;
   name: string;
+  kind: ItemKind;
   username: string | null;
   url: string | null;
   tags: string[];
@@ -17,25 +21,34 @@ export interface ItemSummary {
   updatedAt: number;
 }
 
-interface RawItemSummary {
-  id: string;
-  name: string;
-  username: string | null;
-  url: string | null;
-  tags: string[];
-  has_password: boolean;
-  has_totp: boolean;
-  updated_at: number;
-}
-
 export interface TotpCode {
   code: string;
-  seconds_remaining: number;
+  secondsRemaining: number;
   period: number;
+}
+
+export interface VaultCounts {
+  total: number;
+  logins: number;
+  cards: number;
+  notes: number;
+  authenticator: number;
+}
+
+export interface ReusedGroup {
+  items: string[];
+}
+
+export interface VaultHealth {
+  weak: string[];
+  reused: ReusedGroup[];
+  missingTotp: string[];
+  itemsWithPasswords: number;
 }
 
 export interface NewItem {
   name: string;
+  kind?: ItemKind;
   username?: string | null;
   password?: string | null;
   url?: string | null;
@@ -44,17 +57,10 @@ export interface NewItem {
   tags?: string[];
 }
 
-function toItem(raw: RawItemSummary): ItemSummary {
-  return {
-    id: raw.id,
-    name: raw.name,
-    username: raw.username,
-    url: raw.url,
-    tags: raw.tags,
-    hasPassword: raw.has_password,
-    hasTotp: raw.has_totp,
-    updatedAt: raw.updated_at,
-  };
+export interface ListFilter {
+  query?: string;
+  kind?: ItemKind;
+  withTotp?: boolean;
 }
 
 export const vaultExists = () => invoke<boolean>("vault_exists");
@@ -69,10 +75,19 @@ export const unlockVault = (password: string) =>
 
 export const lockVault = () => invoke<void>("lock_vault");
 
-export const listItems = async (query = ""): Promise<ItemSummary[]> => {
-  const raw = await invoke<RawItemSummary[]>("list_items", { query });
-  return raw.map(toItem);
-};
+export const listItems = (filter: ListFilter = {}) =>
+  invoke<ItemSummary[]>("list_items", {
+    query: filter.query ?? "",
+    kind: filter.kind ?? null,
+    withTotp: filter.withTotp ?? null,
+  });
+
+export const recentItems = (limit = 5) =>
+  invoke<ItemSummary[]>("recent_items", { limit });
+
+export const vaultCounts = () => invoke<VaultCounts>("vault_counts");
+
+export const vaultHealth = () => invoke<VaultHealth>("vault_health");
 
 export const addItem = (item: NewItem) => invoke<string>("add_item", { item });
 
@@ -83,9 +98,14 @@ export const revealPassword = (id: string) =>
 
 export const totpCode = (id: string) => invoke<TotpCode>("totp_code", { id });
 
+export type Strength = "weak" | "fair" | "strong";
+
+export const estimateStrength = (password: string) =>
+  invoke<Strength>("estimate_strength", { password });
+
 /** Tauri sends command errors across as plain strings. */
 export function errorMessage(error: unknown): string {
   if (typeof error === "string") return error;
   if (error instanceof Error) return error.message;
-  return "something went wrong";
+  return "Something went wrong.";
 }

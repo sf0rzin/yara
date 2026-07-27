@@ -44,10 +44,24 @@ authentication failure rather than a cheaper attack. There is a test for that.
 Wrong password and tampered file are the same error. Callers cannot tell them
 apart.
 
+## Interface
+
+Monochrome by design. There is no accent colour anywhere in the app: hierarchy
+comes from contrast, spacing and type, and the single inverted element on any
+screen is the primary action. Six surface values, a derived text ramp, Inter,
+quiet borders.
+
+That constraint has consequences worth knowing about. With no red or green to
+reach for, danger and success are carried by wording, iconography and
+full-brightness text against muted copy — a delete needs two clicks rather than
+a red button, and password strength shows as filled segments plus a plain
+sentence. The dimmest text value used for real content holds ~4.8:1 against the
+background, above the 4.5:1 floor.
+
 ## Layout
 
 ```
-crates/lapse-core     crypto, vault format, TOTP — no UI, no I/O
+crates/lapse-core     crypto, vault format, TOTP, health checks — no UI, no I/O
 apps/desktop          Tauri v2 app (React + TypeScript frontend)
 docs/                 design notes
 ```
@@ -68,12 +82,17 @@ cargo test -p lapse-core
 cd apps/desktop && npm install && npm run tauri dev
 ```
 
+`npm run dev` on its own serves the interface in an ordinary browser against a
+fake IPC layer with invented data, which is faster to iterate on than a full
+Tauri rebuild. The mock is dev-only and cannot reach a release build.
+
 ## Status
 
-- [x] Argon2id + XChaCha20-Poly1305 core, 52 tests
+- [x] Argon2id + XChaCha20-Poly1305 core, 65 tests
 - [x] Vault format with envelope encryption and tamper detection
 - [x] TOTP (RFC 6238) verified against the RFC test vectors, `otpauth://` parsing
-- [ ] Desktop UI
+- [x] Offline password health checks: reuse, strength, missing second factors
+- [x] Desktop UI, auto-lock, clipboard that clears itself
 - [ ] Agent broker and MCP server
 - [ ] Web app
 

@@ -3,11 +3,13 @@
 //! The frontend never receives a secret as part of normal data flow. Listing
 //! items returns [`ItemSummary`], which has no password field at all, so there
 //! is no way to leak one by accident into a render, a log, or devtools. Getting
-//! a plaintext value requires an explicit, separate call.
+//! a plaintext value requires an explicit, separate call for one named item.
 
 mod state;
 
-use lapse_core::{Item, TotpConfig, UnlockedVault, VaultFile};
+use lapse_core::{
+    Item, ItemKind, Strength, TotpConfig, UnlockedVault, VaultCounts, VaultFile, VaultHealth,
+};
 use serde::{Deserialize, Serialize};
 use state::AppState;
 use tauri::{Manager, State};
@@ -15,9 +17,11 @@ use uuid::Uuid;
 
 /// An item as the frontend sees it: everything except the secrets.
 #[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ItemSummary {
     pub id: Uuid,
     pub name: String,
+    pub kind: ItemKind,
     pub username: Option<String>,
     pub url: Option<String>,
     pub tags: Vec<String>,
@@ -31,6 +35,7 @@ impl From<&Item> for ItemSummary {
         Self {
             id: item.id,
             name: item.name.clone(),
+            kind: item.kind,
             username: item.username.clone(),
             url: item.url.clone(),
             tags: item.tags.clone(),
@@ -43,6 +48,7 @@ impl From<&Item> for ItemSummary {
 
 /// A TOTP code plus how long it stays valid, so the UI can draw the countdown.
 #[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TotpCode {
     pub code: String,
     pub seconds_remaining: u64,
@@ -52,6 +58,8 @@ pub struct TotpCode {
 #[derive(Debug, Deserialize)]
 pub struct NewItem {
     pub name: String,
+    #[serde(default)]
+    pub kind: ItemKind,
     pub username: Option<String>,
     pub password: Option<String>,
     pub url: Option<String>,
@@ -105,10 +113,28 @@ fn lock_vault(state: State<'_, AppState>) {
 }
 
 #[tauri::command]
-fn list_items(state: State<'_, AppState>, query: Option<String>) -> CommandResult<Vec<ItemSummary>> {
+fn list_items(
+    state: State<'_, AppState>,
+    query: Option<String>,
+    kind: Option<ItemKind>,
+    with_totp: Option<bool>,
+) -> CommandResult<Vec<ItemSummary>> {
     state.with_vault(|vault| {
         Ok(vault
             .search(query.as_deref().unwrap_or(""))
+            .into_iter()
+            .filter(|item| kind.is_none_or(|wanted| item.kind == wanted))
+            .filter(|item| with_totp != Some(true) || item.totp.is_some())
+            .map(ItemSummary::from)
+            .collect())
+    })
+}
+
+#[tauri::command]
+fn recent_items(state: State<'_, AppState>, limit: Option<usize>) -> CommandResult<Vec<ItemSummary>> {
+    state.with_vault(|vault| {
+        Ok(vault
+            .recent(limit.unwrap_or(5))
             .into_iter()
             .map(ItemSummary::from)
             .collect())
@@ -116,15 +142,27 @@ fn list_items(state: State<'_, AppState>, query: Option<String>) -> CommandResul
 }
 
 #[tauri::command]
+fn vault_counts(state: State<'_, AppState>) -> CommandResult<VaultCounts> {
+    state.with_vault(|vault| Ok(vault.counts()))
+}
+
+#[tauri::command]
+fn vault_health(state: State<'_, AppState>) -> CommandResult<VaultHealth> {
+    state.with_vault(|vault| Ok(vault.health()))
+}
+
+#[tauri::command]
 fn add_item(state: State<'_, AppState>, item: NewItem) -> CommandResult<Uuid> {
     let totp = item
         .totp_uri
         .as_deref()
+        .filter(|uri| !uri.trim().is_empty())
         .map(TotpConfig::from_uri)
         .transpose()
         .map_err(to_message)?;
 
     let mut entry = Item::new(item.name);
+    entry.kind = item.kind;
     entry.username = item.username;
     entry.password = item.password.map(Into::into);
     entry.url = item.url;
@@ -175,6 +213,16 @@ fn totp_code(state: State<'_, AppState>, id: Uuid) -> CommandResult<TotpCode> {
     })
 }
 
+/// Rates a candidate password for the strength meter.
+///
+/// Goes through the backend rather than being reimplemented in TypeScript so
+/// the meter shown while choosing a password and the audit that later flags it
+/// as weak can never disagree.
+#[tauri::command]
+fn estimate_strength(password: String) -> Strength {
+    lapse_core::health::strength(&password)
+}
+
 #[tauri::command]
 fn change_master_password(state: State<'_, AppState>, new_password: String) -> CommandResult<()> {
     state.with_vault_mut(|vault| vault.change_password(&new_password).map_err(to_message))?;
@@ -198,10 +246,14 @@ pub fn run() {
             unlock_vault,
             lock_vault,
             list_items,
+            recent_items,
+            vault_counts,
+            vault_health,
             add_item,
             delete_item,
             reveal_password,
             totp_code,
+            estimate_strength,
             change_master_password,
         ])
         .run(tauri::generate_context!())

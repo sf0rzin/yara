@@ -1,0 +1,95 @@
+/*
+ * Design tokens.
+ *
+ * The six surface and text values come from the design. Everything else is
+ * derived from them, and the rules the design states are enforced here rather
+ * than left to each component:
+ *
+ *   - No accent colour. Hierarchy comes from contrast, spacing and type.
+ *   - No status colour either, so success and danger are expressed through
+ *     weight, placement and iconography instead of hue.
+ *   - Quiet borders: they separate, they never decorate.
+ */
+
+:root {
+  /* Surfaces, darkest to lightest. */
+  --bg: #101010;
+  --sidebar: #171717;
+  --surface: #1b1b1b;
+  --raised: #222222;
+  --border: #303030;
+
+  /* Borders come in two weights: one that reads, one that barely does. */
+  --border-strong: #3a3a3a;
+  --border-faint: #242424;
+
+  /*
+   * Text ramp derived from the #F2F2F2 anchor. --text-muted is the dimmest
+   * value used for real content: it holds ~4.8:1 against --bg, above the 4.5:1
+   * floor for body text. --text-disabled falls below that and is therefore
+   * only for decorative or genuinely inactive elements.
+   */
+  --text: #f2f2f2;
+  --text-secondary: #b0b0b0;
+  --text-muted: #858585;
+  --text-disabled: #5a5a5a;
+
+  /* The one high-contrast element on screen: the primary action. */
+  --inverse-bg: #f2f2f2;
+  --inverse-text: #101010;
+
+  /* Radius scale. The design calls for 12–28 on surfaces; controls sit below. */
+  --radius-xs: 6px;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 22px;
+  --radius-pill: 999px;
+
+  /* 4px base spacing scale. */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+
+  --font-sans: "Inter Variable", Inter, system-ui, -apple-system,
+    "Segoe UI Variable Text", "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, "Cascadia Mono", "SF Mono", Menlo, monospace;
+
+  /* Type scale. */
+  --text-display: 26px;
+  --text-lg: 15px;
+  --text-base: 13.5px;
+  --text-sm: 12.5px;
+  --text-xs: 11.5px;
+  --text-label: 10.5px;
+
+  --tracking-tight: -0.02em;
+  --tracking-label: 0.08em;
+
+  /* Motion. Quiet and quick: nothing here should draw attention to itself. */
+  --ease: cubic-bezier(0.2, 0, 0, 1);
+  --duration-fast: 120ms;
+  --duration: 160ms;
+
+  --sidebar-width: 248px;
+
+  color-scheme: dark;
+}
+
+/*
+ * The palette is fixed rather than theme-reactive. A vault is a focused,
+ * long-dwell surface and the design commits to one calm dark environment; a
+ * light variant would be a separate design pass, not a media query.
+ */
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --duration-fast: 0ms;
+    --duration: 0ms;
+  }
+}
