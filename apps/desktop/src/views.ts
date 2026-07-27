@@ -5,6 +5,7 @@ export type View =
   | { kind: "all" }
   | { kind: "recent" }
   | { kind: "security" }
+  | { kind: "agents" }
   | { kind: "authenticator" }
   | { kind: "type"; itemKind: ItemKind };
 
@@ -22,6 +23,8 @@ export function viewTitle(view: View): string {
       return "Recent";
     case "security":
       return "Security";
+    case "agents":
+      return "Agent access";
     case "authenticator":
       return "Authenticator";
     case "type":
@@ -33,6 +36,9 @@ export function viewTitle(view: View): string {
 export function viewSubtitle(view: View, counts: VaultCounts | null): string {
   if (view.kind === "security") {
     return "Password health across your vault";
+  }
+  if (view.kind === "agents") {
+    return "What programs have been allowed to use";
   }
   if (view.kind === "recent") {
     return "Most recently updated";

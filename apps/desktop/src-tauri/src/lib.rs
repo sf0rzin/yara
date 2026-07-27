@@ -5,8 +5,12 @@
 //! is no way to leak one by accident into a render, a log, or devtools. Getting
 //! a plaintext value requires an explicit, separate call for one named item.
 
+mod broker;
 mod state;
 
+use std::sync::Arc;
+
+use broker::BrokerHandle;
 use lapse_core::{
     Item, ItemKind, Strength, TotpConfig, UnlockedVault, VaultCounts, VaultFile, VaultHealth,
 };
@@ -112,17 +116,17 @@ fn to_message(error: impl std::fmt::Display) -> String {
 }
 
 #[tauri::command]
-fn vault_exists(state: State<'_, AppState>) -> bool {
+fn vault_exists(state: State<'_, Arc<AppState>>) -> bool {
     state.vault_path().exists()
 }
 
 #[tauri::command]
-fn is_unlocked(state: State<'_, AppState>) -> bool {
+fn is_unlocked(state: State<'_, Arc<AppState>>) -> bool {
     state.is_unlocked()
 }
 
 #[tauri::command]
-fn create_vault(state: State<'_, AppState>, password: String) -> CommandResult<()> {
+fn create_vault(state: State<'_, Arc<AppState>>, password: String) -> CommandResult<()> {
     if state.vault_path().exists() {
         return Err("a vault already exists at this location".into());
     }
@@ -133,7 +137,7 @@ fn create_vault(state: State<'_, AppState>, password: String) -> CommandResult<(
 }
 
 #[tauri::command]
-fn unlock_vault(state: State<'_, AppState>, password: String) -> CommandResult<()> {
+fn unlock_vault(state: State<'_, Arc<AppState>>, password: String) -> CommandResult<()> {
     let bytes = std::fs::read(state.vault_path()).map_err(to_message)?;
     let file = VaultFile::from_bytes(&bytes).map_err(to_message)?;
     let vault = UnlockedVault::open(&file, &password).map_err(to_message)?;
@@ -142,14 +146,19 @@ fn unlock_vault(state: State<'_, AppState>, password: String) -> CommandResult<(
 }
 
 /// Drops the vault, which zeroizes the vault key.
+///
+/// Also tears down agent access: outstanding approval prompts are abandoned and
+/// every grant is destroyed, since a permission that outlives the key behind it
+/// is a permission to nothing.
 #[tauri::command]
-fn lock_vault(state: State<'_, AppState>) {
+fn lock_vault(state: State<'_, Arc<AppState>>, broker: State<'_, BrokerHandle>) {
     state.clear();
+    broker.on_lock();
 }
 
 #[tauri::command]
 fn list_items(
-    state: State<'_, AppState>,
+    state: State<'_, Arc<AppState>>,
     query: Option<String>,
     kind: Option<ItemKind>,
     with_totp: Option<bool>,
@@ -166,7 +175,7 @@ fn list_items(
 }
 
 #[tauri::command]
-fn recent_items(state: State<'_, AppState>, limit: Option<usize>) -> CommandResult<Vec<ItemSummary>> {
+fn recent_items(state: State<'_, Arc<AppState>>, limit: Option<usize>) -> CommandResult<Vec<ItemSummary>> {
     state.with_vault(|vault| {
         Ok(vault
             .recent(limit.unwrap_or(5))
@@ -177,18 +186,18 @@ fn recent_items(state: State<'_, AppState>, limit: Option<usize>) -> CommandResu
 }
 
 #[tauri::command]
-fn vault_counts(state: State<'_, AppState>) -> CommandResult<VaultCounts> {
+fn vault_counts(state: State<'_, Arc<AppState>>) -> CommandResult<VaultCounts> {
     state.with_vault(|vault| Ok(vault.counts()))
 }
 
 #[tauri::command]
-fn vault_health(state: State<'_, AppState>) -> CommandResult<VaultHealth> {
+fn vault_health(state: State<'_, Arc<AppState>>) -> CommandResult<VaultHealth> {
     state.with_vault(|vault| Ok(vault.health()))
 }
 
 /// Reads a two-factor QR code from an image file.
 #[tauri::command]
-fn scan_qr_from_path(state: State<'_, AppState>, path: String) -> CommandResult<TotpPreview> {
+fn scan_qr_from_path(state: State<'_, Arc<AppState>>, path: String) -> CommandResult<TotpPreview> {
     let bytes = std::fs::read(&path).map_err(|_| "could not read that file".to_string())?;
     let config = lapse_core::qr::decode_enrollment(&bytes).map_err(to_message)?;
 
@@ -204,7 +213,7 @@ fn scan_qr_from_path(state: State<'_, AppState>, path: String) -> CommandResult<
 #[tauri::command]
 fn scan_qr_from_clipboard(
     app: tauri::AppHandle,
-    state: State<'_, AppState>,
+    state: State<'_, Arc<AppState>>,
 ) -> CommandResult<TotpPreview> {
     use tauri_plugin_clipboard_manager::ClipboardExt;
 
@@ -224,12 +233,12 @@ fn scan_qr_from_clipboard(
 
 /// Discards a scanned enrollment the user decided not to keep.
 #[tauri::command]
-fn clear_scanned_totp(state: State<'_, AppState>) {
+fn clear_scanned_totp(state: State<'_, Arc<AppState>>) {
     state.clear_pending_totp();
 }
 
 #[tauri::command]
-fn add_item(state: State<'_, AppState>, item: NewItem) -> CommandResult<Uuid> {
+fn add_item(state: State<'_, Arc<AppState>>, item: NewItem) -> CommandResult<Uuid> {
     let totp = if item.use_scanned_totp {
         let scanned = state.take_pending_totp();
         if scanned.is_none() {
@@ -260,7 +269,7 @@ fn add_item(state: State<'_, AppState>, item: NewItem) -> CommandResult<Uuid> {
 }
 
 #[tauri::command]
-fn delete_item(state: State<'_, AppState>, id: Uuid) -> CommandResult<()> {
+fn delete_item(state: State<'_, Arc<AppState>>, id: Uuid) -> CommandResult<()> {
     state.with_vault_mut(|vault| vault.remove(id).map(|_| ()).map_err(to_message))?;
     state.save()
 }
@@ -270,7 +279,7 @@ fn delete_item(state: State<'_, AppState>, id: Uuid) -> CommandResult<()> {
 /// Separate from [`list_items`] on purpose: a secret only crosses the IPC
 /// boundary when the user has asked for that specific one.
 #[tauri::command]
-fn reveal_password(state: State<'_, AppState>, id: Uuid) -> CommandResult<String> {
+fn reveal_password(state: State<'_, Arc<AppState>>, id: Uuid) -> CommandResult<String> {
     state.with_vault(|vault| {
         let item = vault.get(id).ok_or_else(|| format!("item {id} not found"))?;
         item.password
@@ -281,7 +290,7 @@ fn reveal_password(state: State<'_, AppState>, id: Uuid) -> CommandResult<String
 }
 
 #[tauri::command]
-fn totp_code(state: State<'_, AppState>, id: Uuid) -> CommandResult<TotpCode> {
+fn totp_code(state: State<'_, Arc<AppState>>, id: Uuid) -> CommandResult<TotpCode> {
     state.with_vault(|vault| {
         let item = vault.get(id).ok_or_else(|| format!("item {id} not found"))?;
         let totp = item
@@ -308,9 +317,114 @@ fn estimate_strength(password: String) -> Strength {
 }
 
 #[tauri::command]
-fn change_master_password(state: State<'_, AppState>, new_password: String) -> CommandResult<()> {
+fn change_master_password(state: State<'_, Arc<AppState>>, new_password: String) -> CommandResult<()> {
     state.with_vault_mut(|vault| vault.change_password(&new_password).map_err(to_message))?;
     state.save()
+}
+
+/// A live grant, as the "Agent access" screen shows it.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GrantView {
+    pub id: Uuid,
+    pub item: String,
+    pub field: String,
+    pub program: String,
+    /// `run` or `reveal`.
+    pub scope: String,
+    pub seconds_remaining: u64,
+    pub remaining_uses: u32,
+}
+
+/// One line of the audit log.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuditView {
+    pub id: Uuid,
+    pub at: u64,
+    pub program: String,
+    pub item: String,
+    pub summary: String,
+    pub reason: String,
+    pub allowed: bool,
+    /// Worth the user's attention: a reveal, or anything refused.
+    pub notable: bool,
+}
+
+#[tauri::command]
+fn list_grants(broker: State<'_, BrokerHandle>) -> Vec<GrantView> {
+    broker
+        .broker
+        .live_grants(lapse_broker::now())
+        .into_iter()
+        .map(|grant| GrantView {
+            id: grant.id,
+            item: grant.item_name.clone(),
+            field: grant.field.as_str().to_string(),
+            program: grant.client.display_name(),
+            scope: match grant.scope {
+                lapse_broker::Scope::Run => "run".into(),
+                lapse_broker::Scope::Reveal => "reveal".into(),
+            },
+            seconds_remaining: grant.seconds_remaining(lapse_broker::now()),
+            remaining_uses: grant.remaining_uses(),
+        })
+        .collect()
+}
+
+#[tauri::command]
+fn revoke_grant(broker: State<'_, BrokerHandle>, id: Uuid) -> bool {
+    broker.broker.revoke(id)
+}
+
+#[tauri::command]
+fn audit_entries(broker: State<'_, BrokerHandle>, limit: Option<usize>) -> Vec<AuditView> {
+    broker
+        .broker
+        .recent_audit(limit.unwrap_or(50))
+        .into_iter()
+        .map(|entry| {
+            let summary = match &entry.action {
+                lapse_broker::Action::Listed { matches } => {
+                    format!("listed {matches} items")
+                }
+                lapse_broker::Action::Ran { command, env_var } => {
+                    format!("ran `{command}` with ${env_var}")
+                }
+                lapse_broker::Action::Revealed => "revealed the plaintext".to_string(),
+            };
+
+            AuditView {
+                id: entry.id,
+                at: entry.at,
+                program: entry.client.display_name(),
+                item: entry.item.clone(),
+                summary,
+                reason: entry.reason.clone(),
+                allowed: entry.outcome.was_allowed(),
+                notable: entry.action.is_notable() || !entry.outcome.was_allowed(),
+            }
+        })
+        .collect()
+}
+
+/// Delivers the user's answer to a waiting agent request.
+#[tauri::command]
+fn resolve_approval(
+    broker: State<'_, BrokerHandle>,
+    id: Uuid,
+    choice: String,
+    minutes: Option<u64>,
+) -> CommandResult<()> {
+    let decision = broker::decision_from(&choice, minutes)
+        .ok_or_else(|| format!("unrecognised choice {choice:?}"))?;
+
+    // A request that is no longer waiting has already timed out; saying so is
+    // better than silently doing nothing.
+    if !broker.approver.resolve(id, decision) {
+        return Err("that request is no longer waiting for an answer".into());
+    }
+    Ok(())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -322,7 +436,10 @@ pub fn run() {
         .setup(|app| {
             let dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&dir)?;
-            app.manage(AppState::new(dir.join("vault.lapse")));
+
+            let state = Arc::new(AppState::new(dir.join("vault.lapse")));
+            app.manage(Arc::clone(&state));
+            app.manage(broker::start(app.handle(), state));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -344,6 +461,10 @@ pub fn run() {
             totp_code,
             estimate_strength,
             change_master_password,
+            list_grants,
+            revoke_grant,
+            audit_entries,
+            resolve_approval,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

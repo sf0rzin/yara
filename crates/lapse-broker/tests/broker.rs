@@ -279,14 +279,34 @@ async fn a_standing_grant_stops_the_prompts() {
     });
     let broker = broker_with(FakeVault::new(), user.clone());
 
+    // Uses run rather than reveal: reveal deliberately never earns a standing
+    // grant, so a reveal here would pass for the wrong reason.
     for _ in 0..3 {
-        assert!(matches!(
-            broker.handle(reveal("db-prod"), &client()).await,
-            Response::Revealed { .. }
-        ));
+        broker
+            .handle(run("db-prod", "cmd", &["/C", "exit"]), &client())
+            .await;
     }
 
     assert_eq!(user.times_asked(), 1, "only the first should prompt");
+}
+
+#[tokio::test]
+async fn a_reveal_never_earns_a_standing_grant() {
+    // The user asked for a fifteen minute window; reveal does not get one.
+    let user = ScriptedUser::new(Decision::AllowFor {
+        seconds: 900,
+        uses: 10,
+    });
+    let broker = broker_with(FakeVault::new(), user.clone());
+
+    broker.handle(reveal("db-prod"), &client()).await;
+    broker.handle(reveal("db-prod"), &client()).await;
+
+    assert_eq!(
+        user.times_asked(),
+        2,
+        "each disclosure must be its own decision"
+    );
 }
 
 #[tokio::test]
@@ -324,14 +344,15 @@ async fn another_program_cannot_ride_on_an_existing_grant() {
     });
     let broker = broker_with(FakeVault::new(), user.clone());
 
-    broker.handle(reveal("db-prod"), &client()).await;
+    let request = run("db-prod", "cmd", &["/C", "exit"]);
+    broker.handle(request.clone(), &client()).await;
     assert_eq!(user.times_asked(), 1);
 
     let other = ClientId {
         pid: 999,
         executable: Some("C:\\tmp\\something-else.exe".into()),
     };
-    broker.handle(reveal("db-prod"), &other).await;
+    broker.handle(request, &other).await;
     assert_eq!(user.times_asked(), 2);
 }
 
@@ -343,12 +364,13 @@ async fn locking_the_vault_invalidates_outstanding_grants() {
     });
     let broker = broker_with(FakeVault::new(), user.clone());
 
-    broker.handle(reveal("db-prod"), &client()).await;
+    let request = run("db-prod", "cmd", &["/C", "exit"]);
+    broker.handle(request.clone(), &client()).await;
     assert_eq!(user.times_asked(), 1);
 
     broker.forget_grants();
 
-    broker.handle(reveal("db-prod"), &client()).await;
+    broker.handle(request, &client()).await;
     assert_eq!(user.times_asked(), 2);
 }
 
@@ -435,7 +457,9 @@ async fn granted_access_shows_up_as_a_live_grant() {
         }),
     );
 
-    broker.handle(reveal("db-prod"), &client()).await;
+    broker
+        .handle(run("db-prod", "cmd", &["/C", "exit"]), &client())
+        .await;
 
     let grants = broker.live_grants(lapse_broker::now());
     assert_eq!(grants.len(), 1);
@@ -452,11 +476,12 @@ async fn revoking_a_grant_makes_the_next_request_prompt_again() {
     });
     let broker = broker_with(FakeVault::new(), user.clone());
 
-    broker.handle(reveal("db-prod"), &client()).await;
+    let request = run("db-prod", "cmd", &["/C", "exit"]);
+    broker.handle(request.clone(), &client()).await;
     let grant = broker.live_grants(lapse_broker::now())[0].id;
     assert!(broker.revoke(grant));
 
-    broker.handle(reveal("db-prod"), &client()).await;
+    broker.handle(request, &client()).await;
     assert_eq!(user.times_asked(), 2);
 }
 

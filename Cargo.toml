@@ -1,6 +1,11 @@
 [workspace]
 resolver = "2"
-members = ["crates/lapse-core", "crates/lapse-broker", "apps/desktop/src-tauri"]
+members = [
+  "crates/lapse-core",
+  "crates/lapse-broker",
+  "crates/lapse-cli",
+  "apps/desktop/src-tauri",
+]
 
 [workspace.package]
 version = "0.1.0"

@@ -17,6 +17,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+lapse-broker.workspace = true
 lapse-core.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -24,4 +25,5 @@ tauri = { version = "2", features = [] }
 tauri-plugin-clipboard-manager = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-opener = "2"
+tokio.workspace = true
 uuid.workspace = true

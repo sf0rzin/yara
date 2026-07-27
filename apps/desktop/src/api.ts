@@ -83,6 +83,56 @@ export const scanQrFromClipboard = () =>
 
 export const clearScannedTotp = () => invoke<void>("clear_scanned_totp");
 
+/** An agent is asking for a credential and the answer is yours. */
+export interface ApprovalPrompt {
+  id: string;
+  program: string;
+  programPath: string | null;
+  pid: number;
+  item: string;
+  field: string;
+  mode: "run" | "reveal";
+  command: string | null;
+  envVar: string | null;
+  reason: string;
+}
+
+export interface Grant {
+  id: string;
+  item: string;
+  field: string;
+  program: string;
+  scope: "run" | "reveal";
+  secondsRemaining: number;
+  remainingUses: number;
+}
+
+export interface AuditEntry {
+  id: string;
+  at: number;
+  program: string;
+  item: string;
+  summary: string;
+  reason: string;
+  allowed: boolean;
+  notable: boolean;
+}
+
+export type ApprovalChoice = "deny" | "once" | "window";
+
+export const resolveApproval = (
+  id: string,
+  choice: ApprovalChoice,
+  minutes?: number,
+) => invoke<void>("resolve_approval", { id, choice, minutes: minutes ?? null });
+
+export const listGrants = () => invoke<Grant[]>("list_grants");
+
+export const revokeGrant = (id: string) => invoke<boolean>("revoke_grant", { id });
+
+export const auditEntries = (limit = 50) =>
+  invoke<AuditEntry[]>("audit_entries", { limit });
+
 export interface ListFilter {
   query?: string;
   kind?: ItemKind;

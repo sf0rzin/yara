@@ -585,6 +585,52 @@
   line-height: 1.6;
 }
 
+/* ------------------------------------------------------- agent access */
+
+.grant,
+.audit {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-2);
+  border-radius: var(--radius-xs);
+}
+
+.grant__text,
+.audit__text {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.grant__title,
+.audit__line {
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+}
+
+.grant__sub,
+.audit__sub {
+  color: var(--text-disabled);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.audit {
+  color: var(--text-disabled);
+}
+
+/* Reveals and refusals are the entries worth spotting in a long list, and
+   brightness is the only channel available for saying so. */
+.audit[data-notable] {
+  color: var(--text-secondary);
+}
+
+.audit[data-notable] .audit__line {
+  color: var(--text);
+}
+
 /* ---------------------------------------------------------------- dialog */
 
 .overlay {
@@ -634,6 +680,119 @@
   justify-content: flex-end;
   gap: var(--space-2);
   margin-top: var(--space-2);
+}
+
+/* Sits above the item dialog: an agent is blocked on this answer. */
+.overlay--front {
+  z-index: 10;
+  background: rgb(0 0 0 / 0.72);
+}
+
+.approval {
+  max-width: 460px;
+  gap: var(--space-5);
+}
+
+.approval__head {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+}
+
+.approval__mark {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 34px;
+  height: 34px;
+  background: var(--raised);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+}
+
+.approval__pid {
+  margin-top: 3px;
+  color: var(--text-disabled);
+  font-size: var(--text-xs);
+  word-break: break-all;
+}
+
+.approval__facts {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin: 0;
+  padding: var(--space-4);
+  background: var(--bg);
+  border-radius: var(--radius-md);
+}
+
+.approval__facts > div {
+  display: flex;
+  gap: var(--space-4);
+}
+
+.approval__facts dt {
+  flex-shrink: 0;
+  width: 78px;
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}
+
+.approval__facts dd {
+  margin: 0;
+  min-width: 0;
+  font-size: var(--text-sm);
+  word-break: break-word;
+}
+
+.approval__command {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+
+/* The reason is written by the requesting program. Presented as a quotation
+   attributed to it, never as something lapse is asserting. */
+.approval__reason {
+  padding-left: var(--space-4);
+  border-left: 2px solid var(--border);
+}
+
+.approval__reason-label {
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}
+
+.approval__reason-text {
+  margin-top: var(--space-1);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  word-break: break-word;
+}
+
+.approval__consequence {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  line-height: 1.55;
+}
+
+.approval__actions {
+  display: flex;
+  gap: var(--space-2);
+}
+
+/* Deny is the inverted button. In a palette with no accent colour the inverted
+   element is what the hand reaches for, so it goes to the safe answer. */
+.approval__actions .button--primary {
+  flex: 1;
+}
+
+.approval__actions .button--quiet {
+  border: 1px solid var(--border-faint);
 }
 
 .segmented {

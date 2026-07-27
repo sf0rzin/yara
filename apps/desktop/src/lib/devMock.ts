@@ -231,12 +231,136 @@ const handlers: Record<string, (args: Record<string, unknown>) => unknown> = {
     sampleCode: "482915",
   }),
   clear_scanned_totp: () => undefined,
+
+  list_grants: () => [
+    {
+      id: "g1",
+      item: "AWS Console",
+      field: "password",
+      program: "claude.exe",
+      scope: "run",
+      secondsRemaining: 540,
+      remainingUses: 4,
+    },
+  ],
+  revoke_grant: () => true,
+  audit_entries: () => [
+    {
+      id: "a1",
+      at: Math.floor(Date.now() / 1000) - 30,
+      program: "claude.exe",
+      item: "AWS Console",
+      summary: "ran `terraform apply` with $AWS_SECRET_ACCESS_KEY",
+      reason: "apply the staging plan",
+      allowed: true,
+      notable: false,
+    },
+    {
+      id: "a2",
+      at: Math.floor(Date.now() / 1000) - 900,
+      program: "claude.exe",
+      item: "Stripe",
+      summary: "revealed the plaintext",
+      reason: "paste into a config file",
+      allowed: true,
+      notable: true,
+    },
+    {
+      id: "a3",
+      at: Math.floor(Date.now() / 1000) - 3600,
+      program: "unknown.exe",
+      item: "GitHub",
+      summary: "revealed the plaintext",
+      reason: "sync repositories",
+      allowed: false,
+      notable: true,
+    },
+  ],
+  resolve_approval: () => undefined,
+};
+
+/**
+ * Minimal stand-in for Tauri's event plumbing.
+ *
+ * Enough for `listen` to work, plus a hook so an approval prompt can be fired
+ * by hand from the console — that dialog is the most consequential screen in
+ * the app and iterating on it should not require a full rebuild.
+ */
+interface Registration {
+  event: string;
+  handler: (event: unknown) => void;
+}
+
+let nextEventId = 1;
+const listeners = new Map<number, Registration>();
+
+function registerListener(args: Record<string, unknown>): number {
+  const id = nextEventId++;
+  listeners.set(id, {
+    event: String(args.event),
+    handler: args.handler as (event: unknown) => void,
+  });
+  return id;
+}
+
+/**
+ * Unregistering has to actually unregister.
+ *
+ * React's strict mode mounts effects twice, so a mock that ignores this ends up
+ * with two listeners and delivers every event twice — which looks exactly like
+ * an application bug and is not one.
+ */
+function unregisterListener(args: Record<string, unknown>): void {
+  listeners.delete(Number(args.eventId));
+}
+
+function emit(event: string, payload: unknown): void {
+  for (const registration of listeners.values()) {
+    if (registration.event === event) {
+      registration.handler({ event, id: 0, payload });
+    }
+  }
+}
+
+const SAMPLE_PROMPTS: Record<string, unknown> = {
+  run: {
+    id: "p-run",
+    program: "claude.exe",
+    programPath: "C:\\Users\\anthony\\AppData\\Local\\Programs\\claude\\claude.exe",
+    pid: 21804,
+    item: "AWS Console",
+    field: "password",
+    mode: "run",
+    command: "terraform apply -auto-approve",
+    envVar: "AWS_SECRET_ACCESS_KEY",
+    reason: "apply the staging plan I just showed you",
+  },
+  reveal: {
+    id: "p-reveal",
+    program: "unknown.exe",
+    programPath: null,
+    pid: 9931,
+    item: "Stripe",
+    field: "password",
+    mode: "reveal",
+    command: null,
+    envVar: null,
+    reason: "I need to read it to continue",
+  },
 };
 
 export function installDevMock(): void {
   Object.defineProperty(window, "__TAURI_INTERNALS__", {
     value: {
       invoke: (command: string, args: Record<string, unknown> = {}) => {
+        if (command === "plugin:event|listen") {
+          return Promise.resolve(registerListener(args));
+        }
+        if (command === "plugin:event|unlisten") {
+          unregisterListener(args);
+          return Promise.resolve(undefined);
+        }
+
         const handler = handlers[command];
         if (!handler) {
           return Promise.reject(`mock: no handler for ${command}`);
@@ -245,6 +369,13 @@ export function installDevMock(): void {
       },
       transformCallback: (callback: unknown) => callback,
     },
+    configurable: true,
+  });
+
+  // In the browser console: __lapseApproval("run") or __lapseApproval("reveal")
+  Object.defineProperty(window, "__lapseApproval", {
+    value: (kind: "run" | "reveal" = "run") =>
+      emit("broker://approval", SAMPLE_PROMPTS[kind]),
     configurable: true,
   });
 }

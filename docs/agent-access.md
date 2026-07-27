@@ -137,9 +137,26 @@ to relax:
 - **Locking the vault destroys every grant.** A permission that outlived the key
   it unlocks would be a permission with nothing behind it.
 
-## Status
+## Using it
 
-Built and tested, not yet wired into the desktop app:
+The broker runs inside the lapse app. Point an agent at the `lapse` command:
+
+```bash
+lapse run --item db-prod --env DATABASE_URL --reason "run the migration" -- npm run migrate
+```
+
+The lapse window comes forward and asks. On approval the broker spawns `npm run
+migrate` with `DATABASE_URL` set, and the agent gets the output — not the value.
+
+```bash
+lapse list
+lapse get --item db-prod --reason "paste into a config file"
+```
+
+`list` needs no approval and returns no secrets. `get` prints plaintext and asks
+every single time.
+
+## Status
 
 | Piece | State |
 | --- | --- |
@@ -148,11 +165,13 @@ Built and tested, not yet wired into the desktop app:
 | Audit log | Done, in memory |
 | Named pipe transport | Done |
 | Caller identification | Done, Windows only |
-| Approval UI in the desktop app | Not started |
-| Client (CLI and MCP server) | Not started |
+| Approval prompt and the Agent access screen | Done |
+| `lapse` command line client | Done |
+| MCP server | Not started |
+| macOS and Linux | Not started |
 
-Until the last two exist there is nothing for an agent to talk to. The broker is
-a tested library at this point, not a running feature.
+An agent that speaks MCP has to shell out to `lapse` for now. A native MCP
+server is the obvious next step, and the protocol is already shaped for it.
 
 The audit log is held in memory. Persisting it belongs *inside* the encrypted
 vault — a log naming every credential an agent touched is itself sensitive, and

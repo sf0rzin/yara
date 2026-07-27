@@ -63,6 +63,7 @@ background, above the 4.5:1 floor.
 ```
 crates/lapse-core     crypto, vault format, TOTP, health checks — no UI, no I/O
 crates/lapse-broker   approval-gated credential access for agents
+crates/lapse-cli      the `lapse` command an agent runs
 apps/desktop          Tauri v2 app (React + TypeScript frontend)
 docs/                 design notes
 ```
@@ -96,7 +97,9 @@ Tauri rebuild. The mock is dev-only and cannot reach a release build.
 - [x] Offline password health checks: reuse, strength, missing second factors
 - [x] Desktop UI, auto-lock, clipboard that clears itself
 - [x] Agent broker: protocol, grants, audit log, named pipe transport
-- [ ] Approval UI, and a client for agents to talk to
+- [x] Approval prompt, permissions screen, and the `lapse` command line client
+- [ ] MCP server, so agents do not have to shell out
+- [ ] macOS and Linux
 - [ ] Web app
 
 ## License

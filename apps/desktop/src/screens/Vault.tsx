@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type JSX } from "react";
 import {
   errorMessage,
+  listGrants,
   listItems,
   lockVault,
   recentItems,
@@ -10,6 +11,9 @@ import {
   type VaultCounts,
   type VaultHealth,
 } from "../api";
+import type { ApprovalPrompt } from "../api";
+import { AgentAccess } from "../components/AgentAccess";
+import { ApprovalDialog } from "../components/ApprovalDialog";
 import { Icon } from "../components/Icon";
 import { ItemDetail } from "../components/ItemDetail";
 import { ItemRow } from "../components/ItemRow";
@@ -37,6 +41,8 @@ export function Vault({ onLock }: VaultProps): JSX.Element {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [approvals, setApprovals] = useState<ApprovalPrompt[]>([]);
+  const [grantCount, setGrantCount] = useState(0);
 
   const searchRef = useRef<HTMLInputElement>(null);
 
@@ -49,6 +55,12 @@ export function Vault({ onLock }: VaultProps): JSX.Element {
 
   const refresh = useCallback(async () => {
     try {
+      // Grants are fetched separately: failing to reach the broker should not
+      // stop the vault from rendering.
+      listGrants()
+        .then((grants) => setGrantCount(grants.length))
+        .catch(() => setGrantCount(0));
+
       const [nextItems, nextRecent, nextCounts, nextHealth] = await Promise.all([
         listItems({
           query,
@@ -73,6 +85,32 @@ export function Vault({ onLock }: VaultProps): JSX.Element {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  // Agent requests arrive from the broker at any moment. They queue rather than
+  // replace one another, so a second request cannot displace a prompt the user
+  // is halfway through reading.
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        const { listen } = await import("@tauri-apps/api/event");
+        const stop = await listen<ApprovalPrompt>("broker://approval", (event) => {
+          setApprovals((queue) => [...queue, event.payload]);
+        });
+        if (cancelled) stop();
+        else unlisten = stop;
+      } catch {
+        // Outside Tauri there is no broker to listen to.
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, []);
 
   // Ctrl/Cmd+K jumps to search, as advertised in the sidebar.
   useEffect(() => {
@@ -168,7 +206,9 @@ export function Vault({ onLock }: VaultProps): JSX.Element {
         )}
 
         <div className="main__body">
-          {view.kind === "security" ? (
+          {view.kind === "agents" ? (
+            <AgentAccess />
+          ) : view.kind === "security" ? (
             health && (
               <SecurityView
                 health={health}
@@ -180,9 +220,11 @@ export function Vault({ onLock }: VaultProps): JSX.Element {
             <Overview
               recent={recent}
               health={health}
+              grantCount={grantCount}
               selectedId={selectedId}
               onSelect={setSelectedId}
               onOpenSecurity={() => setView({ kind: "security" })}
+              onOpenAgents={() => setView({ kind: "agents" })}
             />
           ) : (
             <ItemList
@@ -215,6 +257,16 @@ export function Vault({ onLock }: VaultProps): JSX.Element {
           }}
         />
       )}
+
+      {/* Drawn last so it sits above everything: an agent is blocked waiting
+          on this answer, and it must not end up behind another dialog. */}
+      {approvals.length > 0 && (
+        <ApprovalDialog
+          key={approvals[0].id}
+          prompt={approvals[0]}
+          onSettled={() => setApprovals((queue) => queue.slice(1))}
+        />
+      )}
     </div>
   );
 }
@@ -222,18 +274,27 @@ export function Vault({ onLock }: VaultProps): JSX.Element {
 function Overview({
   recent,
   health,
+  grantCount,
   selectedId,
   onSelect,
   onOpenSecurity,
+  onOpenAgents,
 }: {
   recent: ItemSummary[];
   health: VaultHealth | null;
+  grantCount: number;
   selectedId: string | null;
   onSelect: (id: string) => void;
   onOpenSecurity: () => void;
+  onOpenAgents: () => void;
 }): JSX.Element {
   const clean = health !== null && isClean(health);
   const affected = health ? affectedItemCount(health) : 0;
+
+  const agentSummary =
+    grantCount === 0
+      ? "No program currently holds permission to use anything."
+      : `${grantCount} active permission${grantCount === 1 ? "" : "s"}.`;
 
   return (
     <>
@@ -267,17 +328,16 @@ function Overview({
             <span className="card__action">Review security</span>
           </button>
 
-          <div className="card card--static">
+          <button type="button" className="card" onClick={onOpenAgents}>
             <span className="card__head">
               <Icon name="sparkle" size={15} />
-              AI access
+              Agent access
             </span>
             <span className="card__body">
-              Not yet available. Agents will request credentials here, and
-              nothing is released without your approval.
+              {agentSummary}
             </span>
-            <span className="card__action card__action--muted">In development</span>
-          </div>
+            <span className="card__action">Manage permissions</span>
+          </button>
         </div>
       </section>
     </>

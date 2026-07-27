@@ -244,6 +244,15 @@ impl Broker {
             Scope::Run
         };
 
+        // Revealing plaintext never earns a standing grant, however the request
+        // was answered. Once the value is out there is no technical limit on
+        // what happens to it, so each disclosure is its own decision. Enforced
+        // here rather than by omitting a button, so no interface can widen it.
+        let decision = match decision {
+            Decision::AllowFor { .. } if access.intent.is_reveal() => Decision::AllowOnce,
+            other => other,
+        };
+
         let grant = match decision {
             Decision::Deny => return Err(Refusal::Denied),
             Decision::AllowOnce => {

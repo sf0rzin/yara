@@ -37,6 +37,7 @@ export function Sidebar({
     { view: { kind: "all" }, label: "All items", icon: "allItems" },
     { view: { kind: "recent" }, label: "Recent", icon: "recent" },
     { view: { kind: "security" }, label: "Security", icon: "security" },
+    { view: { kind: "agents" }, label: "Agent access", icon: "sparkle" },
   ];
 
   const types: NavEntry[] = [
