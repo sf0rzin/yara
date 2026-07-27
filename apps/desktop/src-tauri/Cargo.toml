@@ -1,0 +1,25 @@
+[package]
+name = "lapse-desktop"
+description = "lapse desktop application"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+# The `_lib` suffix keeps the library name distinct from the binary name, which
+# would otherwise collide on Windows.
+name = "lapse_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+lapse-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tauri = { version = "2", features = [] }
+tauri-plugin-opener = "2"
+uuid.workspace = true
