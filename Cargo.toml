@@ -4,6 +4,7 @@ members = [
   "crates/lapse-core",
   "crates/lapse-broker",
   "crates/lapse-cli",
+  "crates/lapse-mcp",
   "apps/desktop/src-tauri",
 ]
 
@@ -39,6 +40,7 @@ sha2 = "0.10"
 subtle = "2"
 thiserror = "2"
 tokio = { version = "1", features = [
+  "io-std",
   "io-util",
   "macros",
   "net",

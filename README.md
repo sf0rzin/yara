@@ -64,6 +64,7 @@ background, above the 4.5:1 floor.
 crates/lapse-core     crypto, vault format, TOTP, health checks — no UI, no I/O
 crates/lapse-broker   approval-gated credential access for agents
 crates/lapse-cli      the `lapse` command an agent runs
+crates/lapse-mcp      MCP server, for agents that speak it natively
 apps/desktop          Tauri v2 app (React + TypeScript frontend)
 docs/                 design notes
 ```
@@ -98,7 +99,7 @@ Tauri rebuild. The mock is dev-only and cannot reach a release build.
 - [x] Desktop UI, auto-lock, clipboard that clears itself
 - [x] Agent broker: protocol, grants, audit log, named pipe transport
 - [x] Approval prompt, permissions screen, and the `lapse` command line client
-- [ ] MCP server, so agents do not have to shell out
+- [x] MCP server, so any MCP-capable agent can use the vault directly
 - [ ] macOS and Linux
 - [ ] Web app
 

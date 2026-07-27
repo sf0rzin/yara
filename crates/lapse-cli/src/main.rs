@@ -8,10 +8,8 @@
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
-use lapse_broker::protocol::{
-    self, AccessRequest, Field, Intent, Request, Response,
-};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use lapse_broker::client::send;
+use lapse_broker::protocol::{AccessRequest, Field, Intent, Request, Response};
 
 #[derive(Parser)]
 #[command(
@@ -151,40 +149,6 @@ async fn run(cli: Cli) -> Result<ExitCode, String> {
 
     let response = send(&request).await?;
     Ok(report(response))
-}
-
-/// One request, one response, one connection.
-#[cfg(windows)]
-async fn send(request: &Request) -> Result<Response, String> {
-    use tokio::net::windows::named_pipe::ClientOptions;
-
-    let pipe = lapse_broker::transport::DEFAULT_PIPE_NAME;
-    let stream = ClientOptions::new().open(pipe).map_err(|error| {
-        format!("could not reach the vault ({error}). Is lapse running and unlocked?")
-    })?;
-
-    let (reader, mut writer) = tokio::io::split(stream);
-    let mut lines = BufReader::new(reader).lines();
-
-    let encoded = protocol::encode(request).map_err(|e| e.to_string())?;
-    writer
-        .write_all(encoded.as_bytes())
-        .await
-        .map_err(|e| e.to_string())?;
-    writer.flush().await.map_err(|e| e.to_string())?;
-
-    let line = lines
-        .next_line()
-        .await
-        .map_err(|e| e.to_string())?
-        .ok_or_else(|| "the vault closed the connection without answering".to_string())?;
-
-    protocol::decode(&line).map_err(|e| format!("could not understand the reply: {e}"))
-}
-
-#[cfg(not(windows))]
-async fn send(_request: &Request) -> Result<Response, String> {
-    Err("agent access is only supported on Windows so far".into())
 }
 
 /// Prints the response and decides this program's exit code.

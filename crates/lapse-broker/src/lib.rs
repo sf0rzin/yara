@@ -17,6 +17,7 @@
 #![deny(unsafe_code)]
 
 pub mod audit;
+pub mod client;
 pub mod grant;
 pub mod platform;
 pub mod protocol;

@@ -105,18 +105,32 @@ defeating a local attacker who already owns the machine.
 
 ## Interface for agents
 
-`lapse-mcp` exposes the broker as an MCP server, so any MCP-capable agent can use
-it without special integration:
+`lapse-mcp` exposes the broker as an MCP server — JSON-RPC over stdio — so any
+MCP-capable agent can use it without special integration:
+
+```json
+{ "mcpServers": { "lapse": { "command": "lapse-mcp" } } }
+```
 
 | Tool | Returns |
 | --- | --- |
 | `lapse_list_items` | Names, usernames, ids. Never secrets. |
-| `lapse_run_with` | Exit code and output of a command run with the secret injected. |
-| `lapse_reveal` | The plaintext, after heavy confirmation. |
+| `lapse_run_with_credential` | Exit code and output of a command run with the secret injected. |
+| `lapse_reveal_credential` | The plaintext, after heavy confirmation. |
+| `lapse_status` | Whether lapse is running and unlocked. |
 
 `lapse_list_items` is deliberately unprivileged: an agent needs to be able to
 discover that `db-prod` exists in order to ask for it, and item names are not
 secrets.
+
+The tool *descriptions* are load-bearing. They are what an agent reads when
+choosing between using a credential and asking to see one, and that choice
+happens before the user is ever prompted. `run_with_credential` is described as
+the default; `reveal_credential` says plainly that it is a last resort, that the
+value cannot be taken back, and that it never earns a standing approval.
+
+Both access tools require a `reason`, and it is shown to the user verbatim.
+A request with no stated purpose is not a request the user can evaluate.
 
 ## Grants
 
@@ -167,11 +181,8 @@ every single time.
 | Caller identification | Done, Windows only |
 | Approval prompt and the Agent access screen | Done |
 | `lapse` command line client | Done |
-| MCP server | Not started |
+| `lapse-mcp` MCP server | Done |
 | macOS and Linux | Not started |
-
-An agent that speaks MCP has to shell out to `lapse` for now. A native MCP
-server is the obvious next step, and the protocol is already shaped for it.
 
 The audit log is held in memory. Persisting it belongs *inside* the encrypted
 vault — a log naming every credential an agent touched is itself sensitive, and
