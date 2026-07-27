@@ -46,6 +46,22 @@ export interface VaultHealth {
   itemsWithPasswords: number;
 }
 
+/**
+ * What a scanned QR code contained.
+ *
+ * Note what is absent: the secret. The backend keeps the scanned enrollment and
+ * hands over only this description plus one live code, which is enough for the
+ * user to confirm they scanned the right thing.
+ */
+export interface TotpPreview {
+  issuer: string | null;
+  account: string | null;
+  algorithm: string;
+  digits: number;
+  period: number;
+  sampleCode: string;
+}
+
 export interface NewItem {
   name: string;
   kind?: ItemKind;
@@ -54,8 +70,18 @@ export interface NewItem {
   url?: string | null;
   notes?: string | null;
   totp_uri?: string | null;
+  /** Attach the enrollment most recently read from a QR code. */
+  use_scanned_totp?: boolean;
   tags?: string[];
 }
+
+export const scanQrFromPath = (path: string) =>
+  invoke<TotpPreview>("scan_qr_from_path", { path });
+
+export const scanQrFromClipboard = () =>
+  invoke<TotpPreview>("scan_qr_from_clipboard");
+
+export const clearScannedTotp = () => invoke<void>("clear_scanned_totp");
 
 export interface ListFilter {
   query?: string;

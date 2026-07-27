@@ -55,6 +55,38 @@ pub struct TotpCode {
     pub period: u64,
 }
 
+/// What a scanned QR code turned out to contain.
+///
+/// Everything the user needs to confirm they scanned the right thing, and
+/// nothing that would let the frontend reconstruct the secret. `sample_code` is
+/// a live code, which proves the enrollment works without disclosing the seed
+/// that produced it.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TotpPreview {
+    pub issuer: Option<String>,
+    pub account: Option<String>,
+    pub algorithm: String,
+    pub digits: u32,
+    pub period: u64,
+    pub sample_code: String,
+}
+
+impl TryFrom<&TotpConfig> for TotpPreview {
+    type Error = String;
+
+    fn try_from(config: &TotpConfig) -> Result<Self, String> {
+        Ok(Self {
+            issuer: config.issuer.clone(),
+            account: config.account.clone(),
+            algorithm: config.algorithm.as_str().to_string(),
+            digits: config.digits,
+            period: config.period,
+            sample_code: config.generate().map_err(to_message)?,
+        })
+    }
+}
+
 #[derive(Debug, Deserialize)]
 pub struct NewItem {
     pub name: String,
@@ -64,8 +96,11 @@ pub struct NewItem {
     pub password: Option<String>,
     pub url: Option<String>,
     pub notes: Option<String>,
-    /// An `otpauth://` URI, as scanned from a QR code.
+    /// An `otpauth://` URI typed or pasted by hand.
     pub totp_uri: Option<String>,
+    /// Attach the enrollment most recently read from a QR code instead.
+    #[serde(default)]
+    pub use_scanned_totp: bool,
     #[serde(default)]
     pub tags: Vec<String>,
 }
@@ -151,15 +186,64 @@ fn vault_health(state: State<'_, AppState>) -> CommandResult<VaultHealth> {
     state.with_vault(|vault| Ok(vault.health()))
 }
 
+/// Reads a two-factor QR code from an image file.
+#[tauri::command]
+fn scan_qr_from_path(state: State<'_, AppState>, path: String) -> CommandResult<TotpPreview> {
+    let bytes = std::fs::read(&path).map_err(|_| "could not read that file".to_string())?;
+    let config = lapse_core::qr::decode_enrollment(&bytes).map_err(to_message)?;
+
+    let preview = TotpPreview::try_from(&config)?;
+    state.set_pending_totp(config);
+    Ok(preview)
+}
+
+/// Reads a two-factor QR code from an image on the clipboard.
+///
+/// This is the path that makes Win+Shift+S work: snip the QR code off the
+/// screen, press paste, done.
+#[tauri::command]
+fn scan_qr_from_clipboard(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> CommandResult<TotpPreview> {
+    use tauri_plugin_clipboard_manager::ClipboardExt;
+
+    let image = app
+        .clipboard()
+        .read_image()
+        .map_err(|_| "there is no image on the clipboard".to_string())?;
+
+    let config =
+        lapse_core::qr::decode_enrollment_rgba(image.rgba(), image.width(), image.height())
+            .map_err(to_message)?;
+
+    let preview = TotpPreview::try_from(&config)?;
+    state.set_pending_totp(config);
+    Ok(preview)
+}
+
+/// Discards a scanned enrollment the user decided not to keep.
+#[tauri::command]
+fn clear_scanned_totp(state: State<'_, AppState>) {
+    state.clear_pending_totp();
+}
+
 #[tauri::command]
 fn add_item(state: State<'_, AppState>, item: NewItem) -> CommandResult<Uuid> {
-    let totp = item
-        .totp_uri
-        .as_deref()
-        .filter(|uri| !uri.trim().is_empty())
-        .map(TotpConfig::from_uri)
-        .transpose()
-        .map_err(to_message)?;
+    let totp = if item.use_scanned_totp {
+        let scanned = state.take_pending_totp();
+        if scanned.is_none() {
+            return Err("the scanned code is no longer available — scan it again".into());
+        }
+        scanned
+    } else {
+        item.totp_uri
+            .as_deref()
+            .filter(|uri| !uri.trim().is_empty())
+            .map(TotpConfig::from_uri)
+            .transpose()
+            .map_err(to_message)?
+    };
 
     let mut entry = Item::new(item.name);
     entry.kind = item.kind;
@@ -232,6 +316,8 @@ fn change_master_password(state: State<'_, AppState>, new_password: String) -> C
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             let dir = app.path().app_data_dir()?;
@@ -251,6 +337,9 @@ pub fn run() {
             vault_health,
             add_item,
             delete_item,
+            scan_qr_from_path,
+            scan_qr_from_clipboard,
+            clear_scanned_totp,
             reveal_password,
             totp_code,
             estimate_strength,

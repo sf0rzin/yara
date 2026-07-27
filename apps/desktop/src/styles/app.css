@@ -705,6 +705,105 @@
   line-height: 1.5;
 }
 
+.linkish {
+  align-self: flex-start;
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  transition: color var(--duration-fast) var(--ease);
+}
+
+.linkish:hover {
+  color: var(--text);
+}
+
+/* ------------------------------------------------------------ qr capture */
+
+.qr {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-6) var(--space-4);
+  background: var(--bg);
+  /* Dashed says "put something here" without needing a colour to say it. */
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-md);
+  color: var(--text-muted);
+  text-align: center;
+  transition:
+    border-color var(--duration) var(--ease),
+    background var(--duration) var(--ease);
+}
+
+.qr[data-dragging] {
+  background: var(--surface);
+  border-color: var(--text-muted);
+  border-style: solid;
+}
+
+.qr[data-busy] {
+  opacity: 0.6;
+}
+
+.qr__hint {
+  font-size: var(--text-sm);
+  line-height: 1.5;
+}
+
+.qr__actions {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.qr__actions .button {
+  height: 30px;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--border-faint);
+}
+
+.qr--done {
+  flex-direction: row;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-3) var(--space-3) var(--space-4);
+  border-style: solid;
+  border-color: var(--border-faint);
+  text-align: left;
+}
+
+.qr__done-text {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.qr__done-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text);
+  font-size: var(--text-sm);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.qr__done-sub {
+  color: var(--text-disabled);
+  font-size: var(--text-xs);
+}
+
+.qr__sample {
+  font-family: var(--font-mono);
+  font-size: var(--text-base);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.08em;
+  color: var(--text-secondary);
+}
+
 .button {
   display: inline-flex;
   align-items: center;

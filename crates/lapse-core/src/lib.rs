@@ -23,6 +23,7 @@
 pub mod crypto;
 pub mod error;
 pub mod health;
+pub mod qr;
 pub mod secret;
 pub mod totp;
 pub mod vault;
@@ -30,6 +31,7 @@ pub mod vault;
 pub use crypto::{KdfParams, Key, Sealed};
 pub use error::{Error, Result};
 pub use health::{Strength, VaultHealth};
+pub use qr::decode_enrollment;
 pub use secret::SecretString;
 pub use totp::{TotpAlgorithm, TotpConfig};
 pub use vault::{

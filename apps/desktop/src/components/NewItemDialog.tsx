@@ -1,6 +1,13 @@
-import { useEffect, useRef, useState, type JSX } from "react";
-import { addItem, errorMessage, type ItemKind } from "../api";
+import { useCallback, useEffect, useRef, useState, type JSX } from "react";
+import {
+  addItem,
+  clearScannedTotp,
+  errorMessage,
+  type ItemKind,
+  type TotpPreview,
+} from "../api";
 import { Icon } from "./Icon";
+import { QrCapture } from "./QrCapture";
 
 const KINDS: { value: ItemKind; label: string }[] = [
   { value: "login", label: "Login" },
@@ -20,6 +27,8 @@ export function NewItemDialog({ onClose, onCreated }: NewItemDialogProps): JSX.E
   const [password, setPassword] = useState("");
   const [url, setUrl] = useState("");
   const [totpUri, setTotpUri] = useState("");
+  const [scanned, setScanned] = useState<TotpPreview | null>(null);
+  const [manualEntry, setManualEntry] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -29,13 +38,19 @@ export function NewItemDialog({ onClose, onCreated }: NewItemDialogProps): JSX.E
     firstField.current?.focus();
   }, []);
 
+  // Abandoning the dialog must not leave a scanned secret parked in the backend.
+  const dismiss = useCallback(() => {
+    void clearScannedTotp();
+    onClose();
+  }, [onClose]);
+
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
+      if (event.key === "Escape") dismiss();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  }, [dismiss]);
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
@@ -49,7 +64,8 @@ export function NewItemDialog({ onClose, onCreated }: NewItemDialogProps): JSX.E
         username: username.trim() || null,
         password: password || null,
         url: url.trim() || null,
-        totp_uri: totpUri.trim() || null,
+        totp_uri: scanned ? null : totpUri.trim() || null,
+        use_scanned_totp: Boolean(scanned),
       });
       onCreated(id);
     } catch (caught) {
@@ -60,7 +76,7 @@ export function NewItemDialog({ onClose, onCreated }: NewItemDialogProps): JSX.E
   }
 
   return (
-    <div className="overlay" onMouseDown={onClose}>
+    <div className="overlay" onMouseDown={dismiss}>
       <form
         className="dialog"
         onMouseDown={(event) => event.stopPropagation()}
@@ -72,7 +88,7 @@ export function NewItemDialog({ onClose, onCreated }: NewItemDialogProps): JSX.E
           <button
             type="button"
             className="icon-button"
-            onClick={onClose}
+            onClick={dismiss}
             aria-label="Close"
           >
             <Icon name="close" size={14} />
@@ -138,18 +154,34 @@ export function NewItemDialog({ onClose, onCreated }: NewItemDialogProps): JSX.E
               />
             </label>
 
-            <label className="input-label">
+            <div className="input-label">
               Authenticator
-              <input
-                className="input"
-                value={totpUri}
-                onChange={(event) => setTotpUri(event.target.value)}
-                placeholder="otpauth://totp/…"
-              />
-              <span className="input-hint">
-                Paste the setup link behind the QR code to generate codes here.
-              </span>
-            </label>
+              <QrCapture preview={scanned} onScanned={setScanned} />
+
+              {!scanned &&
+                (manualEntry ? (
+                  <>
+                    <input
+                      className="input"
+                      value={totpUri}
+                      onChange={(event) => setTotpUri(event.target.value)}
+                      placeholder="otpauth://totp/…"
+                    />
+                    <span className="input-hint">
+                      Typed keys pass through the interface, unlike a scanned
+                      code. Prefer the QR when you have one.
+                    </span>
+                  </>
+                ) : (
+                  <button
+                    type="button"
+                    className="linkish"
+                    onClick={() => setManualEntry(true)}
+                  >
+                    Enter a setup key by hand instead
+                  </button>
+                ))}
+            </div>
           </>
         )}
 
@@ -161,7 +193,7 @@ export function NewItemDialog({ onClose, onCreated }: NewItemDialogProps): JSX.E
         )}
 
         <div className="dialog__foot">
-          <button type="button" className="button button--quiet" onClick={onClose}>
+          <button type="button" className="button button--quiet" onClick={dismiss}>
             Cancel
           </button>
           <button

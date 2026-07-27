@@ -210,6 +210,27 @@ const handlers: Record<string, (args: Record<string, unknown>) => unknown> = {
   add_item: () => "new",
   delete_item: () => undefined,
   change_master_password: () => undefined,
+
+  // No real decoding here — the mock exists to exercise the interface, and
+  // wiring an actual QR decoder into it would just be a second implementation
+  // to keep in step with the Rust one.
+  scan_qr_from_clipboard: () => ({
+    issuer: "GitHub",
+    account: "anthony@axono.dev",
+    algorithm: "SHA1",
+    digits: 6,
+    period: 30,
+    sampleCode: "482915",
+  }),
+  scan_qr_from_path: () => ({
+    issuer: "GitHub",
+    account: "anthony@axono.dev",
+    algorithm: "SHA1",
+    digits: 6,
+    period: 30,
+    sampleCode: "482915",
+  }),
+  clear_scanned_totp: () => undefined,
 };
 
 export function installDevMock(): void {

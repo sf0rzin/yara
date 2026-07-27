@@ -31,6 +31,15 @@ pub enum Error {
     #[error("invalid otpauth URI: {0}")]
     InvalidOtpUri(&'static str),
 
+    #[error("could not read that image")]
+    ImageDecode,
+
+    #[error("no QR code found in that image")]
+    NoQrCode,
+
+    #[error("that QR code is not a two-factor setup code")]
+    QrNotOtpauth,
+
     #[error("unsupported OTP algorithm {0:?}")]
     UnsupportedOtpAlgorithm(String),
 
