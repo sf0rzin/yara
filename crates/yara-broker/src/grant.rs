@@ -95,6 +95,10 @@ pub struct Grant {
 }
 
 impl Grant {
+    // Eight arguments, one per field it sets. Wrapping them in a parameter
+    // struct would satisfy the lint and cost the reader an indirection to
+    // learn nothing — the arguments are the grant.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         item_id: Uuid,
         item_name: impl Into<String>,

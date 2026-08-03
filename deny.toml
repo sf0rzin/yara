@@ -1,0 +1,51 @@
+# cargo-deny configuration.
+#
+# The allowlist below was derived from the licences actually present in the
+# tree, not copied from a template, so a new entry appearing here is a real
+# change in what the project depends on and deserves to be looked at.
+
+[advisories]
+version = 2
+yanked = "deny"
+# Only flag unmaintained crates this workspace actually reaches for. The
+# transitive set is sixteen advisories deep and almost entirely the GTK3
+# bindings Tauri pulls in for Linux — a platform this project does not build
+# for, in crates that are not ours to replace. Security vulnerabilities are
+# still denied everywhere, transitive or not, which is the part that matters.
+unmaintained = "workspace"
+
+[licenses]
+version = 2
+# Permissive, in rough order of how much of the tree uses them.
+allow = [
+  "MIT",
+  "Apache-2.0",
+  "Apache-2.0 WITH LLVM-exception",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "ISC",
+  "Zlib",
+  "0BSD",
+  "MIT-0",
+  "Unlicense",
+  "CC0-1.0",
+  "BSL-1.0",
+  "Unicode-3.0",
+  "CDLA-Permissive-2.0",
+  # File-level copyleft, from the Servo CSS crates that Tauri pulls in
+  # (cssparser, selectors, dtoa-short) and from option-ext. Linking against
+  # them is fine; modifying those files would mean publishing the changes,
+  # and nothing here does.
+  "MPL-2.0",
+]
+
+[bans]
+# Duplicate versions are noise in a tree this size — Tauri alone brings several
+# and none of them are ours to resolve. Worth revisiting if binary size starts
+# to matter.
+multiple-versions = "allow"
+wildcards = "deny"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"

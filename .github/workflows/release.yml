@@ -1,0 +1,60 @@
+name: Release
+
+# Cut a release by pushing a tag:
+#
+#   git tag v0.1.1 && git push origin v0.1.1
+#
+# The tag must match the version in apps/desktop/src-tauri/tauri.conf.json;
+# tauri-action reads the config, not the tag, so a mismatch ships a manifest
+# that no client will ever consider newer than what it already has.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and publish
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install frontend dependencies
+        working-directory: apps/desktop
+        run: npm ci
+
+      # This is the only place the signing key exists outside the maintainer's
+      # machine. It is deliberately not available to any other workflow, and it
+      # never reaches the server that distributes the result — the host serving
+      # an update cannot produce one a client will accept.
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          projectPath: apps/desktop
+          tagName: ${{ github.ref_name }}
+          releaseName: yara ${{ github.ref_name }}
+          releaseDraft: false
+          prerelease: false
+          # Publishes latest.json alongside the installers. The origin mirrors
+          # that asset rather than being pushed to — see docs/hosting.md.
+          includeUpdaterJson: true
+          # Point the manifest at the NSIS installer. MSI is built for anyone
+          # deploying by policy, but it is not the update artifact.
+          updaterJsonPreferNsis: true
