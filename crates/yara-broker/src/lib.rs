@@ -18,6 +18,7 @@
 
 pub mod audit;
 pub mod client;
+pub mod exposure;
 pub mod grant;
 pub mod platform;
 pub mod protocol;

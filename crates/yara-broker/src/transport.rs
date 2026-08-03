@@ -59,6 +59,10 @@ pub struct ApprovalRequest {
     pub field: Field,
     pub intent: Intent,
     pub reason: String,
+    /// The command would hand the value back rather than use it, so this is a
+    /// disclosure however it is labelled. The interface has to say so: the
+    /// user is answering a different question than the wording suggests.
+    pub discloses: bool,
 }
 
 /// The user's answer.
@@ -233,12 +237,15 @@ impl Broker {
         client: &ClientId,
         now: u64,
     ) -> Result<Outcome, Refusal> {
+        let discloses = access.intent.discloses_secret();
+
         let receiver = self.approver.ask(ApprovalRequest {
             client: client.clone(),
             item: item.clone(),
             field: access.field,
             intent: access.intent.clone(),
             reason: access.reason.clone(),
+            discloses,
         });
 
         let decision = match tokio::time::timeout(APPROVAL_TIMEOUT, receiver).await {
@@ -249,18 +256,20 @@ impl Broker {
             Err(_) => return Err(Refusal::TimedOut),
         };
 
-        let scope = if access.intent.is_reveal() {
-            Scope::Reveal
-        } else {
-            Scope::Run
-        };
+        // The grant is for this command, not for the idea of running commands.
+        let scope = Scope::for_intent(&access.intent);
 
-        // Revealing plaintext never earns a standing grant, however the request
-        // was answered. Once the value is out there is no technical limit on
-        // what happens to it, so each disclosure is its own decision. Enforced
-        // here rather than by omitting a button, so no interface can widen it.
+        // A disclosure never earns a standing grant, however the request was
+        // answered. Once the value is out there is no technical limit on what
+        // happens to it, so each one is its own decision.
+        //
+        // This covers a `Run` whose command would print the value as well as an
+        // outright reveal: the two differ in wording, not in consequence, and
+        // pricing them differently is what let the cheap path be the leaky one.
+        // Enforced here rather than by omitting a button, so no interface can
+        // widen it.
         let decision = match decision {
-            Decision::AllowFor { .. } if access.intent.is_reveal() => Decision::AllowOnce,
+            Decision::AllowFor { .. } if discloses => Decision::AllowOnce,
             other => other,
         };
 
@@ -344,13 +353,44 @@ async fn run_command(
     match process.output().await {
         Ok(output) => Response::Ran(CommandOutput {
             exit_code: output.status.code().unwrap_or(-1),
-            stdout: truncate(String::from_utf8_lossy(&output.stdout).into_owned()),
-            stderr: truncate(String::from_utf8_lossy(&output.stderr).into_owned()),
+            stdout: clean(&output.stdout, secret),
+            stderr: clean(&output.stderr, secret),
         }),
         Err(error) => Response::Error {
             message: format!("could not run {command}: {error}"),
         },
     }
+}
+
+/// What replaces the credential when a child prints it.
+const REDACTED: &str = "[redacted by yara]";
+
+/// Below this length a value matches too much ordinary text, and redacting it
+/// would mangle the output into uselessness. Anything that short is already
+/// flagged as weak by the health audit.
+const MIN_REDACTABLE: usize = 6;
+
+/// Removes the credential if the child echoed it, then truncates.
+///
+/// In that order, deliberately: truncating first can cut through the middle of
+/// the value and leave half of it behind.
+///
+/// This exists for the common accident — a migration tool that prints its
+/// connection string on failure — where the value would land in the agent's
+/// context having been kept out of it by design. It is not a defence against a
+/// caller that wants the value and can encode it on the way out. That request
+/// is handled by pricing it correctly instead; see [`crate::exposure`].
+fn clean(raw: &[u8], secret: &SecretString) -> String {
+    let text = String::from_utf8_lossy(raw).into_owned();
+    let value = secret.expose();
+
+    let text = if value.len() >= MIN_REDACTABLE && text.contains(value) {
+        text.replace(value, REDACTED)
+    } else {
+        text
+    };
+
+    truncate(text)
 }
 
 fn truncate(mut text: String) -> String {

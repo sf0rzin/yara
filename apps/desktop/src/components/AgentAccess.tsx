@@ -51,9 +51,12 @@ export function AgentAccess(): JSX.Element {
                   <span className="grant__title">
                     {grant.program} · {grant.item}
                   </span>
+                  {/* The command, not just "can use": a grant authorises one
+                      command and reading it back is the only way to tell what
+                      was actually agreed to. */}
                   <span className="grant__sub">
-                    {grant.scope === "reveal" ? "Can read" : "Can use"} the{" "}
-                    {grant.field} · {formatRemaining(grant.secondsRemaining)} left ·{" "}
+                    Can {grant.permits} with the {grant.field} ·{" "}
+                    {formatRemaining(grant.secondsRemaining)} left ·{" "}
                     {grant.remainingUses} use{grant.remainingUses === 1 ? "" : "s"}
                   </span>
                 </span>

@@ -27,12 +27,39 @@ An agent never receives a secret by default. It receives an *outcome*.
 
 Three access modes, in increasing order of exposure:
 
-### 1. Run — the agent sees nothing
+### 1. Run — the agent sees an outcome
 
 The agent asks yara to run a command with a credential injected into the child
-process environment. **The broker spawns the process itself**, so this is
-enforced rather than promised: the client receives an exit code and captured
-output, and there is no code path that returns the value to it.
+process environment. **The broker spawns the process itself**, so the value is
+never handed to the client to be used on trust: it receives an exit code and
+captured output.
+
+Three things make that hold up, and it is worth being precise because the
+obvious version of this feature does not.
+
+**A grant is for a command, not for the idea of running commands.** Approving
+`npm run migrate` for fifteen minutes authorises that command, with those
+arguments, in that directory — nothing else. Anything different goes back to
+the user, even from the same program against the same item inside the window.
+Without this, one approval buys the caller a free choice of command, and the
+useful choice is the one that prints the credential.
+
+**A command that would print the value is priced as a disclosure.** A shell, or
+an interpreter handed a program to evaluate, is a reveal wearing a run's
+clothes. Those requests get the heavier confirmation, are labelled in the
+prompt as handing the value over, and never earn a standing grant.
+
+**The captured output is scrubbed of the value before it is returned.** This is
+for the ordinary accident — a migration tool that prints its connection string
+when it fails — where the credential would otherwise land in the agent's
+context having been kept out of it by design.
+
+None of this is a sandbox, and the third is not a filter that survives an
+adversary. A caller determined to see the value can write a program that prints
+its environment, or encodes it on the way out, and ask to run that. What the
+three buy together is that the cheap, obvious path is no longer the leaky one:
+seeing the value costs a disclosure prompt every single time, which is exactly
+what it costs to ask for it honestly.
 
 ```
 agent → broker: run `npm run migrate` with item "db-prod" as $DATABASE_URL
@@ -99,6 +126,11 @@ Being precise about this matters more than sounding strong.
   The human in the loop is the control, so the prompt has to be legible enough
   for that human to make a real decision.
 - Whatever the agent does with an injected credential once the process is running.
+- A caller that writes its own program to print the environment and asks to run
+  that. Shell detection catches the obvious spellings, not the determined ones,
+  and the output scrub catches accidental echoes rather than deliberate
+  encoding. What both do is make disclosure cost a disclosure prompt, so the
+  dishonest route is never cheaper than the honest one.
 
 The guarantee is about *disclosure surface and accountability*, not about
 defeating a local attacker who already owns the machine.
@@ -145,6 +177,14 @@ to relax:
 - **Permission to run is not permission to reveal.** A grant covering `Run` never
   authorises `Reveal`; being allowed to *use* a password is not being allowed to
   *see* it. Reveal always goes back to the user.
+- **Permission to run one thing is not permission to run another.** The grant
+  pins the command, its arguments, and its working directory. `npm run migrate`
+  somewhere else is somebody else's `package.json`, and a grant that covered any
+  command would be worth more than the credential it guards — the holder could
+  name one that prints it.
+- **A command that discloses is not eligible for a grant at all.** Shells and
+  `node -e` style invocations are treated as reveals however the request was
+  labelled, so they are asked every time.
 - **Identity is the executable, not the process id.** A pid is reused and means
   nothing across invocations. If the caller cannot be identified at all, it
   never matches a stored grant, so it is prompted every time.

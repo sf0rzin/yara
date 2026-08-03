@@ -58,23 +58,69 @@ impl ClientId {
 }
 
 /// What a grant permits.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
+///
+/// `Run` pins the exact command, because approving one is not approving the
+/// category. A grant good for any command at all would be worth more than the
+/// credential — the holder could name one that prints it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "scope", rename_all = "snake_case")]
 pub enum Scope {
-    /// Run commands with the credential injected. Never covers reveal.
-    Run,
+    Run {
+        command: String,
+        #[serde(default)]
+        args: Vec<String>,
+        /// Part of the command's identity, not a detail: `npm run migrate` in
+        /// another directory is another script.
+        #[serde(default)]
+        cwd: Option<String>,
+    },
     /// Hand over the plaintext.
     Reveal,
 }
 
 impl Scope {
+    /// The scope an approval of this intent should produce.
+    pub fn for_intent(intent: &Intent) -> Self {
+        match intent {
+            Intent::Reveal => Self::Reveal,
+            Intent::Run {
+                command, args, cwd, ..
+            } => Self::Run {
+                command: command.clone(),
+                args: args.clone(),
+                cwd: cwd.clone(),
+            },
+        }
+    }
+
+    /// A short description for the permissions screen.
+    pub fn summary(&self) -> String {
+        match self {
+            Self::Reveal => "reveal the value".into(),
+            Self::Run { command, args, .. } if args.is_empty() => format!("run `{command}`"),
+            Self::Run { command, args, .. } => format!("run `{command} {}`", args.join(" ")),
+        }
+    }
+
+    pub fn is_reveal(&self) -> bool {
+        matches!(self, Self::Reveal)
+    }
+
     fn covers(&self, intent: &Intent) -> bool {
         match (self, intent) {
-            (Self::Run, Intent::Run { .. }) => true,
+            (
+                Self::Run { command, args, cwd },
+                Intent::Run {
+                    command: wanted,
+                    args: wanted_args,
+                    cwd: wanted_cwd,
+                    ..
+                },
+            ) => command == wanted && args == wanted_args && cwd == wanted_cwd,
             (Self::Reveal, Intent::Reveal) => true,
             // A grant to run something is not consent to be shown the value.
             // Reveal always goes back to the user.
-            (Self::Run, Intent::Reveal) => false,
+            (Self::Run { .. }, Intent::Reveal) => false,
             (Self::Reveal, Intent::Run { .. }) => false,
         }
     }
@@ -256,10 +302,25 @@ mod tests {
     fn run_intent() -> Intent {
         Intent::Run {
             command: "npm".into(),
-            args: vec![],
+            args: vec!["run".into(), "migrate".into()],
             env_var: "SECRET".into(),
             cwd: None,
         }
+    }
+
+    /// A different command entirely — the one an agent would reach for if it
+    /// wanted the value rather than the outcome.
+    fn shell_intent() -> Intent {
+        Intent::Run {
+            command: "cmd".into(),
+            args: vec!["/c".into(), "echo %SECRET%".into()],
+            env_var: "SECRET".into(),
+            cwd: None,
+        }
+    }
+
+    fn run_scope() -> Scope {
+        Scope::for_intent(&run_intent())
     }
 
     fn grant_for(item: Uuid, scope: Scope, exe: &str) -> Grant {
@@ -279,7 +340,7 @@ mod tests {
     fn a_matching_request_is_authorised() {
         let item = Uuid::new_v4();
         let mut store = GrantStore::new();
-        store.issue(grant_for(item, Scope::Run, "C:\\bin\\claude.exe"));
+        store.issue(grant_for(item, run_scope(), "C:\\bin\\claude.exe"));
 
         assert!(store
             .redeem(
@@ -295,7 +356,7 @@ mod tests {
     #[test]
     fn a_grant_does_not_cover_a_different_item() {
         let mut store = GrantStore::new();
-        store.issue(grant_for(Uuid::new_v4(), Scope::Run, "C:\\bin\\a.exe"));
+        store.issue(grant_for(Uuid::new_v4(), run_scope(), "C:\\bin\\a.exe"));
 
         assert!(store
             .redeem(
@@ -312,7 +373,7 @@ mod tests {
     fn a_grant_does_not_cover_a_different_field() {
         let item = Uuid::new_v4();
         let mut store = GrantStore::new();
-        store.issue(grant_for(item, Scope::Run, "C:\\bin\\a.exe"));
+        store.issue(grant_for(item, run_scope(), "C:\\bin\\a.exe"));
 
         assert!(store
             .redeem(
@@ -325,11 +386,97 @@ mod tests {
             .is_none());
     }
 
+    /// The escalation this scoping exists to stop.
+    ///
+    /// Approving `npm run migrate` for fifteen minutes used to authorise every
+    /// other command for those fifteen minutes, including one whose only
+    /// purpose is to print the credential. The grant is for a command, not for
+    /// the category of running things.
+    #[test]
+    fn a_grant_for_one_command_does_not_cover_another() {
+        let item = Uuid::new_v4();
+        let mut store = GrantStore::new();
+        store.issue(grant_for(item, run_scope(), "C:\\bin\\claude.exe"));
+
+        assert!(
+            store
+                .redeem(
+                    item,
+                    Field::Password,
+                    &shell_intent(),
+                    &client("C:\\bin\\claude.exe"),
+                    NOW
+                )
+                .is_none(),
+            "a grant for `npm run migrate` must not authorise `cmd /c echo %SECRET%`"
+        );
+
+        // The command it was actually approved for still works.
+        assert!(store
+            .redeem(
+                item,
+                Field::Password,
+                &run_intent(),
+                &client("C:\\bin\\claude.exe"),
+                NOW
+            )
+            .is_some());
+    }
+
+    /// `npm run migrate` somewhere else is somebody else's package.json.
+    #[test]
+    fn a_grant_does_not_follow_the_command_to_another_directory() {
+        let item = Uuid::new_v4();
+        let mut store = GrantStore::new();
+        store.issue(grant_for(item, run_scope(), "C:\\bin\\a.exe"));
+
+        let elsewhere = Intent::Run {
+            command: "npm".into(),
+            args: vec!["run".into(), "migrate".into()],
+            env_var: "SECRET".into(),
+            cwd: Some("C:\\somewhere\\else".into()),
+        };
+
+        assert!(store
+            .redeem(
+                item,
+                Field::Password,
+                &elsewhere,
+                &client("C:\\bin\\a.exe"),
+                NOW
+            )
+            .is_none());
+    }
+
+    #[test]
+    fn arguments_are_part_of_the_command() {
+        let item = Uuid::new_v4();
+        let mut store = GrantStore::new();
+        store.issue(grant_for(item, run_scope(), "C:\\bin\\a.exe"));
+
+        let other_script = Intent::Run {
+            command: "npm".into(),
+            args: vec!["run".into(), "publish".into()],
+            env_var: "SECRET".into(),
+            cwd: None,
+        };
+
+        assert!(store
+            .redeem(
+                item,
+                Field::Password,
+                &other_script,
+                &client("C:\\bin\\a.exe"),
+                NOW
+            )
+            .is_none());
+    }
+
     #[test]
     fn permission_to_run_is_not_permission_to_reveal() {
         let item = Uuid::new_v4();
         let mut store = GrantStore::new();
-        store.issue(grant_for(item, Scope::Run, "C:\\bin\\a.exe"));
+        store.issue(grant_for(item, run_scope(), "C:\\bin\\a.exe"));
 
         assert!(store
             .redeem(
@@ -363,7 +510,7 @@ mod tests {
     fn a_different_program_cannot_use_someone_elses_grant() {
         let item = Uuid::new_v4();
         let mut store = GrantStore::new();
-        store.issue(grant_for(item, Scope::Run, "C:\\bin\\claude.exe"));
+        store.issue(grant_for(item, run_scope(), "C:\\bin\\claude.exe"));
 
         assert!(store
             .redeem(
@@ -380,7 +527,7 @@ mod tests {
     fn an_unidentifiable_client_never_matches_a_grant() {
         let item = Uuid::new_v4();
         let mut store = GrantStore::new();
-        store.issue(grant_for(item, Scope::Run, "C:\\bin\\a.exe"));
+        store.issue(grant_for(item, run_scope(), "C:\\bin\\a.exe"));
 
         assert!(store
             .redeem(
@@ -401,7 +548,7 @@ mod tests {
             item,
             "x",
             Field::Password,
-            Scope::Run,
+            run_scope(),
             ClientId::unknown(1234),
             NOW,
             900,
@@ -423,7 +570,7 @@ mod tests {
     fn an_expired_grant_is_not_authorised() {
         let item = Uuid::new_v4();
         let mut store = GrantStore::new();
-        store.issue(grant_for(item, Scope::Run, "C:\\bin\\a.exe"));
+        store.issue(grant_for(item, run_scope(), "C:\\bin\\a.exe"));
 
         assert!(store
             .redeem(
@@ -438,7 +585,7 @@ mod tests {
 
     #[test]
     fn a_grant_expires_exactly_at_its_deadline() {
-        let grant = grant_for(Uuid::new_v4(), Scope::Run, "C:\\bin\\a.exe");
+        let grant = grant_for(Uuid::new_v4(), run_scope(), "C:\\bin\\a.exe");
         assert!(!grant.is_expired(NOW + 899));
         assert!(grant.is_expired(NOW + 900));
     }
@@ -451,7 +598,7 @@ mod tests {
             item,
             "x",
             Field::Password,
-            Scope::Run,
+            run_scope(),
             client("C:\\bin\\a.exe"),
             NOW,
             900,
@@ -481,7 +628,7 @@ mod tests {
             item,
             "x",
             Field::Password,
-            Scope::Run,
+            run_scope(),
             client("C:\\bin\\a.exe"),
             NOW,
         ));
@@ -509,14 +656,14 @@ mod tests {
     #[test]
     fn a_one_shot_approval_cannot_be_redeemed_much_later() {
         let item = Uuid::new_v4();
-        let grant = Grant::once(item, "x", Field::Password, Scope::Run, client("a"), NOW);
+        let grant = Grant::once(item, "x", Field::Password, run_scope(), client("a"), NOW);
         assert!(grant.is_expired(NOW + 3600));
     }
 
     #[test]
     fn pruning_removes_expired_and_spent_grants() {
         let mut store = GrantStore::new();
-        store.issue(grant_for(Uuid::new_v4(), Scope::Run, "C:\\bin\\a.exe"));
+        store.issue(grant_for(Uuid::new_v4(), run_scope(), "C:\\bin\\a.exe"));
         assert_eq!(store.live(NOW).len(), 1);
 
         store.prune(NOW + 901);
@@ -526,7 +673,7 @@ mod tests {
     #[test]
     fn locking_clears_every_grant() {
         let mut store = GrantStore::new();
-        store.issue(grant_for(Uuid::new_v4(), Scope::Run, "C:\\bin\\a.exe"));
+        store.issue(grant_for(Uuid::new_v4(), run_scope(), "C:\\bin\\a.exe"));
         store.issue(grant_for(Uuid::new_v4(), Scope::Reveal, "C:\\bin\\b.exe"));
 
         store.clear();
@@ -537,7 +684,7 @@ mod tests {
     fn a_revoked_grant_stops_working_immediately() {
         let item = Uuid::new_v4();
         let mut store = GrantStore::new();
-        let id = store.issue(grant_for(item, Scope::Run, "C:\\bin\\a.exe"));
+        let id = store.issue(grant_for(item, run_scope(), "C:\\bin\\a.exe"));
 
         assert!(store.revoke(id));
         assert!(store
@@ -555,7 +702,7 @@ mod tests {
     fn executable_matching_ignores_case_as_windows_paths_do() {
         let item = Uuid::new_v4();
         let mut store = GrantStore::new();
-        store.issue(grant_for(item, Scope::Run, "C:\\Bin\\Claude.exe"));
+        store.issue(grant_for(item, run_scope(), "C:\\Bin\\Claude.exe"));
 
         assert!(store
             .redeem(

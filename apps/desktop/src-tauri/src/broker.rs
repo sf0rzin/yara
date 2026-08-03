@@ -132,6 +132,11 @@ pub struct ApprovalPrompt {
     pub command: Option<String>,
     pub env_var: Option<String>,
     pub reason: String,
+    /// The command would hand the value back rather than use it — a shell, or
+    /// an interpreter given a program to evaluate. The prompt says so plainly,
+    /// because otherwise the user is answering "may it use this?" when the
+    /// question is "may it see this?".
+    pub discloses: bool,
 }
 
 impl ApprovalPrompt {
@@ -165,6 +170,7 @@ impl ApprovalPrompt {
             command,
             env_var,
             reason: request.reason.clone(),
+            discloses: request.discloses,
         }
     }
 }

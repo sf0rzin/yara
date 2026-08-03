@@ -61,6 +61,18 @@ impl Intent {
     pub fn is_reveal(&self) -> bool {
         matches!(self, Self::Reveal)
     }
+
+    /// Whether approving this amounts to approving a disclosure.
+    ///
+    /// True for an outright reveal, and also for a `Run` whose command would
+    /// hand the value straight back — see [`crate::exposure`]. Both are priced
+    /// the same: the heavier confirmation, and never a standing grant.
+    pub fn discloses_secret(&self) -> bool {
+        match self {
+            Self::Reveal => true,
+            Self::Run { command, args, .. } => crate::exposure::can_disclose(command, args),
+        }
+    }
 }
 
 /// A request for access to one item.
