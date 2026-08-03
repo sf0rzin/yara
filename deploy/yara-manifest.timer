@@ -1,0 +1,17 @@
+# Schedules the manifest mirror. Install to /etc/systemd/system/ and enable
+# this rather than the service.
+
+[Unit]
+Description=Check for a new yara update manifest
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+# Spreads the request so a fleet of these would not arrive at GitHub together.
+# Also keeps the poll off a predictable wall-clock boundary.
+RandomizedDelaySec=60
+# Catches up after downtime instead of waiting a full interval.
+Persistent=true
+
+[Install]
+WantedBy=timers.target

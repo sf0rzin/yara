@@ -1,0 +1,104 @@
+# yara.rindexx.cc — the origin, on VM 102 (10.10.1.21).
+#
+# Install to /etc/caddy/Caddyfile on that VM. See docs/hosting.md for the
+# topology and why none of the hops are trusted.
+#
+#   caddy validate --config /etc/caddy/Caddyfile
+#   systemctl reload caddy
+#
+# This does not terminate TLS and does not speak ACME. The chain is
+#
+#   client → Cloudflare → beta:443 (DNAT) → ayla:443 (Caddy, TLS) → here :80
+#
+# so certificates are ayla's problem and the last hop is plaintext across a
+# private bridge on the same physical host. The `http://` scheme on the site
+# address is what disables automatic HTTPS; naming the host rather than `:80`
+# also stops this origin from answering for anything else.
+
+{
+	# Real client addresses, restored one hop at a time.
+	#
+	# ayla is the only thing that may speak for a client here. It in turn only
+	# believes Cloudflare — see the mirror of this block in its Caddyfile. Get
+	# either half wrong and any caller can forge {client_ip}, which is the one
+	# field in the audit log that has to be true.
+	servers {
+		trusted_proxies static 10.10.1.20/32
+		client_ip_headers X-Forwarded-For
+	}
+}
+
+http://yara.rindexx.cc {
+	encode zstd gzip
+
+	header {
+		X-Content-Type-Options nosniff
+		Referrer-Policy no-referrer
+		-Server
+	}
+
+	# The update manifest.
+	#
+	# A short max-age rather than none: clients poll on launch, so a stale
+	# minute is invisible, but an uncached manifest turns every start of every
+	# install into an origin hit. Publish by atomic rename — a client that
+	# reads a half-written file reports a failed update check.
+	handle_path /updates/* {
+		root * /srv/yara/updates
+		header Content-Type "application/json"
+		header Cache-Control "public, max-age=60"
+
+		# 204 rather than 404 when there is no manifest yet. The updater reads
+		# an empty response as "you are current", which is true, and it keeps a
+		# fresh install from logging a failed update check before the first
+		# release exists.
+		@exists file
+		handle @exists {
+			file_server
+		}
+		handle {
+			respond 204
+		}
+	}
+
+	# Installers, if they are self-hosted rather than served from GitHub
+	# Releases. Release artifacts never change under a given name, so they are
+	# immutable; the .sig files must be reachable alongside them.
+	#
+	# Read the bandwidth note in docs/hosting.md before enabling this.
+	handle_path /downloads/* {
+		root * /srv/yara/downloads
+		header Cache-Control "public, max-age=604800, immutable"
+		file_server browse
+	}
+
+	# Sync service. Not built yet — this returns 502 until yara-sync exists.
+	#
+	# Account ids travel in the request body and session tokens in the
+	# Authorization header, never in the path, so this log records who
+	# connected and when but not what they hold. Rate limiting is the
+	# service's job: stock Caddy has none, and adding it means maintaining
+	# a custom xcaddy build.
+	handle /api/* {
+		request_body {
+			max_size 4MB
+		}
+		reverse_proxy 127.0.0.1:8787 {
+			header_up X-Real-IP {client_ip}
+		}
+	}
+
+	handle {
+		root * /srv/yara/site
+		try_files {path} {path}/ /index.html
+		file_server
+	}
+
+	log {
+		output file /var/log/caddy/yara.log {
+			roll_size 20MiB
+			roll_keep 10
+		}
+		format json
+	}
+}
