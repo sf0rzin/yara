@@ -16,8 +16,8 @@ permissions:
   contents: write
 
 jobs:
-  release:
-    name: Build and publish
+  desktop:
+    name: Desktop (Windows)
     runs-on: windows-latest
 
     steps:
@@ -58,3 +58,32 @@ jobs:
           # Point the manifest at the NSIS installer. MSI is built for anyone
           # deploying by policy, but it is not the update artifact.
           updaterJsonPreferNsis: true
+
+  # The server binary, built where it runs.
+  #
+  # Attached to the release rather than pushed anywhere. The origin mirrors the
+  # update manifest automatically because a manifest is inert — a bad one still
+  # cannot produce an update a client accepts. A binary is not inert, so
+  # installing it stays a deliberate act by an operator over SSH.
+  sync:
+    name: Sync service (Linux)
+    runs-on: ubuntu-latest
+    needs: desktop
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - run: cargo build -p yara-sync --release --locked
+
+      - name: Name it for the platform it runs on
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          install -m 0755 target/release/yara-sync "yara-sync-${version}-x86_64-linux"
+          sha256sum "yara-sync-${version}-x86_64-linux" > "yara-sync-${version}-x86_64-linux.sha256"
+
+      - name: Attach to the release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "$GITHUB_REF_NAME" yara-sync-*-x86_64-linux yara-sync-*.sha256 --clobber

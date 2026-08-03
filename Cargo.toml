@@ -5,6 +5,7 @@ members = [
   "crates/yara-broker",
   "crates/yara-cli",
   "crates/yara-mcp",
+  "crates/yara-sync",
   "apps/desktop/src-tauri",
 ]
 

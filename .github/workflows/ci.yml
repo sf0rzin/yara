@@ -48,11 +48,16 @@ jobs:
 
       - run: cargo test --workspace
 
-  # yara-core claims to be free of platform and UI dependencies. This is what
-  # keeps that claim true: the day something reaches for a Win32 call or the
-  # filesystem in there, this job goes red.
-  core-portable:
-    name: Core (Linux)
+  # Two crates that must build away from Windows, for different reasons.
+  #
+  # yara-core claims to be free of platform and UI entanglement, and that claim
+  # is what keeps the part worth auditing small — a claim nothing enforces
+  # decays, so this is what enforces it.
+  #
+  # yara-sync is the opposite case: Linux is where it actually runs, and the
+  # Windows job proves nothing about the binary that ends up on the server.
+  linux:
+    name: Core and sync (Linux)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -63,9 +68,9 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - run: cargo clippy -p yara-core --all-targets -- -D warnings
+      - run: cargo clippy -p yara-core -p yara-sync --all-targets -- -D warnings
 
-      - run: cargo test -p yara-core
+      - run: cargo test -p yara-core -p yara-sync
 
   supply-chain:
     name: Advisories and licences
