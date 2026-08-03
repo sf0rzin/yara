@@ -1,0 +1,50 @@
+# Sync service. Install to /etc/systemd/system/.
+#
+# The binary does not exist yet — docs/hosting.md specifies what it should be.
+# This unit is here so the sandbox is decided before the code is, rather than
+# bolted on after it is already running as root.
+#
+# Create the user first. A fixed system user rather than DynamicUser=yes,
+# because Litestream runs as a second process and needs stable ownership of
+# the state directory to replicate the database:
+#
+#   adduser --system --group --no-create-home yara-sync
+
+[Unit]
+Description=yara sync service
+After=network.target
+
+[Service]
+User=yara-sync
+Group=yara-sync
+ExecStart=/usr/local/bin/yara-sync
+Environment=YARA_SYNC_ADDR=127.0.0.1:8787
+Environment=YARA_SYNC_DB=/var/lib/yara-sync/sync.db
+Restart=on-failure
+RestartSec=2
+
+StateDirectory=yara-sync
+StateDirectoryMode=0750
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+NoNewPrivileges=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+
+# Loopback only. Caddy is the only thing that should reach this, and the
+# service has no reason to make outbound connections at all.
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+IPAddressDeny=any
+IPAddressAllow=localhost
+
+[Install]
+WantedBy=multi-user.target

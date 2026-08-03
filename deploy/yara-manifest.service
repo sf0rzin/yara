@@ -1,0 +1,35 @@
+# Mirrors the update manifest from GitHub Releases. Install to
+# /etc/systemd/system/ alongside yara-manifest.timer, which is what schedules
+# it — this unit is not enabled directly.
+#
+#   install -m 0755 pull-manifest.sh /usr/local/bin/yara-pull-manifest
+#   systemctl enable --now yara-manifest.timer
+
+[Unit]
+Description=Mirror the yara update manifest from GitHub Releases
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=yara
+Group=yara
+ExecStart=/usr/local/bin/yara-pull-manifest
+
+ProtectSystem=strict
+ProtectHome=yes
+# The one directory it exists to write to.
+ReadWritePaths=/srv/yara/updates
+PrivateTmp=yes
+PrivateDevices=yes
+NoNewPrivileges=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
