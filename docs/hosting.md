@@ -167,8 +167,12 @@ check in every client's log before the first release is even cut.
 
 ## Sync
 
-**Not implemented yet.** This section specifies it before it is built, because
-the key hierarchy has to be settled before any of it is written.
+Implemented in `crates/yara-sync`, which mirrors the broker's split: `auth`
+decides who gets in and is pure, `store` is the only module that touches a
+database, `api` is the only one that knows about HTTP.
+
+The desktop client is not written yet, so nothing pushes to it — but the
+service itself is complete and tested against real signed requests.
 
 ### Two secrets, not one
 
@@ -245,10 +249,37 @@ opaque per-item records rather than a whole file. The server assigns a
 monotonic revision to every write:
 
 ```
-GET  /api/v1/account                                → {salt, kdf, wrapped_vault_key, wrapped_account_key}
-POST /api/v1/devices   {public_key, signed_by_account_key}
+GET  /api/v1/health                                 → {service, version}
+GET  /api/v1/account/{id}                           → {salt, kdf, wrappedVaultKey, wrappedAccountKey, revision}
+POST /api/v1/devices   {accountId, deviceId, publicKey, invite?}
 GET  /api/v1/items?since=<revision>                 → {revision, items[]}
-POST /api/v1/items     {expected_revision, items[]} → {revision} | 409
+POST /api/v1/items     {expectedRevision, items[]}  → {revision} | 409
+```
+
+Signed requests carry:
+
+```
+Authorization:      yara1 <account_id>/<device_id>
+X-Yara-Timestamp:   <unix seconds>
+X-Yara-Nonce:       <at least 16 bytes, base64>
+X-Yara-Signature:   Ed25519 over  method \n path \n ts \n nonce \n sha256(body)
+```
+
+The signature is checked against the **raw body bytes before they are parsed**.
+Verifying a re-serialised body would cover something the client never sent,
+which is the quiet way a signing scheme stops meaning anything.
+
+`since` is not signed and does not need to be: it can only narrow what the
+account may already read, so a tampered value costs the caller a re-fetch and
+nothing else. Nothing that changes meaning is allowed in a query string for
+exactly that reason.
+
+Operators get one command, because invites are the only thing that needs a
+human:
+
+```bash
+yara-sync invite    # a single-use code, valid 48 hours, stored hashed
+yara-sync purge     # drop tombstones older than 30 days
 ```
 
 Each item is `{id, revision, ciphertext, deleted}`. The client pulls everything

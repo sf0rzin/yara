@@ -1,0 +1,36 @@
+[package]
+name = "yara-sync"
+description = "Encrypted vault sync, for the machines that hold no key"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+# Default features off: this speaks HTTP/1 to a proxy on the same host and
+# needs none of the multipart, websocket or tracing machinery.
+axum = { version = "0.8", default-features = false, features = [
+  "http1",
+  "json",
+  "query",
+  "tokio",
+] }
+base64.workspace = true
+ed25519-dalek = "2"
+rand = "0.8"
+# Bundled so the server needs no system SQLite, which keeps deployment to
+# copying one binary onto a machine that compiles nothing.
+rusqlite = { version = "0.32", features = ["bundled"] }
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+http-body-util = "0.1"
+# Drives the router directly, so the integration tests exercise real routing,
+# extraction and signature checking without binding a socket.
+tower = { version = "0.5", features = ["util"] }
