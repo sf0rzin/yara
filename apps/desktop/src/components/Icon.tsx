@@ -16,6 +16,13 @@ const paths = {
     </>
   ),
   allItems: <path d="M8 1.75 14.25 8 8 14.25 1.75 8Z" />,
+  download: (
+    <>
+      <path d="M8 2.25v7.5" />
+      <path d="M4.75 6.75 8 10l3.25-3.25" />
+      <path d="M2.75 12.25h10.5" />
+    </>
+  ),
   recent: (
     <>
       <circle cx="8" cy="8" r="6.25" />
