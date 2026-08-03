@@ -289,7 +289,7 @@ async fn a_standing_grant_stops_the_prompts() {
     // grant, so a reveal here would pass for the wrong reason.
     for _ in 0..3 {
         broker
-            .handle(run("db-prod", "cmd", &["/C", "exit"]), &client())
+            .handle(run("db-prod", "hostname", &[]), &client())
             .await;
     }
 
@@ -335,7 +335,7 @@ async fn a_grant_to_run_does_not_silently_authorise_a_reveal() {
     let broker = broker_with(FakeVault::new(), user.clone());
 
     broker
-        .handle(run("db-prod", "cmd", &["/C", "exit"]), &client())
+        .handle(run("db-prod", "hostname", &[]), &client())
         .await;
     assert_eq!(user.times_asked(), 1);
 
@@ -352,7 +352,7 @@ async fn another_program_cannot_ride_on_an_existing_grant() {
     });
     let broker = broker_with(FakeVault::new(), user.clone());
 
-    let request = run("db-prod", "cmd", &["/C", "exit"]);
+    let request = run("db-prod", "hostname", &[]);
     broker.handle(request.clone(), &client()).await;
     assert_eq!(user.times_asked(), 1);
 
@@ -372,7 +372,7 @@ async fn locking_the_vault_invalidates_outstanding_grants() {
     });
     let broker = broker_with(FakeVault::new(), user.clone());
 
-    let request = run("db-prod", "cmd", &["/C", "exit"]);
+    let request = run("db-prod", "hostname", &[]);
     broker.handle(request.clone(), &client()).await;
     assert_eq!(user.times_asked(), 1);
 
@@ -382,9 +382,15 @@ async fn locking_the_vault_invalidates_outstanding_grants() {
     assert_eq!(user.times_asked(), 2);
 }
 
+/// Proves two things at once, and it has to.
+///
+/// The only way to show the child received the value is to have it print the
+/// value, and printing it is precisely what the redaction removes. So the
+/// marker appearing in the output *is* the evidence that the child held the
+/// real thing — and its absence from the response is the property that matters.
 #[cfg(windows)]
 #[tokio::test]
-async fn a_run_puts_the_secret_in_the_child_environment() {
+async fn the_child_gets_the_secret_and_the_client_does_not() {
     let broker = broker_with(FakeVault::new(), ScriptedUser::new(Decision::AllowOnce));
 
     let request = run("db-prod", "cmd", &["/C", "echo %TEST_SECRET%"]);
@@ -392,12 +398,60 @@ async fn a_run_puts_the_secret_in_the_child_environment() {
         Response::Ran(output) => {
             assert_eq!(output.exit_code, 0);
             assert!(
-                output.stdout.contains(SECRET),
-                "the child should have seen it: {output:?}"
+                output.stdout.contains("[redacted by yara]"),
+                "the child should have echoed the value and had it removed: {output:?}"
             );
+            assert!(!output.stdout.contains(SECRET));
+            assert!(!serde_json::to_string(&output).unwrap().contains(SECRET));
         }
         other => panic!("unexpected {other:?}"),
     }
+}
+
+/// A shell is a reveal in a run's clothes, so it is priced like one: the user
+/// is asked every time, no matter how generously they answered before.
+#[tokio::test]
+async fn a_shell_command_never_earns_a_standing_grant() {
+    let user = ScriptedUser::new(Decision::AllowFor {
+        seconds: 900,
+        uses: 5,
+    });
+    let broker = broker_with(FakeVault::new(), user.clone());
+
+    for _ in 0..3 {
+        broker
+            .handle(run("db-prod", "cmd", &["/C", "exit"]), &client())
+            .await;
+    }
+
+    assert_eq!(user.times_asked(), 3, "every shell request must be asked");
+    assert!(broker.live_grants(yara_broker::now()).is_empty());
+}
+
+/// The escalation the command scoping exists to stop, end to end through the
+/// broker rather than only at the grant store.
+#[tokio::test]
+async fn a_grant_does_not_carry_over_to_a_different_command() {
+    let user = ScriptedUser::new(Decision::AllowFor {
+        seconds: 900,
+        uses: 5,
+    });
+    let broker = broker_with(FakeVault::new(), user.clone());
+
+    broker
+        .handle(run("db-prod", "hostname", &[]), &client())
+        .await;
+    assert_eq!(user.times_asked(), 1);
+
+    // Same item, same field, same program, live grant — different command.
+    broker
+        .handle(run("db-prod", "whoami", &[]), &client())
+        .await;
+    assert_eq!(
+        user.times_asked(),
+        2,
+        "a grant for one command must not authorise another"
+    );
 }
 
 #[cfg(windows)]
@@ -472,7 +526,7 @@ async fn granted_access_shows_up_as_a_live_grant() {
     );
 
     broker
-        .handle(run("db-prod", "cmd", &["/C", "exit"]), &client())
+        .handle(run("db-prod", "hostname", &[]), &client())
         .await;
 
     let grants = broker.live_grants(yara_broker::now());
@@ -490,7 +544,7 @@ async fn revoking_a_grant_makes_the_next_request_prompt_again() {
     });
     let broker = broker_with(FakeVault::new(), user.clone());
 
-    let request = run("db-prod", "cmd", &["/C", "exit"]);
+    let request = run("db-prod", "hostname", &[]);
     broker.handle(request.clone(), &client()).await;
     let grant = broker.live_grants(yara_broker::now())[0].id;
     assert!(broker.revoke(grant));

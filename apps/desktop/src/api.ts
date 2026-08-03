@@ -95,6 +95,14 @@ export interface ApprovalPrompt {
   command: string | null;
   envVar: string | null;
   reason: string;
+  /**
+   * The command would hand the value back rather than use it — a shell, or an
+   * interpreter given a program to evaluate. True for an outright reveal too.
+   *
+   * When this is set the user is answering "may it see this?", whatever the
+   * request called itself, and the dialog has to say so.
+   */
+  discloses: boolean;
 }
 
 export interface Grant {
@@ -103,6 +111,8 @@ export interface Grant {
   field: string;
   program: string;
   scope: "run" | "reveal";
+  /** The exact thing it authorises, e.g. "run `npm run migrate`". */
+  permits: string;
   secondsRemaining: number;
   remainingUses: number;
 }

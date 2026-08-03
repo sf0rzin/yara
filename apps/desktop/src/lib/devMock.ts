@@ -239,6 +239,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => unknown> = {
       field: "password",
       program: "claude.exe",
       scope: "run",
+      permits: "run `terraform apply`",
       secondsRemaining: 540,
       remainingUses: 4,
     },
@@ -334,6 +335,7 @@ const SAMPLE_PROMPTS: Record<string, unknown> = {
     command: "terraform apply -auto-approve",
     envVar: "AWS_SECRET_ACCESS_KEY",
     reason: "apply the staging plan I just showed you",
+    discloses: false,
   },
   reveal: {
     id: "p-reveal",
@@ -346,6 +348,22 @@ const SAMPLE_PROMPTS: Record<string, unknown> = {
     command: null,
     envVar: null,
     reason: "I need to read it to continue",
+    discloses: true,
+  },
+  // A run that is a reveal in disguise, so the heavier wording can be seen
+  // without a real broker to talk to.
+  shell: {
+    id: "p-shell",
+    program: "claude.exe",
+    programPath: "C:\\Users\\anthony\\AppData\\Local\\Programs\\claude\\claude.exe",
+    pid: 21804,
+    item: "AWS Console",
+    field: "password",
+    mode: "run",
+    command: "cmd /C echo %AWS_SECRET_ACCESS_KEY%",
+    envVar: "AWS_SECRET_ACCESS_KEY",
+    reason: "just checking the value is set",
+    discloses: true,
   },
 };
 

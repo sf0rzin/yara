@@ -341,6 +341,8 @@ pub struct GrantView {
     pub program: String,
     /// `run` or `reveal`.
     pub scope: String,
+    /// The exact thing it authorises, e.g. ``run `npm run migrate` ``.
+    pub permits: String,
     pub seconds_remaining: u64,
     pub remaining_uses: u32,
 }
@@ -371,10 +373,15 @@ fn list_grants(broker: State<'_, BrokerHandle>) -> Vec<GrantView> {
             item: grant.item_name.clone(),
             field: grant.field.as_str().to_string(),
             program: grant.client.display_name(),
-            scope: match grant.scope {
-                yara_broker::Scope::Run => "run".into(),
-                yara_broker::Scope::Reveal => "reveal".into(),
+            scope: if grant.scope.is_reveal() {
+                "reveal".into()
+            } else {
+                "run".into()
             },
+            // What the grant actually permits, which is one command and not
+            // the category. Shown so a live permission can be read for what it
+            // is rather than trusted for what it was asked for.
+            permits: grant.scope.summary(),
             seconds_remaining: grant.seconds_remaining(yara_broker::now()),
             remaining_uses: grant.remaining_uses(),
         })

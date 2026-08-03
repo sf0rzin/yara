@@ -29,6 +29,11 @@ export function ApprovalDialog({ prompt, onSettled }: ApprovalDialogProps): JSX.
 
   const isReveal = prompt.mode === "reveal";
 
+  // True for a reveal, and also for a `run` whose command would print the
+  // value — a shell, or an interpreter handed a program. The two differ in
+  // wording and not in consequence, so the dialog treats them the same.
+  const discloses = prompt.discloses;
+
   async function answer(choice: "deny" | "once" | "window") {
     setBusy(true);
     setError(null);
@@ -61,7 +66,7 @@ export function ApprovalDialog({ prompt, onSettled }: ApprovalDialogProps): JSX.
           </span>
           <div>
             <h2 className="dialog__title">
-              {prompt.program} wants {isReveal ? "to see" : "to use"} a credential
+              {prompt.program} wants {discloses ? "to see" : "to use"} a credential
             </h2>
             <p className="approval__pid">
               Process {prompt.pid}
@@ -99,10 +104,12 @@ export function ApprovalDialog({ prompt, onSettled }: ApprovalDialogProps): JSX.
         </div>
 
         <p className="approval__consequence">
-          <Icon name={isReveal ? "alert" : "check"} size={14} />
+          <Icon name={discloses ? "alert" : "check"} size={14} />
           {isReveal
             ? "The value will be given to that program in full. Once it is out, yara cannot take it back."
-            : "yara runs the command itself. The value goes into the command's environment, and the program only sees its output."}
+            : discloses
+              ? "This command can print the value, so approving it hands the credential over as surely as revealing it would. yara cannot take it back."
+              : "yara runs the command itself. The value goes into the command's environment, and the program only sees its output."}
         </p>
 
         {error && (
@@ -132,9 +139,11 @@ export function ApprovalDialog({ prompt, onSettled }: ApprovalDialogProps): JSX.
             Allow once
           </button>
 
-          {/* Revealing plaintext never earns a standing grant — the backend
-              enforces this, so the option is simply not offered. */}
-          {!isReveal && (
+          {/* A disclosure never earns a standing grant — whether it calls
+              itself a reveal or hides behind a command that prints the value.
+              The backend enforces this by downgrading the answer; the option
+              is not offered so the interface cannot imply otherwise. */}
+          {!discloses && (
             <button
               type="button"
               className="button button--quiet"
