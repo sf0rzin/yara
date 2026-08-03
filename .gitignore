@@ -17,3 +17,8 @@ dist-ssr
 *.yara
 *.vault
 /local
+
+# Scratch. A 2.7 MB reference image reached the history through a careless
+# `git add -A`, and the fix for that is the working tree not offering it.
+/tmp
+/scratch
