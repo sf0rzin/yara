@@ -93,7 +93,7 @@ export function SecurityView({ health, items, onSelect }: SecurityViewProps): JS
       </Finding>
 
       <p className="security__note">
-        Checked entirely on this device. lapse does not send anything derived
+        Checked entirely on this device. yara does not send anything derived
         from your passwords to a breach database or any other service.
       </p>
     </div>

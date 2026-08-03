@@ -5,7 +5,7 @@
 
 use crate::protocol::{self, Request, Response};
 
-/// Sends one request to a running lapse and returns its answer.
+/// Sends one request to a running yara and returns its answer.
 #[cfg(windows)]
 pub async fn send(request: &Request) -> Result<Response, String> {
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -14,7 +14,7 @@ pub async fn send(request: &Request) -> Result<Response, String> {
     let stream = ClientOptions::new()
         .open(crate::transport::DEFAULT_PIPE_NAME)
         .map_err(|error| {
-            format!("could not reach the vault ({error}). Is lapse running and unlocked?")
+            format!("could not reach the vault ({error}). Is yara running and unlocked?")
         })?;
 
     let (reader, mut writer) = tokio::io::split(stream);

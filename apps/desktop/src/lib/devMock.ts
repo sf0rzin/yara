@@ -372,8 +372,8 @@ export function installDevMock(): void {
     configurable: true,
   });
 
-  // In the browser console: __lapseApproval("run") or __lapseApproval("reveal")
-  Object.defineProperty(window, "__lapseApproval", {
+  // In the browser console: __yaraApproval("run") or __yaraApproval("reveal")
+  Object.defineProperty(window, "__yaraApproval", {
     value: (kind: "run" | "reveal" = "run") =>
       emit("broker://approval", SAMPLE_PROMPTS[kind]),
     configurable: true,

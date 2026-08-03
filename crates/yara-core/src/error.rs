@@ -1,6 +1,6 @@
 use thiserror::Error;
 
-/// Errors returned by the lapse core.
+/// Errors returned by the yara core.
 ///
 /// Variants are deliberately coarse around cryptographic failures: callers must
 /// not be able to distinguish "wrong password" from "tampered ciphertext", since

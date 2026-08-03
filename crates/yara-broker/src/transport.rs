@@ -3,10 +3,10 @@
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use lapse_core::SecretString;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::oneshot;
 use uuid::Uuid;
+use yara_core::SecretString;
 
 use crate::audit::{Action, AuditLog, Entry, Outcome};
 use crate::grant::{ClientId, Grant, GrantStore, Scope};
@@ -17,7 +17,7 @@ use crate::protocol::{
 
 /// Where the broker listens.
 #[cfg(windows)]
-pub const DEFAULT_PIPE_NAME: &str = r"\\.\pipe\lapse.broker";
+pub const DEFAULT_PIPE_NAME: &str = r"\\.\pipe\yara.broker";
 
 /// How long a request waits for the user before giving up.
 ///
@@ -68,7 +68,10 @@ pub enum Decision {
     /// This one time.
     AllowOnce,
     /// For a window, up to a number of uses.
-    AllowFor { seconds: u64, uses: u32 },
+    AllowFor {
+        seconds: u64,
+        uses: u32,
+    },
 }
 
 /// Asks the user. Implemented by the desktop app.
@@ -180,16 +183,24 @@ impl Broker {
         }
 
         let now = crate::now();
-        let existing = self.grants.lock().ok().and_then(|mut store| {
-            store.redeem(item.id, access.field, &access.intent, client, now)
-        });
+        let existing =
+            self.grants.lock().ok().and_then(|mut store| {
+                store.redeem(item.id, access.field, &access.intent, client, now)
+            });
 
         let outcome = match existing {
             Some(grant) => Outcome::Reused { grant },
             None => match self.seek_approval(&access, &item, client, now).await {
                 Ok(outcome) => outcome,
                 Err(refusal) => {
-                    self.record_access(client, &item, &access, Outcome::Refused { reason: refusal.clone() });
+                    self.record_access(
+                        client,
+                        &item,
+                        &access,
+                        Outcome::Refused {
+                            reason: refusal.clone(),
+                        },
+                    );
                     return Response::refused(refusal);
                 }
             },
@@ -255,9 +266,14 @@ impl Broker {
 
         let grant = match decision {
             Decision::Deny => return Err(Refusal::Denied),
-            Decision::AllowOnce => {
-                Grant::once(item.id, &item.name, access.field, scope, client.clone(), now)
-            }
+            Decision::AllowOnce => Grant::once(
+                item.id,
+                &item.name,
+                access.field,
+                scope,
+                client.clone(),
+                now,
+            ),
             Decision::AllowFor { seconds, uses } => Grant::new(
                 item.id,
                 &item.name,
@@ -401,8 +417,9 @@ where
             },
         };
 
-        let encoded = protocol::encode(&response)
-            .unwrap_or_else(|_| "{\"response\":\"error\",\"message\":\"encoding failed\"}\n".into());
+        let encoded = protocol::encode(&response).unwrap_or_else(|_| {
+            "{\"response\":\"error\",\"message\":\"encoding failed\"}\n".into()
+        });
         writer.write_all(encoded.as_bytes()).await?;
         writer.flush().await?;
     }

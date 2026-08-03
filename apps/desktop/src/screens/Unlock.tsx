@@ -84,7 +84,7 @@ export function Unlock({ mode, onOpen }: UnlockProps): JSX.Element {
 
         <div className="gate__intro">
           <h1 className="gate__title">
-            {isSetup ? "Create your vault" : "lapse"}
+            {isSetup ? "Create your vault" : "yara"}
           </h1>
           <p className="gate__sub">
             {isSetup

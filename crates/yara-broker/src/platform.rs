@@ -63,9 +63,7 @@ mod imp {
 
         // SAFETY: `process` is a valid handle opened above, and the buffer and
         // size are consistent with one another.
-        let ok = unsafe {
-            QueryFullProcessImageNameW(process, 0, buffer.as_mut_ptr(), &mut size)
-        };
+        let ok = unsafe { QueryFullProcessImageNameW(process, 0, buffer.as_mut_ptr(), &mut size) };
 
         // SAFETY: `process` is a valid handle that has not been closed yet.
         unsafe { CloseHandle(process) };

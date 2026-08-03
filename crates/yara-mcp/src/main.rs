@@ -1,14 +1,14 @@
-//! `lapse-mcp` — the lapse vault as an MCP server.
+//! `yara-mcp` — the yara vault as an MCP server.
 //!
 //! Speaks JSON-RPC 2.0 over stdio, one message per line, and forwards each tool
-//! call to the broker running inside the lapse app. It holds no state and no
+//! call to the broker running inside the yara app. It holds no state and no
 //! credentials of its own: every request still goes to the vault owner for
 //! approval and lands in the audit log.
 //!
 //! Point an MCP-capable agent at this binary:
 //!
 //! ```json
-//! { "mcpServers": { "lapse": { "command": "lapse-mcp" } } }
+//! { "mcpServers": { "yara": { "command": "yara-mcp" } } }
 //! ```
 
 mod rpc;

@@ -1,5 +1,5 @@
 [package]
-name = "lapse-broker"
+name = "yara-broker"
 description = "Approval-gated credential broker for AI agents"
 version.workspace = true
 edition.workspace = true
@@ -8,7 +8,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-lapse-core.workspace = true
+yara-core.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

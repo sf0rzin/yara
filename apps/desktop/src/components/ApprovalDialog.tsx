@@ -101,8 +101,8 @@ export function ApprovalDialog({ prompt, onSettled }: ApprovalDialogProps): JSX.
         <p className="approval__consequence">
           <Icon name={isReveal ? "alert" : "check"} size={14} />
           {isReveal
-            ? "The value will be given to that program in full. Once it is out, lapse cannot take it back."
-            : "lapse runs the command itself. The value goes into the command's environment, and the program only sees its output."}
+            ? "The value will be given to that program in full. Once it is out, yara cannot take it back."
+            : "yara runs the command itself. The value goes into the command's environment, and the program only sees its output."}
         </p>
 
         {error && (

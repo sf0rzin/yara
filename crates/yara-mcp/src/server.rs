@@ -4,8 +4,8 @@
 //! message and returns the reply, which makes every path testable without a
 //! running vault or a real stdio stream.
 
-use lapse_broker::protocol::{AccessRequest, Field, Intent, Request, Response};
 use serde_json::{json, Value};
+use yara_broker::protocol::{AccessRequest, Field, Intent, Request, Response};
 
 use crate::rpc::{codes, Incoming, Outgoing};
 
@@ -24,7 +24,7 @@ pub struct PipeLink;
 
 impl BrokerLink for PipeLink {
     async fn send(&self, request: Request) -> Result<Response, String> {
-        lapse_broker::client::send(&request).await
+        yara_broker::client::send(&request).await
     }
 }
 
@@ -75,13 +75,13 @@ fn initialize(params: &Value) -> Value {
         "protocolVersion": version,
         "capabilities": { "tools": {} },
         "serverInfo": {
-            "name": "lapse",
+            "name": "yara",
             "version": env!("CARGO_PKG_VERSION"),
         },
-        "instructions": "Credentials from the user's lapse vault. Prefer \
-lapse_run_with_credential, which uses a secret without ever disclosing it to \
-you. Every request is approved by the vault owner in the lapse window and \
-written to an audit log.",
+        "instructions": "Credentials from the user's yara vault. Prefer \
+    yara_run_with_credential, which uses a secret without ever disclosing it to \
+    you. Every request is approved by the vault owner in the yara window and \
+    written to an audit log.",
     })
 }
 
@@ -94,11 +94,11 @@ written to an audit log.",
 fn tools() -> Value {
     json!([
         {
-            "name": "lapse_list_items",
-            "description": "List the credentials stored in the user's lapse vault. \
-Returns names, usernames, and ids only — never secret values. This needs no \
-approval, so use it first to find out what exists before requesting access to \
-anything.",
+            "name": "yara_list_items",
+            "description": "List the credentials stored in the user's yara vault. \
+    Returns names, usernames, and ids only — never secret values. This needs no \
+    approval, so use it first to find out what exists before requesting access to \
+    anything.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -110,18 +110,18 @@ anything.",
             },
         },
         {
-            "name": "lapse_run_with_credential",
+            "name": "yara_run_with_credential",
             "description": "Run a command with a credential from the vault placed in \
-its environment. This is the preferred way to use a credential: lapse runs the \
-command itself and returns only the exit code and output, so the secret never \
-enters this conversation and cannot leak through it. The vault owner is shown \
-the exact command and your stated reason, and must approve.",
+    its environment. This is the preferred way to use a credential: yara runs the \
+    command itself and returns only the exit code and output, so the secret never \
+    enters this conversation and cannot leak through it. The vault owner is shown \
+    the exact command and your stated reason, and must approve.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "item": {
                         "type": "string",
-                        "description": "Item name or id, as returned by lapse_list_items.",
+                        "description": "Item name or id, as returned by yara_list_items.",
                     },
                     "field": {
                         "type": "string",
@@ -131,7 +131,7 @@ the exact command and your stated reason, and must approve.",
                     "env_var": {
                         "type": "string",
                         "description": "Environment variable to place the credential in, \
-for example DATABASE_URL.",
+    for example DATABASE_URL.",
                     },
                     "command": {
                         "type": "string",
@@ -149,25 +149,25 @@ for example DATABASE_URL.",
                     "reason": {
                         "type": "string",
                         "description": "Why you need this, in one sentence. Shown to the \
-vault owner verbatim — write it for them, not for a log.",
+    vault owner verbatim — write it for them, not for a log.",
                     },
                 },
                 "required": ["item", "env_var", "command", "reason"],
             },
         },
         {
-            "name": "lapse_reveal_credential",
+            "name": "yara_reveal_credential",
             "description": "Return a credential in plaintext. Last resort — prefer \
-lapse_run_with_credential, which accomplishes most tasks without disclosing the \
-value. Anything returned here enters this conversation permanently and cannot be \
-taken back. The vault owner must approve every single disclosure; a standing \
-approval is never granted for this.",
+    yara_run_with_credential, which accomplishes most tasks without disclosing the \
+    value. Anything returned here enters this conversation permanently and cannot be \
+    taken back. The vault owner must approve every single disclosure; a standing \
+    approval is never granted for this.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "item": {
                         "type": "string",
-                        "description": "Item name or id, as returned by lapse_list_items.",
+                        "description": "Item name or id, as returned by yara_list_items.",
                     },
                     "field": {
                         "type": "string",
@@ -177,16 +177,16 @@ approval is never granted for this.",
                     "reason": {
                         "type": "string",
                         "description": "Why nothing short of the plaintext will do. Shown \
-to the vault owner verbatim.",
+    to the vault owner verbatim.",
                     },
                 },
                 "required": ["item", "reason"],
             },
         },
         {
-            "name": "lapse_status",
-            "description": "Check whether lapse is running and the vault is unlocked. \
-Use this when another lapse tool cannot reach the vault.",
+            "name": "yara_status",
+            "description": "Check whether yara is running and the vault is unlocked. \
+    Use this when another yara tool cannot reach the vault.",
             "inputSchema": { "type": "object", "properties": {} },
         },
     ])
@@ -201,16 +201,16 @@ async fn call_tool<L: BrokerLink>(link: &L, params: &Value) -> Result<Value, Str
     let args = params.get("arguments").cloned().unwrap_or(json!({}));
 
     let request = match name {
-        "lapse_status" => Request::Status,
+        "yara_status" => Request::Status,
 
-        "lapse_list_items" => Request::List {
+        "yara_list_items" => Request::List {
             query: args
                 .get("query")
                 .and_then(Value::as_str)
                 .map(str::to_string),
         },
 
-        "lapse_run_with_credential" => Request::Access(AccessRequest {
+        "yara_run_with_credential" => Request::Access(AccessRequest {
             item: required_str(&args, "item")?,
             field: field_from(&args)?,
             intent: Intent::Run {
@@ -231,7 +231,7 @@ async fn call_tool<L: BrokerLink>(link: &L, params: &Value) -> Result<Value, Str
             reason: required_str(&args, "reason")?,
         }),
 
-        "lapse_reveal_credential" => Request::Access(AccessRequest {
+        "yara_reveal_credential" => Request::Access(AccessRequest {
             item: required_str(&args, "item")?,
             field: field_from(&args)?,
             intent: Intent::Reveal,
@@ -259,7 +259,11 @@ fn required_str(args: &Value, key: &str) -> Result<String, String> {
 }
 
 fn field_from(args: &Value) -> Result<Field, String> {
-    match args.get("field").and_then(Value::as_str).unwrap_or("password") {
+    match args
+        .get("field")
+        .and_then(Value::as_str)
+        .unwrap_or("password")
+    {
         "password" => Ok(Field::Password),
         "username" => Ok(Field::Username),
         "totp" => Ok(Field::Totp),
@@ -285,7 +289,7 @@ fn render(response: Response) -> Value {
     match response {
         Response::Status { unlocked, version } => text(
             format!(
-                "lapse {version} is running and the vault is {}.",
+                "yara {version} is running and the vault is {}.",
                 if unlocked { "unlocked" } else { "locked" }
             ),
             false,
@@ -336,9 +340,9 @@ fn render(response: Response) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use lapse_broker::protocol::{CommandOutput, ItemRef, Refusal};
     use std::sync::Mutex;
     use uuid::Uuid;
+    use yara_broker::protocol::{CommandOutput, ItemRef, Refusal};
 
     /// A broker that records what it was asked and replies from a script.
     struct FakeBroker {
@@ -385,7 +389,10 @@ mod tests {
     }
 
     fn call(tool: &str, arguments: Value) -> Incoming {
-        message("tools/call", json!({ "name": tool, "arguments": arguments }))
+        message(
+            "tools/call",
+            json!({ "name": tool, "arguments": arguments }),
+        )
     }
 
     async fn result_of<L: BrokerLink>(link: &L, incoming: Incoming) -> Value {
@@ -413,7 +420,7 @@ mod tests {
         .await;
 
         assert_eq!(result["protocolVersion"], "2024-11-05");
-        assert_eq!(result["serverInfo"]["name"], "lapse");
+        assert_eq!(result["serverInfo"]["name"], "yara");
         assert!(result["capabilities"]["tools"].is_object());
     }
 
@@ -463,7 +470,7 @@ mod tests {
 
     #[tokio::test]
     async fn both_access_tools_require_a_reason() {
-        for tool in ["lapse_run_with_credential", "lapse_reveal_credential"] {
+        for tool in ["yara_run_with_credential", "yara_reveal_credential"] {
             let result = result_of(&UnreachableBroker, message("tools/list", json!({}))).await;
             let listed = result["tools"]
                 .as_array()
@@ -492,7 +499,7 @@ mod tests {
         let result = result_of(
             &broker,
             call(
-                "lapse_run_with_credential",
+                "yara_run_with_credential",
                 json!({
                     "item": "db-prod",
                     "env_var": "DATABASE_URL",
@@ -543,7 +550,7 @@ mod tests {
         let result = result_of(
             &broker,
             call(
-                "lapse_run_with_credential",
+                "yara_run_with_credential",
                 json!({
                     "item": "db", "env_var": "X", "command": "npm", "reason": "why",
                 }),
@@ -563,7 +570,7 @@ mod tests {
         let result = result_of(
             &broker,
             call(
-                "lapse_reveal_credential",
+                "yara_reveal_credential",
                 json!({ "item": "db", "reason": "why" }),
             ),
         )
@@ -575,12 +582,9 @@ mod tests {
 
     #[tokio::test]
     async fn an_unreachable_vault_is_a_tool_error_not_a_protocol_error() {
-        let reply = dispatch(
-            &UnreachableBroker,
-            call("lapse_status", json!({})),
-        )
-        .await
-        .unwrap();
+        let reply = dispatch(&UnreachableBroker, call("yara_status", json!({})))
+            .await
+            .unwrap();
 
         assert!(reply.error.is_none(), "must not be a JSON-RPC error");
         assert!(is_error(&reply.result.unwrap()));
@@ -590,7 +594,7 @@ mod tests {
     async fn a_missing_required_argument_is_an_invalid_params_error() {
         let reply = dispatch(
             &UnreachableBroker,
-            call("lapse_reveal_credential", json!({ "item": "db" })),
+            call("yara_reveal_credential", json!({ "item": "db" })),
         )
         .await
         .unwrap();
@@ -605,7 +609,7 @@ mod tests {
         let reply = dispatch(
             &UnreachableBroker,
             call(
-                "lapse_reveal_credential",
+                "yara_reveal_credential",
                 json!({ "item": "db", "reason": "   " }),
             ),
         )
@@ -627,7 +631,7 @@ mod tests {
             }],
         });
 
-        let result = result_of(&broker, call("lapse_list_items", json!({}))).await;
+        let result = result_of(&broker, call("yara_list_items", json!({}))).await;
 
         assert!(!is_error(&result));
         assert!(body(&result).contains("db-prod"));
@@ -639,7 +643,7 @@ mod tests {
         let reply = dispatch(
             &UnreachableBroker,
             call(
-                "lapse_reveal_credential",
+                "yara_reveal_credential",
                 json!({ "item": "db", "field": "secret", "reason": "why" }),
             ),
         )
@@ -651,7 +655,7 @@ mod tests {
 
     #[tokio::test]
     async fn an_unknown_tool_is_rejected() {
-        let reply = dispatch(&UnreachableBroker, call("lapse_do_anything", json!({})))
+        let reply = dispatch(&UnreachableBroker, call("yara_do_anything", json!({})))
             .await
             .unwrap();
 
@@ -665,12 +669,12 @@ mod tests {
             .as_array()
             .unwrap()
             .iter()
-            .find(|tool| tool["name"] == "lapse_reveal_credential")
+            .find(|tool| tool["name"] == "yara_reveal_credential")
             .unwrap()
             .clone();
 
         let description = reveal["description"].as_str().unwrap();
-        assert!(description.contains("lapse_run_with_credential"));
+        assert!(description.contains("yara_run_with_credential"));
         assert!(description.contains("Last resort"));
     }
 }

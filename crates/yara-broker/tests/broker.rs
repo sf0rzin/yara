@@ -3,14 +3,14 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
-use lapse_broker::grant::ClientId;
-use lapse_broker::protocol::{AccessRequest, Field, Intent, ItemRef, Refusal, Request, Response};
-use lapse_broker::transport::{
-    ApprovalRequest, Approver, Broker, Decision, Resolution, VaultBridge,
-};
-use lapse_core::SecretString;
 use tokio::sync::oneshot;
 use uuid::Uuid;
+use yara_broker::grant::ClientId;
+use yara_broker::protocol::{AccessRequest, Field, Intent, ItemRef, Refusal, Request, Response};
+use yara_broker::transport::{
+    ApprovalRequest, Approver, Broker, Decision, Resolution, VaultBridge,
+};
+use yara_core::SecretString;
 
 const SECRET: &str = "s3cr3t-value-not-in-output";
 
@@ -246,7 +246,10 @@ async fn listing_items_works_without_approval_and_exposes_no_secrets() {
     let user = ScriptedUser::new(Decision::Deny);
     let broker = broker_with(FakeVault::new(), user.clone());
 
-    match broker.handle(Request::List { query: None }, &client()).await {
+    match broker
+        .handle(Request::List { query: None }, &client())
+        .await
+    {
         Response::Items { items } => {
             assert_eq!(items.len(), 1);
             let encoded = serde_json::to_string(&items).unwrap();
@@ -265,7 +268,10 @@ async fn listing_is_refused_while_the_vault_is_locked() {
     };
     let broker = broker_with(vault, ScriptedUser::new(Decision::Deny));
 
-    match broker.handle(Request::List { query: None }, &client()).await {
+    match broker
+        .handle(Request::List { query: None }, &client())
+        .await
+    {
         Response::Refused { reason, .. } => assert_eq!(reason, Refusal::VaultLocked),
         other => panic!("unexpected {other:?}"),
     }
@@ -328,7 +334,9 @@ async fn a_grant_to_run_does_not_silently_authorise_a_reveal() {
     });
     let broker = broker_with(FakeVault::new(), user.clone());
 
-    broker.handle(run("db-prod", "cmd", &["/C", "exit"]), &client()).await;
+    broker
+        .handle(run("db-prod", "cmd", &["/C", "exit"]), &client())
+        .await;
     assert_eq!(user.times_asked(), 1);
 
     // Being allowed to use the password is not being allowed to see it.
@@ -415,7 +423,10 @@ async fn a_run_that_does_not_print_the_secret_returns_nothing_secret() {
 async fn a_failing_command_reports_its_exit_code_rather_than_erroring() {
     let broker = broker_with(FakeVault::new(), ScriptedUser::new(Decision::AllowOnce));
 
-    match broker.handle(run("db-prod", "cmd", &["/C", "exit 3"]), &client()).await {
+    match broker
+        .handle(run("db-prod", "cmd", &["/C", "exit 3"]), &client())
+        .await
+    {
         Response::Ran(output) => assert_eq!(output.exit_code, 3),
         other => panic!("unexpected {other:?}"),
     }
@@ -426,7 +437,10 @@ async fn a_command_that_does_not_exist_is_reported_without_leaking() {
     let broker = broker_with(FakeVault::new(), ScriptedUser::new(Decision::AllowOnce));
 
     match broker
-        .handle(run("db-prod", "definitely-not-a-real-binary", &[]), &client())
+        .handle(
+            run("db-prod", "definitely-not-a-real-binary", &[]),
+            &client(),
+        )
         .await
     {
         Response::Error { message } => assert!(!message.contains(SECRET)),
@@ -461,7 +475,7 @@ async fn granted_access_shows_up_as_a_live_grant() {
         .handle(run("db-prod", "cmd", &["/C", "exit"]), &client())
         .await;
 
-    let grants = broker.live_grants(lapse_broker::now());
+    let grants = broker.live_grants(yara_broker::now());
     assert_eq!(grants.len(), 1);
     assert_eq!(grants[0].item_name, "db-prod");
     // One of the five was spent by the request that created it.
@@ -478,7 +492,7 @@ async fn revoking_a_grant_makes_the_next_request_prompt_again() {
 
     let request = run("db-prod", "cmd", &["/C", "exit"]);
     broker.handle(request.clone(), &client()).await;
-    let grant = broker.live_grants(lapse_broker::now())[0].id;
+    let grant = broker.live_grants(yara_broker::now())[0].id;
     assert!(broker.revoke(grant));
 
     broker.handle(request, &client()).await;
@@ -505,7 +519,7 @@ async fn a_client_can_talk_to_the_broker_over_a_named_pipe() {
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
     use tokio::net::windows::named_pipe::{ClientOptions, ServerOptions};
 
-    let pipe = format!(r"\\.\pipe\lapse-test-{}", Uuid::new_v4());
+    let pipe = format!(r"\\.\pipe\yara-test-{}", Uuid::new_v4());
     let broker = broker_with(FakeVault::new(), ScriptedUser::new(Decision::AllowOnce));
 
     let server = ServerOptions::new()
@@ -517,7 +531,7 @@ async fn a_client_can_talk_to_the_broker_over_a_named_pipe() {
         let broker = Arc::clone(&broker);
         async move {
             server.connect().await.unwrap();
-            lapse_broker::transport::serve_connection(broker, server, client())
+            yara_broker::transport::serve_connection(broker, server, client())
                 .await
                 .unwrap();
         }
@@ -529,12 +543,12 @@ async fn a_client_can_talk_to_the_broker_over_a_named_pipe() {
 
     // Status, then a real access request, over the same connection.
     for request in [Request::Status, reveal("db-prod")] {
-        let encoded = lapse_broker::protocol::encode(&request).unwrap();
+        let encoded = yara_broker::protocol::encode(&request).unwrap();
         writer.write_all(encoded.as_bytes()).await.unwrap();
         writer.flush().await.unwrap();
 
         let line = lines.next_line().await.unwrap().unwrap();
-        let response: Response = lapse_broker::protocol::decode(&line).unwrap();
+        let response: Response = yara_broker::protocol::decode(&line).unwrap();
 
         match (&request, response) {
             (Request::Status, Response::Status { unlocked, .. }) => assert!(unlocked),
@@ -554,7 +568,7 @@ async fn malformed_input_gets_an_error_rather_than_killing_the_connection() {
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
     use tokio::net::windows::named_pipe::{ClientOptions, ServerOptions};
 
-    let pipe = format!(r"\\.\pipe\lapse-test-{}", Uuid::new_v4());
+    let pipe = format!(r"\\.\pipe\yara-test-{}", Uuid::new_v4());
     let broker = broker_with(FakeVault::new(), ScriptedUser::new(Decision::AllowOnce));
 
     let server = ServerOptions::new()
@@ -566,7 +580,7 @@ async fn malformed_input_gets_an_error_rather_than_killing_the_connection() {
         let broker = Arc::clone(&broker);
         async move {
             server.connect().await.unwrap();
-            let _ = lapse_broker::transport::serve_connection(broker, server, client()).await;
+            let _ = yara_broker::transport::serve_connection(broker, server, client()).await;
         }
     });
 
@@ -579,18 +593,18 @@ async fn malformed_input_gets_an_error_rather_than_killing_the_connection() {
 
     let line = lines.next_line().await.unwrap().unwrap();
     assert!(matches!(
-        lapse_broker::protocol::decode::<Response>(&line).unwrap(),
+        yara_broker::protocol::decode::<Response>(&line).unwrap(),
         Response::Error { .. }
     ));
 
     // The connection must still be usable afterwards.
-    let encoded = lapse_broker::protocol::encode(&Request::Status).unwrap();
+    let encoded = yara_broker::protocol::encode(&Request::Status).unwrap();
     writer.write_all(encoded.as_bytes()).await.unwrap();
     writer.flush().await.unwrap();
 
     let line = lines.next_line().await.unwrap().unwrap();
     assert!(matches!(
-        lapse_broker::protocol::decode::<Response>(&line).unwrap(),
+        yara_broker::protocol::decode::<Response>(&line).unwrap(),
         Response::Status { .. }
     ));
 }

@@ -1,6 +1,6 @@
 [package]
-name = "lapse-desktop"
-description = "lapse desktop application"
+name = "yara-desktop"
+description = "yara desktop application"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -10,15 +10,15 @@ repository.workspace = true
 [lib]
 # The `_lib` suffix keeps the library name distinct from the binary name, which
 # would otherwise collide on Windows.
-name = "lapse_desktop_lib"
+name = "yara_desktop_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-lapse-broker.workspace = true
-lapse-core.workspace = true
+yara-broker.workspace = true
+yara-core.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tauri = { version = "2", features = [] }

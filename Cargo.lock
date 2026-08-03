@@ -2221,81 +2221,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "lapse-broker"
-version = "0.1.0"
-dependencies = [
- "lapse-core",
- "serde",
- "serde_json",
- "thiserror 2.0.19",
- "tokio",
- "uuid",
- "windows-sys 0.59.0",
-]
-
-[[package]]
-name = "lapse-cli"
-version = "0.1.0"
-dependencies = [
- "clap",
- "lapse-broker",
- "serde_json",
- "tokio",
-]
-
-[[package]]
-name = "lapse-core"
-version = "0.1.0"
-dependencies = [
- "argon2",
- "base64 0.22.1",
- "chacha20poly1305",
- "data-encoding",
- "hmac",
- "image",
- "percent-encoding",
- "qrcode",
- "rqrr",
- "serde",
- "serde_json",
- "sha1",
- "sha2",
- "subtle",
- "thiserror 2.0.19",
- "url",
- "uuid",
- "zeroize",
-]
-
-[[package]]
-name = "lapse-desktop"
-version = "0.1.0"
-dependencies = [
- "lapse-broker",
- "lapse-core",
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
- "tauri-plugin-clipboard-manager",
- "tauri-plugin-dialog",
- "tauri-plugin-opener",
- "tokio",
- "uuid",
-]
-
-[[package]]
-name = "lapse-mcp"
-version = "0.1.0"
-dependencies = [
- "lapse-broker",
- "serde",
- "serde_json",
- "tokio",
- "uuid",
-]
-
-[[package]]
 name = "libappindicator"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5621,6 +5546,81 @@ name = "x11rb-protocol"
 version = "0.13.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ea6fc2961e4ef194dcbfe56bb845534d0dc8098940c7e5c012a258bfec6701bd"
+
+[[package]]
+name = "yara-broker"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 2.0.19",
+ "tokio",
+ "uuid",
+ "windows-sys 0.59.0",
+ "yara-core",
+]
+
+[[package]]
+name = "yara-cli"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "serde_json",
+ "tokio",
+ "yara-broker",
+]
+
+[[package]]
+name = "yara-core"
+version = "0.1.0"
+dependencies = [
+ "argon2",
+ "base64 0.22.1",
+ "chacha20poly1305",
+ "data-encoding",
+ "hmac",
+ "image",
+ "percent-encoding",
+ "qrcode",
+ "rqrr",
+ "serde",
+ "serde_json",
+ "sha1",
+ "sha2",
+ "subtle",
+ "thiserror 2.0.19",
+ "url",
+ "uuid",
+ "zeroize",
+]
+
+[[package]]
+name = "yara-desktop"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-clipboard-manager",
+ "tauri-plugin-dialog",
+ "tauri-plugin-opener",
+ "tokio",
+ "uuid",
+ "yara-broker",
+ "yara-core",
+]
+
+[[package]]
+name = "yara-mcp"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tokio",
+ "uuid",
+ "yara-broker",
+]
 
 [[package]]
 name = "yoke"

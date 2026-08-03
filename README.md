@@ -1,4 +1,4 @@
-# lapse
+# yara
 
 A password manager with a built-in authenticator and a safe way to hand
 credentials to AI agents.
@@ -13,11 +13,11 @@ Three things, in order of how much they motivated the project:
 **Agents need credentials and there is no good way to give them any.** Pasting a
 secret into a chat puts it in the model's context forever. Putting it in a
 `.txt` and telling the agent "it's in there" just moves the plaintext to disk.
-lapse gives agents an approval-gated broker that runs commands with credentials
+yara gives agents an approval-gated broker that runs commands with credentials
 injected, so the value never enters the agent's context at all. See
 [docs/agent-access.md](docs/agent-access.md).
 
-**Reaching for your phone for a 6-digit code is tedious.** lapse generates TOTP
+**Reaching for your phone for a 6-digit code is tedious.** yara generates TOTP
 codes on the desktop, next to the password they go with. Opt-in per account — if
 you would rather keep second factors on a separate device, don't turn it on.
 
@@ -61,15 +61,15 @@ background, above the 4.5:1 floor.
 ## Layout
 
 ```
-crates/lapse-core     crypto, vault format, TOTP, health checks — no UI, no I/O
-crates/lapse-broker   approval-gated credential access for agents
-crates/lapse-cli      the `lapse` command an agent runs
-crates/lapse-mcp      MCP server, for agents that speak it natively
+crates/yara-core     crypto, vault format, TOTP, health checks — no UI, no I/O
+crates/yara-broker   approval-gated credential access for agents
+crates/yara-cli      the `yara` command an agent runs
+crates/yara-mcp      MCP server, for agents that speak it natively
 apps/desktop          Tauri v2 app (React + TypeScript frontend)
 docs/                 design notes
 ```
 
-`lapse-core` deliberately has no dependency on Tauri or on the filesystem. It
+`yara-core` deliberately has no dependency on Tauri or on the filesystem. It
 takes bytes and passwords and returns bytes, which keeps the part that matters
 small enough to audit and testable on its own.
 
@@ -78,7 +78,7 @@ small enough to audit and testable on its own.
 Requires Rust, Node 20+, and on Windows the MSVC build tools.
 
 ```bash
-cargo test -p lapse-core
+cargo test -p yara-core
 ```
 
 ```bash
@@ -98,7 +98,7 @@ Tauri rebuild. The mock is dev-only and cannot reach a release build.
 - [x] Offline password health checks: reuse, strength, missing second factors
 - [x] Desktop UI, auto-lock, clipboard that clears itself
 - [x] Agent broker: protocol, grants, audit log, named pipe transport
-- [x] Approval prompt, permissions screen, and the `lapse` command line client
+- [x] Approval prompt, permissions screen, and the `yara` command line client
 - [x] MCP server, so any MCP-capable agent can use the vault directly
 - [ ] macOS and Linux
 - [ ] Web app

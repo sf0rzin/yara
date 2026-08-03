@@ -14,6 +14,6 @@ dist-ssr
 *.swp
 
 # Local vault data must never be committed
-*.lapse
+*.yara
 *.vault
 /local

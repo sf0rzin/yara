@@ -1,6 +1,6 @@
 [package]
-name = "lapse-cli"
-description = "Command line client for the lapse credential broker"
+name = "yara-cli"
+description = "Command line client for the yara credential broker"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -8,11 +8,11 @@ license.workspace = true
 repository.workspace = true
 
 [[bin]]
-name = "lapse"
+name = "yara"
 path = "src/main.rs"
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
-lapse-broker.workspace = true
+yara-broker.workspace = true
 serde_json.workspace = true
 tokio.workspace = true

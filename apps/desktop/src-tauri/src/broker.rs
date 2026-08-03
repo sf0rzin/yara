@@ -2,21 +2,21 @@
 //!
 //! Two implementations live here. [`VaultView`] is how the broker reads the
 //! vault, and [`UiApprover`] is how it asks the person sitting in front of the
-//! app. Neither belongs in `lapse-broker` itself, which stays free of both Tauri
+//! app. Neither belongs in `yara-broker` itself, which stays free of both Tauri
 //! and any knowledge of how the vault is stored.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use lapse_broker::protocol::{Field, Intent, ItemRef};
-use lapse_broker::transport::{
-    ApprovalRequest, Approver, Broker, Decision, Resolution, VaultBridge,
-};
-use lapse_core::SecretString;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::oneshot;
 use uuid::Uuid;
+use yara_broker::protocol::{Field, Intent, ItemRef};
+use yara_broker::transport::{
+    ApprovalRequest, Approver, Broker, Decision, Resolution, VaultBridge,
+};
+use yara_core::SecretString;
 
 use crate::state::AppState;
 
@@ -32,7 +32,7 @@ impl VaultView {
     }
 }
 
-fn to_ref(item: &lapse_core::Item) -> ItemRef {
+fn to_ref(item: &yara_core::Item) -> ItemRef {
     ItemRef {
         id: item.id,
         name: item.name.clone(),
@@ -70,7 +70,7 @@ impl VaultBridge for VaultView {
                     });
                 }
 
-                let matches: Vec<&lapse_core::Item> = vault
+                let matches: Vec<&yara_core::Item> = vault
                     .items()
                     .iter()
                     .filter(|item| item.name.eq_ignore_ascii_case(needle.trim()))
@@ -202,7 +202,6 @@ impl UiApprover {
             map.clear();
         }
     }
-
 }
 
 impl Approver for UiApprover {
@@ -214,7 +213,9 @@ impl Approver for UiApprover {
             map.insert(id, sender);
         }
 
-        let _ = self.app.emit(APPROVAL_EVENT, ApprovalPrompt::new(id, &request));
+        let _ = self
+            .app
+            .emit(APPROVAL_EVENT, ApprovalPrompt::new(id, &request));
 
         // A prompt behind another window is a prompt nobody answers, and the
         // agent is blocked until they do.
@@ -245,7 +246,7 @@ impl BrokerHandle {
 /// Builds the broker and starts listening.
 ///
 /// A failure to bind is reported rather than fatal: the vault is perfectly
-/// usable without agent access, and the usual cause is a second copy of lapse
+/// usable without agent access, and the usual cause is a second copy of yara
 /// already running.
 pub fn start(app: &AppHandle, state: Arc<AppState>) -> BrokerHandle {
     let approver = UiApprover::new(app.clone());
@@ -255,9 +256,9 @@ pub fn start(app: &AppHandle, state: Arc<AppState>) -> BrokerHandle {
     {
         let serving = Arc::clone(&broker);
         tauri::async_runtime::spawn(async move {
-            let pipe = lapse_broker::transport::DEFAULT_PIPE_NAME;
-            if let Err(error) = lapse_broker::transport::serve(serving, pipe).await {
-                eprintln!("lapse: agent access is unavailable ({error})");
+            let pipe = yara_broker::transport::DEFAULT_PIPE_NAME;
+            if let Err(error) = yara_broker::transport::serve(serving, pipe).await {
+                eprintln!("yara: agent access is unavailable ({error})");
             }
         });
     }

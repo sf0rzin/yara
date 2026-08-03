@@ -121,7 +121,9 @@ pub enum Refusal {
     /// The user did not answer in time.
     TimedOut,
     /// More than one item matched the name, so which one was meant is unclear.
-    Ambiguous { matches: Vec<String> },
+    Ambiguous {
+        matches: Vec<String>,
+    },
 }
 
 impl Refusal {

@@ -3,7 +3,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-use lapse_core::{TotpConfig, UnlockedVault};
+use yara_core::{TotpConfig, UnlockedVault};
 
 /// Holds the unlocked vault, if there is one.
 ///
@@ -107,11 +107,11 @@ impl AppState {
         let file = vault.seal().map_err(|e| e.to_string())?;
         let bytes = file.to_bytes().map_err(|e| e.to_string())?;
 
-        let temp = self.vault_path.with_extension("lapse.tmp");
+        let temp = self.vault_path.with_extension("yara.tmp");
         std::fs::write(&temp, &bytes).map_err(|e| e.to_string())?;
 
         if self.vault_path.exists() {
-            let backup = self.vault_path.with_extension("lapse.bak");
+            let backup = self.vault_path.with_extension("yara.bak");
             let _ = std::fs::remove_file(&backup);
             std::fs::rename(&self.vault_path, &backup).map_err(|e| e.to_string())?;
         }

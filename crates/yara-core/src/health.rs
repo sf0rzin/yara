@@ -110,7 +110,11 @@ impl VaultHealth {
     /// Total number of items implicated in at least one finding.
     pub fn affected_items(&self) -> usize {
         let mut ids: Vec<Uuid> = self.weak.clone();
-        ids.extend(self.reused.iter().flat_map(|group| group.items.iter().copied()));
+        ids.extend(
+            self.reused
+                .iter()
+                .flat_map(|group| group.items.iter().copied()),
+        );
         ids.sort_unstable();
         ids.dedup();
         ids.len()

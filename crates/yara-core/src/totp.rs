@@ -1,6 +1,6 @@
 //! HOTP (RFC 4226) and TOTP (RFC 6238), plus `otpauth://` URI parsing.
 //!
-//! This is what lets lapse replace reaching for your phone.
+//! This is what lets yara replace reaching for your phone.
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -268,8 +268,8 @@ impl TotpConfig {
 
 macro_rules! hmac_digest {
     ($hash:ty, $key:expr, $message:expr) => {{
-        let mut mac = <Hmac<$hash> as Mac>::new_from_slice($key)
-            .expect("HMAC accepts keys of any length");
+        let mut mac =
+            <Hmac<$hash> as Mac>::new_from_slice($key).expect("HMAC accepts keys of any length");
         mac.update($message);
         mac.finalize().into_bytes().to_vec()
     }};
@@ -468,7 +468,8 @@ mod tests {
 
     #[test]
     fn parsing_applies_defaults_for_omitted_parameters() {
-        let config = TotpConfig::from_uri("otpauth://totp/anthony?secret=GEZDGNBVGY3TQOJQ").unwrap();
+        let config =
+            TotpConfig::from_uri("otpauth://totp/anthony?secret=GEZDGNBVGY3TQOJQ").unwrap();
         assert_eq!(config.algorithm, TotpAlgorithm::Sha1);
         assert_eq!(config.digits, 6);
         assert_eq!(config.period, 30);

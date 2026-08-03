@@ -1,4 +1,4 @@
-//! Tauri bindings over `lapse-core`.
+//! Tauri bindings over `yara-core`.
 //!
 //! The frontend never receives a secret as part of normal data flow. Listing
 //! items returns [`ItemSummary`], which has no password field at all, so there
@@ -11,13 +11,13 @@ mod state;
 use std::sync::Arc;
 
 use broker::BrokerHandle;
-use lapse_core::{
-    Item, ItemKind, Strength, TotpConfig, UnlockedVault, VaultCounts, VaultFile, VaultHealth,
-};
 use serde::{Deserialize, Serialize};
 use state::AppState;
 use tauri::{Manager, State};
 use uuid::Uuid;
+use yara_core::{
+    Item, ItemKind, Strength, TotpConfig, UnlockedVault, VaultCounts, VaultFile, VaultHealth,
+};
 
 /// An item as the frontend sees it: everything except the secrets.
 #[derive(Debug, Serialize)]
@@ -175,7 +175,10 @@ fn list_items(
 }
 
 #[tauri::command]
-fn recent_items(state: State<'_, Arc<AppState>>, limit: Option<usize>) -> CommandResult<Vec<ItemSummary>> {
+fn recent_items(
+    state: State<'_, Arc<AppState>>,
+    limit: Option<usize>,
+) -> CommandResult<Vec<ItemSummary>> {
     state.with_vault(|vault| {
         Ok(vault
             .recent(limit.unwrap_or(5))
@@ -199,7 +202,7 @@ fn vault_health(state: State<'_, Arc<AppState>>) -> CommandResult<VaultHealth> {
 #[tauri::command]
 fn scan_qr_from_path(state: State<'_, Arc<AppState>>, path: String) -> CommandResult<TotpPreview> {
     let bytes = std::fs::read(&path).map_err(|_| "could not read that file".to_string())?;
-    let config = lapse_core::qr::decode_enrollment(&bytes).map_err(to_message)?;
+    let config = yara_core::qr::decode_enrollment(&bytes).map_err(to_message)?;
 
     let preview = TotpPreview::try_from(&config)?;
     state.set_pending_totp(config);
@@ -222,9 +225,8 @@ fn scan_qr_from_clipboard(
         .read_image()
         .map_err(|_| "there is no image on the clipboard".to_string())?;
 
-    let config =
-        lapse_core::qr::decode_enrollment_rgba(image.rgba(), image.width(), image.height())
-            .map_err(to_message)?;
+    let config = yara_core::qr::decode_enrollment_rgba(image.rgba(), image.width(), image.height())
+        .map_err(to_message)?;
 
     let preview = TotpPreview::try_from(&config)?;
     state.set_pending_totp(config);
@@ -281,7 +283,9 @@ fn delete_item(state: State<'_, Arc<AppState>>, id: Uuid) -> CommandResult<()> {
 #[tauri::command]
 fn reveal_password(state: State<'_, Arc<AppState>>, id: Uuid) -> CommandResult<String> {
     state.with_vault(|vault| {
-        let item = vault.get(id).ok_or_else(|| format!("item {id} not found"))?;
+        let item = vault
+            .get(id)
+            .ok_or_else(|| format!("item {id} not found"))?;
         item.password
             .as_ref()
             .map(|password| password.expose().to_string())
@@ -292,7 +296,9 @@ fn reveal_password(state: State<'_, Arc<AppState>>, id: Uuid) -> CommandResult<S
 #[tauri::command]
 fn totp_code(state: State<'_, Arc<AppState>>, id: Uuid) -> CommandResult<TotpCode> {
     state.with_vault(|vault| {
-        let item = vault.get(id).ok_or_else(|| format!("item {id} not found"))?;
+        let item = vault
+            .get(id)
+            .ok_or_else(|| format!("item {id} not found"))?;
         let totp = item
             .totp
             .as_ref()
@@ -313,11 +319,14 @@ fn totp_code(state: State<'_, Arc<AppState>>, id: Uuid) -> CommandResult<TotpCod
 /// as weak can never disagree.
 #[tauri::command]
 fn estimate_strength(password: String) -> Strength {
-    lapse_core::health::strength(&password)
+    yara_core::health::strength(&password)
 }
 
 #[tauri::command]
-fn change_master_password(state: State<'_, Arc<AppState>>, new_password: String) -> CommandResult<()> {
+fn change_master_password(
+    state: State<'_, Arc<AppState>>,
+    new_password: String,
+) -> CommandResult<()> {
     state.with_vault_mut(|vault| vault.change_password(&new_password).map_err(to_message))?;
     state.save()
 }
@@ -355,7 +364,7 @@ pub struct AuditView {
 fn list_grants(broker: State<'_, BrokerHandle>) -> Vec<GrantView> {
     broker
         .broker
-        .live_grants(lapse_broker::now())
+        .live_grants(yara_broker::now())
         .into_iter()
         .map(|grant| GrantView {
             id: grant.id,
@@ -363,10 +372,10 @@ fn list_grants(broker: State<'_, BrokerHandle>) -> Vec<GrantView> {
             field: grant.field.as_str().to_string(),
             program: grant.client.display_name(),
             scope: match grant.scope {
-                lapse_broker::Scope::Run => "run".into(),
-                lapse_broker::Scope::Reveal => "reveal".into(),
+                yara_broker::Scope::Run => "run".into(),
+                yara_broker::Scope::Reveal => "reveal".into(),
             },
-            seconds_remaining: grant.seconds_remaining(lapse_broker::now()),
+            seconds_remaining: grant.seconds_remaining(yara_broker::now()),
             remaining_uses: grant.remaining_uses(),
         })
         .collect()
@@ -385,13 +394,13 @@ fn audit_entries(broker: State<'_, BrokerHandle>, limit: Option<usize>) -> Vec<A
         .into_iter()
         .map(|entry| {
             let summary = match &entry.action {
-                lapse_broker::Action::Listed { matches } => {
+                yara_broker::Action::Listed { matches } => {
                     format!("listed {matches} items")
                 }
-                lapse_broker::Action::Ran { command, env_var } => {
+                yara_broker::Action::Ran { command, env_var } => {
                     format!("ran `{command}` with ${env_var}")
                 }
-                lapse_broker::Action::Revealed => "revealed the plaintext".to_string(),
+                yara_broker::Action::Revealed => "revealed the plaintext".to_string(),
             };
 
             AuditView {
@@ -437,7 +446,7 @@ pub fn run() {
             let dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&dir)?;
 
-            let state = Arc::new(AppState::new(dir.join("vault.lapse")));
+            let state = Arc::new(AppState::new(dir.join("vault.yara")));
             app.manage(Arc::clone(&state));
             app.manage(broker::start(app.handle(), state));
             Ok(())

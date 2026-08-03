@@ -1,10 +1,10 @@
 [workspace]
 resolver = "2"
 members = [
-  "crates/lapse-core",
-  "crates/lapse-broker",
-  "crates/lapse-cli",
-  "crates/lapse-mcp",
+  "crates/yara-core",
+  "crates/yara-broker",
+  "crates/yara-cli",
+  "crates/yara-mcp",
   "apps/desktop/src-tauri",
 ]
 
@@ -13,11 +13,11 @@ version = "0.1.0"
 edition = "2021"
 rust-version = "1.82"
 license = "MIT"
-repository = "https://github.com/sf0rzin/lapse"
+repository = "https://github.com/sf0rzin/yara"
 
 [workspace.dependencies]
-lapse-core = { path = "crates/lapse-core" }
-lapse-broker = { path = "crates/lapse-broker" }
+yara-core = { path = "crates/yara-core" }
+yara-broker = { path = "crates/yara-broker" }
 
 argon2 = "0.5"
 base64 = "0.22"

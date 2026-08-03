@@ -22,13 +22,8 @@ const CAPACITY: usize = 500;
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "action", rename_all = "snake_case")]
 pub enum Action {
-    Listed {
-        matches: usize,
-    },
-    Ran {
-        command: String,
-        env_var: String,
-    },
+    Listed { matches: usize },
+    Ran { command: String, env_var: String },
     Revealed,
 }
 
@@ -67,8 +62,12 @@ pub enum Outcome {
     /// Allowed after the user approved it just now.
     Approved,
     /// Allowed by a grant issued earlier.
-    Reused { grant: Uuid },
-    Refused { reason: Refusal },
+    Reused {
+        grant: Uuid,
+    },
+    Refused {
+        reason: Refusal,
+    },
 }
 
 impl Outcome {
@@ -255,7 +254,9 @@ mod tests {
 
     #[test]
     fn reused_grants_are_distinguishable_from_fresh_approvals() {
-        let reused = Outcome::Reused { grant: Uuid::new_v4() };
+        let reused = Outcome::Reused {
+            grant: Uuid::new_v4(),
+        };
         assert!(reused.was_allowed());
         assert_ne!(reused, Outcome::Approved);
     }

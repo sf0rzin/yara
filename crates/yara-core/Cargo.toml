@@ -1,6 +1,6 @@
 [package]
-name = "lapse-core"
-description = "Cryptographic core, vault format, and TOTP engine for lapse"
+name = "yara-core"
+description = "Cryptographic core, vault format, and TOTP engine for yara"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

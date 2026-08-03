@@ -1,6 +1,6 @@
 # Agent access
 
-The feature lapse exists for.
+The feature yara exists for.
 
 ## The problem
 
@@ -19,7 +19,7 @@ handling plaintext passwords. The refusal is correct, but it pushes people into 
 worse arrangement — the secret ends up less protected than if the tooling had
 just handled it properly.
 
-lapse is that tooling.
+yara is that tooling.
 
 ## The model
 
@@ -29,14 +29,14 @@ Three access modes, in increasing order of exposure:
 
 ### 1. Run — the agent sees nothing
 
-The agent asks lapse to run a command with a credential injected into the child
+The agent asks yara to run a command with a credential injected into the child
 process environment. **The broker spawns the process itself**, so this is
 enforced rather than promised: the client receives an exit code and captured
 output, and there is no code path that returns the value to it.
 
 ```
 agent → broker: run `npm run migrate` with item "db-prod" as $DATABASE_URL
-user  → approves in the lapse window
+user  → approves in the yara window
 broker: spawns the child with the variable set, returns exit code and output
 ```
 
@@ -51,7 +51,7 @@ log. It is not the path of least resistance, by design.
 
 ## Approval
 
-The broker listens on a local named pipe (`\\.\pipe\lapse.broker` on Windows; a
+The broker listens on a local named pipe (`\\.\pipe\yara.broker` on Windows; a
 Unix domain socket elsewhere). A request looks like:
 
 ```json
@@ -64,7 +64,7 @@ Unix domain socket elsewhere). A request looks like:
 }
 ```
 
-If the vault is locked, the user is prompted to unlock. Then the lapse window
+If the vault is locked, the user is prompted to unlock. Then the yara window
 raises a modal naming the requesting process, the item, the mode, and the stated
 reason, offering: **allow once**, **allow for 15 minutes**, or **deny**.
 
@@ -82,7 +82,7 @@ specific binary, not an anonymous "something".
 
 Being precise about this matters more than sounding strong.
 
-**What lapse protects against:**
+**What yara protects against:**
 
 - Secrets landing in an agent's context window, transcripts, or provider logs
 - Secrets sitting in plaintext on disk in `.env` and scratch files
@@ -90,9 +90,9 @@ Being precise about this matters more than sounding strong.
 - A stolen vault file: it is useless without the master password
 - Tampering with a vault file, including downgrading the KDF work factor
 
-**What lapse does not protect against:**
+**What yara does not protect against:**
 
-- An attacker who already has code execution as your user. They can read lapse's
+- An attacker who already has code execution as your user. They can read yara's
   memory while it is unlocked, or impersonate a client on the pipe. No user-space
   password manager solves this, and claiming otherwise would be dishonest.
 - A malicious agent that asks for something reasonable-sounding and gets approved.
@@ -105,21 +105,21 @@ defeating a local attacker who already owns the machine.
 
 ## Interface for agents
 
-`lapse-mcp` exposes the broker as an MCP server — JSON-RPC over stdio — so any
+`yara-mcp` exposes the broker as an MCP server — JSON-RPC over stdio — so any
 MCP-capable agent can use it without special integration:
 
 ```json
-{ "mcpServers": { "lapse": { "command": "lapse-mcp" } } }
+{ "mcpServers": { "yara": { "command": "yara-mcp" } } }
 ```
 
 | Tool | Returns |
 | --- | --- |
-| `lapse_list_items` | Names, usernames, ids. Never secrets. |
-| `lapse_run_with_credential` | Exit code and output of a command run with the secret injected. |
-| `lapse_reveal_credential` | The plaintext, after heavy confirmation. |
-| `lapse_status` | Whether lapse is running and unlocked. |
+| `yara_list_items` | Names, usernames, ids. Never secrets. |
+| `yara_run_with_credential` | Exit code and output of a command run with the secret injected. |
+| `yara_reveal_credential` | The plaintext, after heavy confirmation. |
+| `yara_status` | Whether yara is running and unlocked. |
 
-`lapse_list_items` is deliberately unprivileged: an agent needs to be able to
+`yara_list_items` is deliberately unprivileged: an agent needs to be able to
 discover that `db-prod` exists in order to ask for it, and item names are not
 secrets.
 
@@ -153,18 +153,18 @@ to relax:
 
 ## Using it
 
-The broker runs inside the lapse app. Point an agent at the `lapse` command:
+The broker runs inside the yara app. Point an agent at the `yara` command:
 
 ```bash
-lapse run --item db-prod --env DATABASE_URL --reason "run the migration" -- npm run migrate
+yara run --item db-prod --env DATABASE_URL --reason "run the migration" -- npm run migrate
 ```
 
-The lapse window comes forward and asks. On approval the broker spawns `npm run
+The yara window comes forward and asks. On approval the broker spawns `npm run
 migrate` with `DATABASE_URL` set, and the agent gets the output — not the value.
 
 ```bash
-lapse list
-lapse get --item db-prod --reason "paste into a config file"
+yara list
+yara get --item db-prod --reason "paste into a config file"
 ```
 
 `list` needs no approval and returns no secrets. `get` prints plaintext and asks
@@ -180,8 +180,8 @@ every single time.
 | Named pipe transport | Done |
 | Caller identification | Done, Windows only |
 | Approval prompt and the Agent access screen | Done |
-| `lapse` command line client | Done |
-| `lapse-mcp` MCP server | Done |
+| `yara` command line client | Done |
+| `yara-mcp` MCP server | Done |
 | macOS and Linux | Not started |
 
 The audit log is held in memory. Persisting it belongs *inside* the encrypted

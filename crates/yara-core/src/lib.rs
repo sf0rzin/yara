@@ -1,11 +1,11 @@
-//! Cryptographic core for lapse.
+//! Cryptographic core for yara.
 //!
 //! This crate knows nothing about Tauri, the UI, or the filesystem. It takes
 //! bytes and passwords and returns bytes, which keeps the security-critical code
 //! small enough to audit and testable without a running application.
 //!
 //! ```
-//! use lapse_core::{Item, UnlockedVault, VaultFile};
+//! use yara_core::{Item, UnlockedVault, VaultFile};
 //!
 //! let mut vault = UnlockedVault::create("master password")?;
 //! vault.add(Item::new("GitHub").with_username("anthony").with_password("hunter2"));
@@ -14,7 +14,7 @@
 //!
 //! let reopened = UnlockedVault::open(&VaultFile::from_bytes(&bytes)?, "master password")?;
 //! assert_eq!(reopened.items()[0].name, "GitHub");
-//! # Ok::<(), lapse_core::Error>(())
+//! # Ok::<(), yara_core::Error>(())
 //! ```
 
 #![forbid(unsafe_code)]
@@ -49,12 +49,8 @@ pub(crate) mod b64 {
         serializer.serialize_str(&STANDARD.encode(bytes))
     }
 
-    pub fn deserialize<'de, D: Deserializer<'de>>(
-        deserializer: D,
-    ) -> Result<Vec<u8>, D::Error> {
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<u8>, D::Error> {
         let encoded = String::deserialize(deserializer)?;
-        STANDARD
-            .decode(encoded)
-            .map_err(serde::de::Error::custom)
+        STANDARD.decode(encoded).map_err(serde::de::Error::custom)
     }
 }

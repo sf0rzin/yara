@@ -1,6 +1,6 @@
 [package]
-name = "lapse-mcp"
-description = "MCP server exposing the lapse credential broker to AI agents"
+name = "yara-mcp"
+description = "MCP server exposing the yara credential broker to AI agents"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -8,11 +8,11 @@ license.workspace = true
 repository.workspace = true
 
 [[bin]]
-name = "lapse-mcp"
+name = "yara-mcp"
 path = "src/main.rs"
 
 [dependencies]
-lapse-broker.workspace = true
+yara-broker.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true

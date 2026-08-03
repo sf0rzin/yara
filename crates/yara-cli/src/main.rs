@@ -1,4 +1,4 @@
-//! `lapse` — what an agent actually runs.
+//! `yara` — what an agent actually runs.
 //!
 //! Every subcommand is one round trip to the broker. Nothing is cached, no
 //! credential is written anywhere, and `run` never has the value to print in the
@@ -8,13 +8,13 @@
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
-use lapse_broker::client::send;
-use lapse_broker::protocol::{AccessRequest, Field, Intent, Request, Response};
+use yara_broker::client::send;
+use yara_broker::protocol::{AccessRequest, Field, Intent, Request, Response};
 
 #[derive(Parser)]
 #[command(
-    name = "lapse",
-    about = "Ask the lapse vault for a credential, with the owner's approval",
+    name = "yara",
+    about = "Ask the yara vault for a credential, with the owner's approval",
     version
 )]
 struct Cli {
@@ -42,7 +42,7 @@ enum Command {
         item: String,
 
         /// Environment variable to place the credential in.
-        #[arg(long, default_value = "LAPSE_SECRET")]
+        #[arg(long, default_value = "YARA_SECRET")]
         env: String,
 
         /// Which field to use.
@@ -96,7 +96,7 @@ async fn main() -> ExitCode {
     match run(cli).await {
         Ok(code) => code,
         Err(message) => {
-            eprintln!("lapse: {message}");
+            eprintln!("yara: {message}");
             ExitCode::FAILURE
         }
     }
@@ -195,12 +195,12 @@ fn report(response: Response) -> ExitCode {
         }
 
         Response::Refused { message, .. } => {
-            eprintln!("lapse: {message}");
+            eprintln!("yara: {message}");
             ExitCode::FAILURE
         }
 
         Response::Error { message } => {
-            eprintln!("lapse: {message}");
+            eprintln!("yara: {message}");
             ExitCode::FAILURE
         }
     }
@@ -230,25 +230,27 @@ mod tests {
     fn run_requires_a_reason_and_a_command() {
         // Both are mandatory, so an agent cannot ask for something without
         // saying why, and the prompt is never blank.
-        assert!(Cli::try_parse_from(["lapse", "run", "--item", "x", "--", "ls"]).is_err());
-        assert!(Cli::try_parse_from(["lapse", "run", "--item", "x", "--reason", "y"]).is_err());
+        assert!(Cli::try_parse_from(["yara", "run", "--item", "x", "--", "ls"]).is_err());
+        assert!(Cli::try_parse_from(["yara", "run", "--item", "x", "--reason", "y"]).is_err());
         assert!(
-            Cli::try_parse_from(["lapse", "run", "--item", "x", "--reason", "y", "--", "ls"])
+            Cli::try_parse_from(["yara", "run", "--item", "x", "--reason", "y", "--", "ls"])
                 .is_ok()
         );
     }
 
     #[test]
     fn get_requires_a_reason() {
-        assert!(Cli::try_parse_from(["lapse", "get", "--item", "x"]).is_err());
-        assert!(Cli::try_parse_from(["lapse", "get", "--item", "x", "--reason", "y"]).is_ok());
+        assert!(Cli::try_parse_from(["yara", "get", "--item", "x"]).is_err());
+        assert!(Cli::try_parse_from(["yara", "get", "--item", "x", "--reason", "y"]).is_ok());
     }
 
     #[test]
     fn the_command_after_the_separator_keeps_its_own_flags() {
-        let cli =
-            Cli::try_parse_from(["lapse", "run", "--item", "db", "--reason", "r", "--", "npm", "run", "--silent", "migrate"])
-                .unwrap();
+        let cli = Cli::try_parse_from([
+            "yara", "run", "--item", "db", "--reason", "r", "--", "npm", "run", "--silent",
+            "migrate",
+        ])
+        .unwrap();
 
         match cli.command {
             Command::Run { argv, .. } => {
@@ -260,13 +262,12 @@ mod tests {
 
     #[test]
     fn the_default_environment_variable_is_explicit_rather_than_guessed() {
-        let cli =
-            Cli::try_parse_from(["lapse", "run", "--item", "db", "--reason", "r", "--", "ls"])
-                .unwrap();
+        let cli = Cli::try_parse_from(["yara", "run", "--item", "db", "--reason", "r", "--", "ls"])
+            .unwrap();
 
         match cli.command {
             Command::Run { env, field, .. } => {
-                assert_eq!(env, "LAPSE_SECRET");
+                assert_eq!(env, "YARA_SECRET");
                 assert_eq!(field, "password");
             }
             _ => panic!("expected run"),

@@ -273,8 +273,7 @@ impl UnlockedVault {
         }
 
         let aad = associated_data(file.format, &file.kdf)?;
-        let master_key =
-            crypto::derive_key(password.as_bytes(), &file.kdf.salt, file.kdf.params)?;
+        let master_key = crypto::derive_key(password.as_bytes(), &file.kdf.salt, file.kdf.params)?;
 
         let vault_key_bytes = crypto::open(&master_key, &file.wrapped_key, &aad)?;
         let vault_key = Key::from_slice(&vault_key_bytes)?;
@@ -453,7 +452,11 @@ mod tests {
 
     #[test]
     fn the_serialized_file_leaks_no_plaintext() {
-        let bytes = vault_with_one_item("master").seal().unwrap().to_bytes().unwrap();
+        let bytes = vault_with_one_item("master")
+            .seal()
+            .unwrap()
+            .to_bytes()
+            .unwrap();
         let text = String::from_utf8_lossy(&bytes);
 
         for secret in [
@@ -599,7 +602,10 @@ mod tests {
         vault
             .update(id, |item| item.username = Some("someone else".into()))
             .unwrap();
-        assert_eq!(vault.get(id).unwrap().username.as_deref(), Some("someone else"));
+        assert_eq!(
+            vault.get(id).unwrap().username.as_deref(),
+            Some("someone else")
+        );
 
         let removed = vault.remove(id).unwrap();
         assert_eq!(removed.id, id);
@@ -663,6 +669,9 @@ mod tests {
     fn an_empty_vault_round_trips() {
         let vault = UnlockedVault::create_with_params("master", fast()).unwrap();
         let file = vault.seal().unwrap();
-        assert!(UnlockedVault::open(&file, "master").unwrap().items().is_empty());
+        assert!(UnlockedVault::open(&file, "master")
+            .unwrap()
+            .items()
+            .is_empty());
     }
 }

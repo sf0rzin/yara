@@ -194,10 +194,7 @@ mod tests {
     fn ciphertext_does_not_contain_the_plaintext() {
         let key = Key::generate();
         let sealed = seal(&key, b"attack at dawn", b"").unwrap();
-        assert!(!sealed
-            .ciphertext
-            .windows(6)
-            .any(|w| w == b"attack"));
+        assert!(!sealed.ciphertext.windows(6).any(|w| w == b"attack"));
     }
 
     #[test]

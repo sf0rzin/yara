@@ -91,7 +91,7 @@ export function Sidebar({
   return (
     <aside className="sidebar">
       <div className="sidebar__brand">
-        <span className="sidebar__name">lapse</span>
+        <span className="sidebar__name">yara</span>
         <span className="sidebar__tagline">Password Vault</span>
       </div>
 

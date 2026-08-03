@@ -73,7 +73,11 @@ fn decode_luma(luma: image::GrayImage) -> Result<TotpConfig> {
         };
         saw_a_code = true;
 
-        if content.trim().to_ascii_lowercase().starts_with("otpauth://") {
+        if content
+            .trim()
+            .to_ascii_lowercase()
+            .starts_with("otpauth://")
+        {
             return TotpConfig::from_uri(content.trim());
         }
     }
