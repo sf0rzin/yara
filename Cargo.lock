@@ -5900,7 +5900,7 @@ dependencies = [
 
 [[package]]
 name = "yara-broker"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -5913,7 +5913,7 @@ dependencies = [
 
 [[package]]
 name = "yara-cli"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "clap",
  "serde_json",
@@ -5923,7 +5923,7 @@ dependencies = [
 
 [[package]]
 name = "yara-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "argon2",
  "base64 0.22.1",
@@ -5947,7 +5947,7 @@ dependencies = [
 
 [[package]]
 name = "yara-desktop"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -5966,7 +5966,7 @@ dependencies = [
 
 [[package]]
 name = "yara-mcp"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "serde",
  "serde_json",
