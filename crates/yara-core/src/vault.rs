@@ -349,7 +349,7 @@ impl UnlockedVault {
     /// The most recently updated items first.
     pub fn recent(&self, limit: usize) -> Vec<&Item> {
         let mut items: Vec<&Item> = self.data.items.iter().collect();
-        items.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+        items.sort_by_key(|item| std::cmp::Reverse(item.updated_at));
         items.truncate(limit);
         items
     }
