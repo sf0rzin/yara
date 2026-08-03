@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/assets/yara-banner.png" alt="Yara over a moonlit rainforest river" width="100%" />
+</p>
+
 # yara
 
 A password manager with a built-in authenticator and a safe way to hand
