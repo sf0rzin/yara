@@ -1012,6 +1012,22 @@
   width: 100%;
 }
 
+/*
+ * Marks the action inside a region that is not the whole screen. The inverted
+ * treatment is reserved for one element per screen, and a strip that appears
+ * unbidden must not take that slot away from the screen's own primary action —
+ * so emphasis comes from a border and full-brightness text instead.
+ */
+.button--outline {
+  border: 1px solid var(--border-strong);
+  color: var(--text);
+}
+
+.button--outline:not(:disabled):hover {
+  background: var(--raised);
+  border-color: var(--text-disabled);
+}
+
 .icon-button {
   display: grid;
   place-items: center;
@@ -1139,6 +1155,42 @@
  */
 .notice--loud {
   color: var(--text);
+}
+
+/*
+ * The update offer. A strip in the flow rather than a modal: an update is never
+ * urgent enough to interrupt a vault, and an app that hijacks the screen on
+ * every launch teaches people to dismiss without reading.
+ */
+.update {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  margin-bottom: var(--space-4);
+  background: var(--surface);
+  border: 1px solid var(--border-faint);
+  border-radius: var(--radius-md);
+  color: var(--text-muted);
+}
+
+.update__text {
+  flex: 1;
+  min-width: 0;
+}
+
+.update__title {
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--text);
+}
+
+.update__notes {
+  margin-top: 2px;
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
 }
 
 .sr-only {

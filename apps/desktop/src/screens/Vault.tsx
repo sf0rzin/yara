@@ -20,6 +20,7 @@ import { ItemRow } from "../components/ItemRow";
 import { NewItemDialog } from "../components/NewItemDialog";
 import { SecurityView } from "../components/SecurityView";
 import { Sidebar } from "../components/Sidebar";
+import { UpdateNotice } from "../components/UpdateNotice";
 import { affectedItemCount, isClean } from "../lib/health";
 import { useAutoLock } from "../lib/useAutoLock";
 import { viewSubtitle, viewTitle, type View } from "../views";
@@ -204,6 +205,10 @@ export function Vault({ onLock }: VaultProps): JSX.Element {
             {error}
           </p>
         )}
+
+        {/* Only ever rendered behind the unlock screen: an update prompt is
+            not something to answer before you have proven you own the vault. */}
+        <UpdateNotice />
 
         <div className="main__body">
           {view.kind === "agents" ? (
