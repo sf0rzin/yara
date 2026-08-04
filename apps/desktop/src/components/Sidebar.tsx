@@ -38,6 +38,7 @@ export function Sidebar({
     { view: { kind: "recent" }, label: "Recent", icon: "recent" },
     { view: { kind: "security" }, label: "Security", icon: "security" },
     { view: { kind: "agents" }, label: "Agent access", icon: "sparkle" },
+    { view: { kind: "sync" }, label: "Sync", icon: "download" },
   ];
 
   const types: NavEntry[] = [

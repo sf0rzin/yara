@@ -20,6 +20,7 @@ import { ItemRow } from "../components/ItemRow";
 import { NewItemDialog } from "../components/NewItemDialog";
 import { SecurityView } from "../components/SecurityView";
 import { Sidebar } from "../components/Sidebar";
+import { SyncView } from "../components/SyncView";
 import { UpdateNotice } from "../components/UpdateNotice";
 import { affectedItemCount, isClean } from "../lib/health";
 import { useAutoLock } from "../lib/useAutoLock";
@@ -213,6 +214,8 @@ export function Vault({ onLock }: VaultProps): JSX.Element {
         <div className="main__body">
           {view.kind === "agents" ? (
             <AgentAccess />
+          ) : view.kind === "sync" ? (
+            <SyncView />
           ) : view.kind === "security" ? (
             health && (
               <SecurityView

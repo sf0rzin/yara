@@ -6441,6 +6441,7 @@ dependencies = [
 name = "yara-desktop"
 version = "0.1.2"
 dependencies = [
+ "base64 0.22.1",
  "serde",
  "serde_json",
  "tauri",
@@ -6454,6 +6455,7 @@ dependencies = [
  "uuid",
  "yara-broker",
  "yara-core",
+ "yara-sync-client",
 ]
 
 [[package]]
