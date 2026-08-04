@@ -20,6 +20,7 @@
 #![forbid(unsafe_code)]
 #![warn(missing_debug_implementations)]
 
+pub mod account;
 pub mod crypto;
 pub mod error;
 pub mod health;
@@ -28,6 +29,7 @@ pub mod secret;
 pub mod totp;
 pub mod vault;
 
+pub use account::{AccountKeypair, AccountKeys, SecretKey};
 pub use crypto::{KdfParams, Key, Sealed};
 pub use error::{Error, Result};
 pub use health::{Strength, VaultHealth};

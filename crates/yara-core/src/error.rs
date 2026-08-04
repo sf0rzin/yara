@@ -25,6 +25,13 @@ pub enum Error {
     #[error("malformed vault: {0}")]
     Malformed(&'static str),
 
+    /// Says nothing about which character was wrong.
+    ///
+    /// Someone typing a kit from paper wants to know it did not work, and an
+    /// attacker guessing at one should learn nothing about how close they got.
+    #[error("that recovery kit is not valid")]
+    InvalidRecoveryKit,
+
     #[error("invalid base32 secret")]
     InvalidBase32,
 
