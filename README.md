@@ -99,6 +99,7 @@ Tauri rebuild. The mock is dev-only and cannot reach a release build.
 - [x] Vault format with envelope encryption and tamper detection
 - [x] TOTP (RFC 6238) verified against the RFC test vectors, `otpauth://` parsing
 - [x] QR enrollment by paste, drag-and-drop, or file, decoded in Rust
+- [x] Import two-factor codes from a Proton Authenticator backup
 - [x] Offline password health checks: reuse, strength, missing second factors
 - [x] Desktop UI, auto-lock, clipboard that clears itself
 - [x] Agent broker: protocol, grants, audit log, named pipe transport
@@ -106,7 +107,7 @@ Tauri rebuild. The mock is dev-only and cannot reach a release build.
 - [x] MCP server, so any MCP-capable agent can use the vault directly
 - [x] Signed auto-update, served from `yara.rindexx.cc`
 - [x] Sync service: signed requests, ciphertext the server cannot read
-- [ ] Sync in the desktop app — the service has no client yet
+- [x] Sync in the desktop app: enrol, recovery kit, reconcile
 - [ ] Web app
 
 **Windows only, deliberately.** The broker's transport is named pipes and its
