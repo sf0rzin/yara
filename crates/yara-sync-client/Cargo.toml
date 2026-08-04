@@ -1,0 +1,30 @@
+[package]
+name = "yara-sync-client"
+description = "Client half of the sync protocol"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+base64.workspace = true
+# rustls rather than the platform TLS: one implementation to reason about, and
+# no system OpenSSL to depend on. Already in the tree, so this costs nothing.
+reqwest = { version = "0.13", default-features = false, features = [
+  "json",
+  "rustls",
+] }
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+uuid.workspace = true
+yara-core.workspace = true
+
+[dev-dependencies]
+ed25519-dalek = "2"
+tokio.workspace = true
+# The server, so the client's signatures are checked by the thing that will
+# actually check them rather than by a second copy of the same assumption.
+yara-sync = { path = "../yara-sync" }

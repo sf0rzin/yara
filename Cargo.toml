@@ -6,6 +6,7 @@ members = [
   "crates/yara-cli",
   "crates/yara-mcp",
   "crates/yara-sync",
+  "crates/yara-sync-client",
   "apps/desktop/src-tauri",
 ]
 
@@ -19,6 +20,7 @@ repository = "https://github.com/sf0rzin/yara"
 [workspace.dependencies]
 yara-core = { path = "crates/yara-core" }
 yara-broker = { path = "crates/yara-broker" }
+yara-sync-client = { path = "crates/yara-sync-client" }
 
 argon2 = "0.5"
 base64 = "0.22"
