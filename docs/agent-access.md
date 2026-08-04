@@ -216,7 +216,7 @@ every single time.
 | --- | --- |
 | Wire protocol | Done |
 | Grants: scope, expiry, use counts, revocation | Done |
-| Audit log | Done, in memory |
+| Audit log | Done, inside the encrypted vault |
 | Named pipe transport | Done |
 | Caller identification | Done, Windows only |
 | Approval prompt and the Agent access screen | Done |
@@ -224,7 +224,16 @@ every single time.
 | `yara-mcp` MCP server | Done |
 | macOS and Linux | Not planned — see the README |
 
-The audit log is held in memory. Persisting it belongs *inside* the encrypted
-vault — a log naming every credential an agent touched is itself sensitive, and
-writing it next to the vault in the clear would leak the shape of a vault nobody
-could otherwise read.
+The audit log lives *inside* the encrypted vault. A log naming every credential
+an agent touched is itself sensitive, and writing it next to the vault in the
+clear would describe the shape of a vault nobody could otherwise read.
+
+It is bounded at 500 records and drops the oldest, so it cannot grow without
+limit inside a file that is re-encrypted whole on every write. Locking clears
+the copy the interface reads from — the key is gone, and continuing to show
+what the vault is meant to be hiding would be an odd way to lock something.
+
+There is deliberately **no hash chain** over the records. It is the first thing
+that suggests itself for an audit log, and here it would prove nothing: the
+file is authenticated as a whole by the AEAD, and anyone able to rewrite a
+record holds the key that would let them recompute a chain over it too.

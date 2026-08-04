@@ -12,6 +12,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::oneshot;
 use uuid::Uuid;
+use yara_broker::audit::Entry;
 use yara_broker::protocol::{Field, Intent, ItemRef};
 use yara_broker::transport::{
     ApprovalRequest, Approver, Broker, Decision, Resolution, VaultBridge,
@@ -108,6 +109,43 @@ impl VaultBridge for VaultView {
                 })
             })
             .unwrap_or(None)
+    }
+
+    /// Appends to the vault and writes it out.
+    ///
+    /// A whole re-encryption per record, which sounds wasteful and is not: a
+    /// record only exists because a human answered a prompt or an agent
+    /// touched a credential, and neither happens at a rate a 64 MiB KDF would
+    /// notice. Sealing reuses the vault key already in memory — the expensive
+    /// derivation ran once, at unlock.
+    ///
+    /// A failure here is swallowed on purpose. Refusing the request because
+    /// the log could not be written would turn a full disk into an outage of
+    /// the thing the log exists to describe.
+    fn record_audit(&self, entry: &Entry) {
+        let Ok(payload) = serde_json::to_string(entry) else {
+            return;
+        };
+
+        let _ = self.0.with_vault_mut(|vault| {
+            vault.record_audit(payload);
+            Ok(())
+        });
+        let _ = self.0.save();
+    }
+
+    fn load_audit(&self) -> Vec<Entry> {
+        self.0
+            .with_vault(|vault| {
+                Ok(vault
+                    .audit()
+                    .iter()
+                    // A record written by a newer build may not parse here.
+                    // Skipping it beats refusing to show any history at all.
+                    .filter_map(|payload| serde_json::from_str(payload).ok())
+                    .collect())
+            })
+            .unwrap_or_default()
     }
 }
 

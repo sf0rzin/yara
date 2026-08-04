@@ -137,11 +137,20 @@ fn create_vault(state: State<'_, Arc<AppState>>, password: String) -> CommandRes
 }
 
 #[tauri::command]
-fn unlock_vault(state: State<'_, Arc<AppState>>, password: String) -> CommandResult<()> {
+fn unlock_vault(
+    state: State<'_, Arc<AppState>>,
+    broker: State<'_, BrokerHandle>,
+    password: String,
+) -> CommandResult<()> {
     let bytes = std::fs::read(state.vault_path()).map_err(to_message)?;
     let file = VaultFile::from_bytes(&bytes).map_err(to_message)?;
     let vault = UnlockedVault::open(&file, &password).map_err(to_message)?;
     state.set_vault(vault);
+
+    // The audit log lives in the vault, so this is the first moment it can be
+    // read back. Without it the Agent access screen would show only what
+    // happened since this unlock and look like a fresh install every time.
+    broker.broker.restore_audit();
     Ok(())
 }
 

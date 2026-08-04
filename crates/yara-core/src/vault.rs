@@ -205,11 +205,28 @@ pub struct VaultCounts {
     pub authenticator: usize,
 }
 
+/// How many audit records a vault keeps before the oldest are dropped.
+///
+/// Bounded so the log cannot grow without limit inside a file that is
+/// re-encrypted in full on every write.
+const AUDIT_CAPACITY: usize = 500;
+
 /// The decrypted contents of a vault.
+///
+/// Both fields default, so a vault written by an older build still opens: a
+/// missing field reads as empty rather than as a corrupt file.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct VaultData {
     #[serde(default)]
     pub items: Vec<Item>,
+    /// Audit records, oldest first, as opaque strings.
+    ///
+    /// Opaque on purpose. The schema belongs to `yara-broker`, which is the
+    /// only thing that produces or reads one, and teaching the crypto core
+    /// what an agent request looks like would buy nothing but a dependency
+    /// pointing the wrong way.
+    #[serde(default)]
+    pub audit: Vec<String>,
 }
 
 /// An open vault, holding the vault key in memory.
@@ -356,6 +373,32 @@ impl UnlockedVault {
 
     pub fn get(&self, id: Uuid) -> Option<&Item> {
         self.data.items.iter().find(|item| item.id == id)
+    }
+
+    /// Appends an audit record.
+    ///
+    /// Inside the vault rather than beside it, because a log naming every
+    /// credential an agent touched is itself sensitive — writing it in the
+    /// clear next to the file would describe the shape of a vault nobody
+    /// could otherwise read.
+    ///
+    /// There is no hash chain over these. The file is authenticated as a
+    /// whole, and anyone able to rewrite a record holds the key that would
+    /// let them recompute a chain too, so one would prove nothing the AEAD
+    /// does not already prove.
+    pub fn record_audit(&mut self, payload: impl Into<String>) {
+        self.data.audit.push(payload.into());
+
+        // Drop from the front, so an entry that was written is never edited.
+        if self.data.audit.len() > AUDIT_CAPACITY {
+            let excess = self.data.audit.len() - AUDIT_CAPACITY;
+            self.data.audit.drain(..excess);
+        }
+    }
+
+    /// Audit records, oldest first.
+    pub fn audit(&self) -> &[String] {
+        &self.data.audit
     }
 
     pub fn search(&self, query: &str) -> Vec<&Item> {
