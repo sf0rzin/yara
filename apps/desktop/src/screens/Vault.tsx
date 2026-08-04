@@ -15,6 +15,7 @@ import type { ApprovalPrompt } from "../api";
 import { AgentAccess } from "../components/AgentAccess";
 import { ApprovalDialog } from "../components/ApprovalDialog";
 import { Icon } from "../components/Icon";
+import { ImportPanel } from "../components/ImportPanel";
 import { ItemDetail } from "../components/ItemDetail";
 import { ItemRow } from "../components/ItemRow";
 import { NewItemDialog } from "../components/NewItemDialog";
@@ -235,14 +236,21 @@ export function Vault({ onLock }: VaultProps): JSX.Element {
               onOpenAgents={() => setView({ kind: "agents" })}
             />
           ) : (
-            <ItemList
-              items={items}
-              selectedId={selectedId}
-              onSelect={setSelectedId}
-              emptyMessage={
-                searching ? "Nothing matches that." : "Nothing here yet."
-              }
-            />
+            <>
+              {/* Only on the authenticator screen: this brings in codes, and
+                  offering it beside a list of cards would be noise. */}
+              {view.kind === "authenticator" && !searching && (
+                <ImportPanel onImported={() => void refresh()} />
+              )}
+              <ItemList
+                items={items}
+                selectedId={selectedId}
+                onSelect={setSelectedId}
+                emptyMessage={
+                  searching ? "Nothing matches that." : "Nothing here yet."
+                }
+              />
+            </>
           )}
         </div>
       </main>

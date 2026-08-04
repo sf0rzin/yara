@@ -189,6 +189,29 @@ export type Strength = "weak" | "fair" | "strong";
 export const estimateStrength = (password: string) =>
   invoke<Strength>("estimate_strength", { password });
 
+export interface ImportProblem {
+  name: string;
+  reason: string;
+}
+
+/**
+ * What an import would do, before it does any of it.
+ *
+ * Names only. No seed crosses the IPC boundary at any point — the codes are
+ * parsed in the backend and written straight into the vault.
+ */
+export interface ImportPreview {
+  ready: string[];
+  duplicates: string[];
+  skipped: ImportProblem[];
+}
+
+export const previewImport = (path: string) =>
+  invoke<ImportPreview>("preview_import", { path });
+
+/** Returns how many items were added. */
+export const runImport = (path: string) => invoke<number>("run_import", { path });
+
 export interface SyncStatus {
   enrolled: boolean;
   baseUrl: string | null;

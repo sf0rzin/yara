@@ -453,6 +453,110 @@ fn resolve_approval(
     Ok(())
 }
 
+// ---- import ------------------------------------------------------------
+
+/// What an import would do, before it does any of it.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportPreview {
+    /// Names only. No seed crosses the IPC boundary at any point: the codes
+    /// are parsed, held in the backend, and written straight into the vault.
+    pub ready: Vec<String>,
+    /// Already in the vault, matched by seed. Importing twice should not leave
+    /// two items generating the same code — the authenticator screen becomes
+    /// a guessing game about which one is real.
+    pub duplicates: Vec<String>,
+    pub skipped: Vec<ImportProblem>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportProblem {
+    pub name: String,
+    pub reason: String,
+}
+
+/// Reads an export and reports what it holds, importing nothing.
+///
+/// Separate from the write on purpose. The file is plaintext seeds, and a
+/// user is entitled to see what is about to enter their vault — and what will
+/// be skipped — before it happens rather than after.
+#[tauri::command]
+fn preview_import(state: State<'_, Arc<AppState>>, path: String) -> CommandResult<ImportPreview> {
+    let (import, existing) = read_import(&state, &path)?;
+
+    let mut preview = ImportPreview {
+        ready: Vec::new(),
+        duplicates: Vec::new(),
+        skipped: import
+            .skipped
+            .iter()
+            .map(|skip| ImportProblem {
+                name: skip.name.clone(),
+                reason: skip.reason.clone(),
+            })
+            .collect(),
+    };
+
+    for entry in &import.entries {
+        if existing.contains(entry.totp.secret.expose()) {
+            preview.duplicates.push(entry.name.clone());
+        } else {
+            preview.ready.push(entry.name.clone());
+        }
+    }
+
+    Ok(preview)
+}
+
+/// Writes everything the preview called ready.
+#[tauri::command]
+fn run_import(state: State<'_, Arc<AppState>>, path: String) -> CommandResult<usize> {
+    let (import, existing) = read_import(&state, &path)?;
+
+    let mut added = 0;
+    for entry in import.entries {
+        if existing.contains(entry.totp.secret.expose()) {
+            continue;
+        }
+
+        let mut item = Item::new(entry.name);
+        item.kind = ItemKind::Login;
+        item.username = entry.totp.account.clone();
+        item.notes = entry.note.map(Into::into);
+        item.totp = Some(entry.totp);
+
+        state.with_vault_mut(|vault| Ok(vault.add(item)))?;
+        added += 1;
+    }
+
+    if added > 0 {
+        state.save()?;
+    }
+    Ok(added)
+}
+
+/// Parses the file and collects the seeds already held, so both commands agree
+/// on what counts as a duplicate.
+fn read_import(
+    state: &AppState,
+    path: &str,
+) -> CommandResult<(yara_core::Import, std::collections::HashSet<String>)> {
+    let text = std::fs::read_to_string(path).map_err(|_| "could not read that file".to_string())?;
+    let import = yara_core::from_proton_authenticator(&text).map_err(to_message)?;
+
+    let existing = state.with_vault(|vault| {
+        Ok(vault
+            .items()
+            .iter()
+            .filter_map(|item| item.totp.as_ref())
+            .map(|totp| totp.secret.expose().to_string())
+            .collect::<std::collections::HashSet<_>>())
+    })?;
+
+    Ok((import, existing))
+}
+
 // ---- sync --------------------------------------------------------------
 
 #[tauri::command]
@@ -534,6 +638,8 @@ pub fn run() {
             revoke_grant,
             audit_entries,
             resolve_approval,
+            preview_import,
+            run_import,
             sync_status,
             sync_enrol,
             sync_now,
