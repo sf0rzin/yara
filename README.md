@@ -105,9 +105,14 @@ Tauri rebuild. The mock is dev-only and cannot reach a release build.
 - [x] Approval prompt, permissions screen, and the `yara` command line client
 - [x] MCP server, so any MCP-capable agent can use the vault directly
 - [x] Signed auto-update, served from `yara.rindexx.cc`
-- [ ] Encrypted sync between machines
-- [ ] macOS and Linux
+- [x] Sync service: signed requests, ciphertext the server cannot read
+- [ ] Sync in the desktop app — the service has no client yet
 - [ ] Web app
+
+**Windows only, deliberately.** The broker's transport is named pipes and its
+caller identification is a Win32 call; porting those is not planned. `yara-core`
+stays free of platform dependencies anyway, and CI builds it on Linux to keep
+that honest — but the application is not coming to macOS or Linux.
 
 ## License
 

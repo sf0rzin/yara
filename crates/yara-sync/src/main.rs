@@ -25,7 +25,34 @@ const TOMBSTONE_DAYS: i64 = 30;
 /// How long an invite stays usable.
 const INVITE_HOURS: i64 = 48;
 
+const USAGE: &str = "\
+yara-sync — encrypted vault sync
+
+    yara-sync            serve on $YARA_SYNC_ADDR (default 127.0.0.1:8787)
+    yara-sync invite     print a fresh single-use enrolment code
+    yara-sync purge      drop tombstones older than 30 days
+
+    $YARA_SYNC_DB        default /var/lib/yara-sync/sync.db
+";
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Arguments are settled before anything touches the disk. Opening the
+    // database first meant `--help` needed write access to the state
+    // directory, so asking a question failed for anyone who was not the
+    // service user.
+    let command = std::env::args().nth(1);
+    match command.as_deref() {
+        None | Some("invite") | Some("purge") => {}
+        Some("-h" | "--help" | "help") => {
+            print!("{USAGE}");
+            return Ok(());
+        }
+        Some(other) => {
+            eprintln!("unknown command {other:?}\n\n{USAGE}");
+            std::process::exit(2);
+        }
+    }
+
     let db = std::env::var("YARA_SYNC_DB")
         .map(PathBuf::from)
         .unwrap_or_else(|_| PathBuf::from("/var/lib/yara-sync/sync.db"));
@@ -37,7 +64,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let store = Store::open(&db)?;
     let now = yara_sync::now();
 
-    match std::env::args().nth(1).as_deref() {
+    match command.as_deref() {
         Some("invite") => {
             let code = fresh_code();
             store.create_invite(&code, now, INVITE_HOURS * 3600)?;
@@ -55,12 +82,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             Ok(())
         }
 
-        Some(other) => {
-            eprintln!("unknown command {other:?}; expected `invite` or `purge`");
-            std::process::exit(2);
-        }
-
-        None => serve(store),
+        // Anything else was already rejected before the database was opened.
+        _ => serve(store),
     }
 }
 

@@ -1,0 +1,17 @@
+# Schedules the tombstone purge. Enable this rather than the service.
+#
+# Daily is far more often than a 30-day retention needs. It is cheap, and a
+# job that runs every day is one you notice breaking; a monthly one fails
+# silently for a month.
+
+[Unit]
+Description=Drop expired yara sync tombstones daily
+
+[Timer]
+OnCalendar=daily
+# Off the hour, so this is not competing with every other daily job.
+RandomizedDelaySec=1h
+Persistent=true
+
+[Install]
+WantedBy=timers.target

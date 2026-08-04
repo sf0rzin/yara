@@ -4,9 +4,9 @@
 # This unit is here so the sandbox is decided before the code is, rather than
 # bolted on after it is already running as root.
 #
-# Create the user first. A fixed system user rather than DynamicUser=yes,
-# because Litestream runs as a second process and needs stable ownership of
-# the state directory to replicate the database:
+# Create the user first. A fixed system user rather than DynamicUser=yes, so
+# the state directory keeps stable ownership across restarts and a second
+# process — the purge timer — can reach the same database:
 #
 #   adduser --system --group --no-create-home yara-sync
 

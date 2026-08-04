@@ -318,14 +318,19 @@ A few dozen accounts with a few hundred items each is single-digit megabytes.
 SQLite in WAL mode is correct and will stay correct well past the point this
 project needs it to; Postgres would be operational cost bought for nothing.
 
-Back it up with Litestream replicating continuously to S3-compatible object
-storage — that is what buys point-in-time restore without running a database
-server. Rehearse a restore before you need one; an unverified backup is a
-belief, not a backup.
+**There is no server-side backup, on purpose.** Every client holds a complete
+local vault; the server carries a copy for machines to meet at, not the copy.
+Losing this VM costs the ability to sync until it is rebuilt, and the next push
+from any device refills it.
 
-The saving grace: every client holds a full local vault. The server is a
-convenience, not the only copy. Keep it that way and losing this VM entirely is
-an inconvenience rather than a catastrophe.
+Be clear about where that stops being true. It holds while at least one device
+still has the vault. An account whose only machine dies *and* whose server
+copy is gone has lost the data, and no recovery kit helps — the kit unwraps
+ciphertext, it does not conjure it. That is the trade, and it is a reasonable
+one for a handful of people who each have more than one machine.
+
+If it ever stops being reasonable, Litestream replicating the SQLite file to
+S3-compatible storage is the answer, and it is an afternoon.
 
 ## Continuous integration
 
