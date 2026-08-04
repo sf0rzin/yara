@@ -1,0 +1,35 @@
+# Drops tombstones nobody needs any more. Scheduled by yara-purge.timer,
+# which is what gets enabled — not this.
+#
+# Without tombstones a delete on one machine is silently undone by the next
+# sync from another. With them and no purge, the database only grows.
+
+[Unit]
+Description=Drop expired yara sync tombstones
+After=yara-sync.service
+
+[Service]
+Type=oneshot
+User=yara-sync
+Group=yara-sync
+ExecStart=/usr/local/bin/yara-sync purge
+Environment=YARA_SYNC_DB=/var/lib/yara-sync/sync.db
+
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/yara-sync
+PrivateTmp=yes
+PrivateDevices=yes
+NoNewPrivileges=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+# Touches only a local file; it has no reason to reach the network at all.
+RestrictAddressFamilies=AF_UNIX
+IPAddressDeny=any

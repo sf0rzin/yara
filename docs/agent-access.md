@@ -222,7 +222,7 @@ every single time.
 | Approval prompt and the Agent access screen | Done |
 | `yara` command line client | Done |
 | `yara-mcp` MCP server | Done |
-| macOS and Linux | Not started |
+| macOS and Linux | Not planned — see the README |
 
 The audit log is held in memory. Persisting it belongs *inside* the encrypted
 vault — a log naming every credential an agent touched is itself sensitive, and
