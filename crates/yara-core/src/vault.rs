@@ -430,6 +430,20 @@ impl UnlockedVault {
         &self.data.audit
     }
 
+    /// The vault key itself, for wrapping under something else.
+    ///
+    /// There is exactly one caller and one reason: sync has to give a second
+    /// machine the ability to read what this one wrote, which means wrapping
+    /// this key under one derived from the password and the recovery kit.
+    ///
+    /// It is deliberately awkward to reach and never serialised. Anything else
+    /// that wants it is almost certainly a mistake — the vault already offers
+    /// sealing and opening, and a caller holding raw key bytes is a caller who
+    /// can leak them.
+    pub fn vault_key_bytes(&self) -> &[u8; crypto::KEY_LEN] {
+        self.vault_key.expose()
+    }
+
     pub fn sync_state(&self) -> Option<&SyncState> {
         self.data.sync.as_ref()
     }

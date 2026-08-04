@@ -7,6 +7,7 @@
 
 mod broker;
 mod state;
+mod sync;
 
 use std::sync::Arc;
 
@@ -452,6 +453,39 @@ fn resolve_approval(
     Ok(())
 }
 
+// ---- sync --------------------------------------------------------------
+
+#[tauri::command]
+fn sync_status(state: State<'_, Arc<AppState>>) -> CommandResult<sync::SyncStatus> {
+    sync::status(&state)
+}
+
+/// Enrols this machine as a new account and returns the recovery kit.
+///
+/// The kit is shown once and never stored. It is the only path back into an
+/// account, so the interface has to make the user acknowledge having it before
+/// this screen can be closed.
+#[tauri::command]
+async fn sync_enrol(
+    state: State<'_, Arc<AppState>>,
+    base_url: String,
+    invite: String,
+    password: String,
+    label: Option<String>,
+) -> CommandResult<sync::RecoveryKit> {
+    sync::enrol(Arc::clone(&state), base_url, invite, password, label).await
+}
+
+#[tauri::command]
+async fn sync_now(state: State<'_, Arc<AppState>>) -> CommandResult<sync::SyncReport> {
+    sync::sync_now(Arc::clone(&state)).await
+}
+
+#[tauri::command]
+fn sync_forget(state: State<'_, Arc<AppState>>) -> CommandResult<()> {
+    sync::forget(&state)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let builder = tauri::Builder::default()
@@ -500,6 +534,10 @@ pub fn run() {
             revoke_grant,
             audit_entries,
             resolve_approval,
+            sync_status,
+            sync_enrol,
+            sync_now,
+            sync_forget,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

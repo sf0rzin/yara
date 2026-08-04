@@ -189,6 +189,52 @@ export type Strength = "weak" | "fair" | "strong";
 export const estimateStrength = (password: string) =>
   invoke<Strength>("estimate_strength", { password });
 
+export interface SyncStatus {
+  enrolled: boolean;
+  baseUrl: string | null;
+  accountId: string | null;
+  deviceId: string | null;
+  lastSyncedAt: number | null;
+}
+
+/**
+ * Shown once, at enrolment, and never again.
+ *
+ * Not stored anywhere: it is the second half of what protects the account, and
+ * keeping a copy on the machine the password already unlocks would undo the
+ * reason for having it. Losing it means losing the account.
+ */
+export interface RecoveryKit {
+  accountId: string;
+  kit: string;
+}
+
+export interface SyncReport {
+  pulled: number;
+  pushed: number;
+  conflicts: number;
+  revision: number;
+}
+
+export const syncStatus = () => invoke<SyncStatus>("sync_status");
+
+export const syncEnrol = (
+  baseUrl: string,
+  invite: string,
+  password: string,
+  label?: string,
+) =>
+  invoke<RecoveryKit>("sync_enrol", {
+    baseUrl,
+    invite,
+    password,
+    label: label ?? null,
+  });
+
+export const syncNow = () => invoke<SyncReport>("sync_now");
+
+export const syncForget = () => invoke<void>("sync_forget");
+
 /** Tauri sends command errors across as plain strings. */
 export function errorMessage(error: unknown): string {
   if (typeof error === "string") return error;

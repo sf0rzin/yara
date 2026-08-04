@@ -1193,6 +1193,67 @@
   overflow-wrap: anywhere;
 }
 
+/* Sync. */
+.sync {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  max-width: 560px;
+}
+
+.sync__form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.sync__lead {
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  line-height: 1.6;
+}
+
+.sync__title {
+  font-size: var(--text-lg);
+  font-weight: 500;
+  letter-spacing: var(--tracking-tight);
+}
+
+.sync__actions {
+  display: flex;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.sync__confirm {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  color: var(--text);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  cursor: pointer;
+}
+
+/*
+ * The recovery kit itself. Large, monospaced and selectable, because this is
+ * copied by hand onto paper and every character has to be unambiguous — the
+ * alphabet already excludes look-alikes, and the type should not put them back.
+ */
+.kit {
+  padding: var(--space-5);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 18px;
+  letter-spacing: 0.06em;
+  text-align: center;
+  user-select: text;
+  word-break: break-all;
+}
+
 .sr-only {
   position: absolute;
   width: 1px;
