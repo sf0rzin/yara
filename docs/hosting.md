@@ -19,15 +19,17 @@ out of a production database.
 ## Topology
 
 ```
-client → Cloudflare → beta:443 → DNAT → ayla:443 → 10.10.1.21:80
-         (TLS #1)     (dedicated)        (Caddy,    (Caddy, origin)
-                                          TLS #2)
+client → Cloudflare → beta:443 → DNAT → edge:443 → 10.10.1.21:80
+         (TLS #1)     (dedicated)       (Caddy,    (Caddy, origin)
+                                         TLS #2)
 ```
 
 | | |
 | --- | --- |
 | **beta** | Hetzner dedicated, Falkenstein. `142.132.199.184`, Proxmox VE 9 |
-| **ayla** | VM 101, `10.10.1.20`. Pre-existing edge proxy, Let's Encrypt certs |
+| **edge** | VM 104, `10.10.1.2`. Routes 80/443 by hostname; holds every cert |
+| **ayla** | VM 101, `10.10.1.20`. Fastify + Postgres, a peer service |
+| **anglis** | VM 103, `10.10.1.22`. Another peer service |
 | **yara** | VM 102, `10.10.1.21`. This project's origin |
 
 The origin runs on VM 102: Debian 13, 2 vCPU, 4 GB RAM, 40 GB, on `vmbr1`, the
@@ -40,13 +42,26 @@ derivation happens on the client, and the server verifies signatures. Sync
 payloads are encrypted items measured in kilobytes; a few dozen users with a
 few hundred items each is a database of a few megabytes.
 
-### Why it goes through ayla
+### Why it goes through a shared edge
 
-Ayla already terminates TLS for this host and its nftables only accepts 80/443
-from Cloudflare's ranges. Giving yara its own public IPv4 would cost about
-€1.70/month and buy isolation; putting it behind the proxy that already exists
-costs nothing. The second was chosen deliberately, and the signed-request
-protocol below is what makes it safe.
+Only one machine can hold `142.132.199.184:443`, and there are three services
+behind it. Giving yara its own public IPv4 would cost about €1.70/month and buy
+isolation; sharing the proxy that has to exist anyway costs nothing. The second
+was chosen deliberately, and the signed-request protocol below is what makes it
+safe.
+
+Two things about that edge are load-bearing rather than incidental:
+
+**The origin declares its site as `http://yara.rindexx.cc`.** Drop the scheme
+and Caddy turns on automatic HTTPS, answers 308 on port 80, and the edge hands
+that redirect back to a client who follows it into the same 308 — a loop that
+reads as a working proxy right up until someone follows it. Peers that do want
+their own TLS get reached over `https://` with an explicit `tls_server_name`,
+since the SNI would otherwise be an IP address no certificate matches.
+
+**The origin trusts exactly one address for `X-Forwarded-For`.** If the edge
+moves, `trusted_proxies` moves with it or `{client_ip}` silently becomes either
+the proxy's address or something any caller can forge.
 
 ### What each hop can see
 

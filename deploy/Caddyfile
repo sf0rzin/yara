@@ -8,22 +8,27 @@
 #
 # This does not terminate TLS and does not speak ACME. The chain is
 #
-#   client → Cloudflare → beta:443 (DNAT) → ayla:443 (Caddy, TLS) → here :80
+#   client → Cloudflare → beta:443 (DNAT) → edge:443 (Caddy, TLS) → here :80
 #
-# so certificates are ayla's problem and the last hop is plaintext across a
+# so certificates are the edge's problem and the last hop is plaintext across a
 # private bridge on the same physical host. The `http://` scheme on the site
 # address is what disables automatic HTTPS; naming the host rather than `:80`
 # also stops this origin from answering for anything else.
+#
+# Declaring the site as `http://` is not cosmetic. Without it Caddy turns on
+# automatic HTTPS, answers 308 on port 80, and the edge faithfully hands that
+# redirect back to a client who follows it straight into the same 308 — a loop
+# that looks like a working proxy until you follow it.
 
 {
 	# Real client addresses, restored one hop at a time.
 	#
-	# ayla is the only thing that may speak for a client here. It in turn only
-	# believes Cloudflare — see the mirror of this block in its Caddyfile. Get
-	# either half wrong and any caller can forge {client_ip}, which is the one
-	# field in the audit log that has to be true.
+	# The edge is the only thing that may speak for a client here. It in turn
+	# only believes Cloudflare — see the mirror of this block in its Caddyfile.
+	# Get either half wrong and any caller can forge {client_ip}, which is the
+	# one field in the audit log that has to be true.
 	servers {
-		trusted_proxies static 10.10.1.20/32
+		trusted_proxies static 10.10.1.2/32
 		client_ip_headers X-Forwarded-For
 	}
 }
