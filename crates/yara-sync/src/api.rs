@@ -83,6 +83,7 @@ impl RateLimiter {
 pub fn router(app: Arc<App>) -> Router {
     Router::new()
         .route("/api/v1/health", get(health))
+        .route("/api/v1/account", post(enrol))
         .route("/api/v1/account/{id}", get(account))
         .route("/api/v1/devices", post(register_device))
         .route("/api/v1/items", get(pull_items).post(push_items))
@@ -167,6 +168,80 @@ async fn account(
             "no such account".to_string(),
         )),
     }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Enrol {
+    account_id: String,
+    salt: String,
+    kdf: String,
+    wrapped_vault_key: String,
+    wrapped_account_key: String,
+    device_id: String,
+    /// Base64, 32 bytes.
+    public_key: String,
+    label: Option<String>,
+    invite: String,
+}
+
+/// Creates an account and its first device, against one invite.
+///
+/// Unsigned because there is nothing to sign with yet — this request is what
+/// brings the first key into existence. The invite is the whole gate, which is
+/// why it is spent inside the same transaction that writes the account: a
+/// failure in between would burn it on an account nobody can reach or finish.
+async fn enrol(
+    State(app): State<Arc<App>>,
+    headers: HeaderMap,
+    Json(body): Json<Enrol>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    use base64::Engine as _;
+
+    let now = crate::now();
+
+    if !app
+        .limiter
+        .lock()
+        .map(|mut limiter| limiter.allow(client_ip(&headers), now))
+        .unwrap_or(true)
+    {
+        return Err(ApiError(
+            StatusCode::TOO_MANY_REQUESTS,
+            "too many requests".into(),
+        ));
+    }
+
+    let key = base64::engine::general_purpose::STANDARD
+        .decode(&body.public_key)
+        .ok()
+        .filter(|bytes| bytes.len() == 32)
+        .ok_or_else(|| {
+            ApiError(
+                StatusCode::BAD_REQUEST,
+                "the public key must be 32 base64 bytes".into(),
+            )
+        })?;
+
+    app.store.enrol(
+        &body.invite,
+        crate::store::NewAccount {
+            id: &body.account_id,
+            salt: &body.salt,
+            kdf: &body.kdf,
+            wrapped_vault_key: &body.wrapped_vault_key,
+            wrapped_account_key: &body.wrapped_account_key,
+        },
+        &body.device_id,
+        &key,
+        body.label.as_deref(),
+        now,
+    )?;
+
+    Ok(Json(json!({
+        "accountId": body.account_id,
+        "deviceId": body.device_id,
+    })))
 }
 
 // ---- signed ------------------------------------------------------------

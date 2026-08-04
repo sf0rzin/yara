@@ -227,6 +227,35 @@ pub struct VaultData {
     /// pointing the wrong way.
     #[serde(default)]
     pub audit: Vec<String>,
+    /// Where this machine syncs to, if it does. `None` until enrolled.
+    #[serde(default)]
+    pub sync: Option<SyncState>,
+}
+
+/// What this machine needs to remember between syncs.
+///
+/// Lives in the vault because it identifies the account and carries the
+/// device's signing seed — and because a vault that syncs should not need a
+/// second file beside it that says where to.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SyncState {
+    pub base_url: String,
+    pub account_id: String,
+    pub device_id: String,
+    /// The device's Ed25519 seed, base64.
+    ///
+    /// Stored plainly *inside* the encrypted vault rather than wrapped again.
+    /// The whole file is sealed under the vault key; a second wrapping under
+    /// that same key would protect it from nobody who could not already read
+    /// the first.
+    pub device_seed: String,
+    /// The newest revision this machine has seen.
+    #[serde(default)]
+    pub last_revision: i64,
+    /// When the last sync finished, which is what tells a later one which
+    /// items changed here in the meantime.
+    #[serde(default)]
+    pub last_synced_at: u64,
 }
 
 /// An open vault, holding the vault key in memory.
@@ -401,6 +430,46 @@ impl UnlockedVault {
         &self.data.audit
     }
 
+    pub fn sync_state(&self) -> Option<&SyncState> {
+        self.data.sync.as_ref()
+    }
+
+    pub fn set_sync_state(&mut self, state: Option<SyncState>) {
+        self.data.sync = state;
+    }
+
+    /// Seals one item for a server that must not be able to read it.
+    ///
+    /// Under the vault key, which never leaves this machine, so what travels
+    /// is opaque to every hop between here and storage. The item id is the
+    /// associated data: it is the one field the server *does* see, so binding
+    /// it stops a ciphertext being replayed under a different id.
+    pub fn seal_item(&self, item: &Item) -> Result<Sealed> {
+        let plaintext = serde_json::to_vec(item)?;
+        crypto::seal(&self.vault_key, &plaintext, item.id.as_bytes())
+    }
+
+    /// Opens an item that arrived from the server.
+    ///
+    /// The id is checked by the AEAD rather than after the fact: a record
+    /// filed under one id whose contents claim another fails to decrypt at
+    /// all, instead of being noticed later by code that might forget to look.
+    pub fn open_item(&self, id: Uuid, sealed: &Sealed) -> Result<Item> {
+        let plaintext = crypto::open(&self.vault_key, sealed, id.as_bytes())?;
+        Ok(serde_json::from_slice(&plaintext)?)
+    }
+
+    /// Inserts or replaces an item wholesale, keeping its id.
+    ///
+    /// What applying a remote change amounts to. Separate from `add` because
+    /// that one mints a new id, which is exactly wrong here.
+    pub fn upsert(&mut self, item: Item) {
+        match self.data.items.iter_mut().find(|held| held.id == item.id) {
+            Some(existing) => *existing = item,
+            None => self.data.items.push(item),
+        }
+    }
+
     pub fn search(&self, query: &str) -> Vec<&Item> {
         self.data
             .items
@@ -457,6 +526,111 @@ mod tests {
             iterations: 1,
             parallelism: 1,
         }
+    }
+
+    #[test]
+    fn a_sealed_item_round_trips() {
+        let vault = UnlockedVault::create_with_params("pw", fast()).unwrap();
+        let mut item = Item::new("GitHub");
+        item.password = Some("hunter2".into());
+
+        let sealed = vault.seal_item(&item).unwrap();
+        let recovered = vault.open_item(item.id, &sealed).unwrap();
+
+        assert_eq!(recovered.name, "GitHub");
+        assert_eq!(
+            recovered.password.as_ref().map(|p| p.expose()),
+            Some("hunter2")
+        );
+    }
+
+    #[test]
+    fn a_sealed_item_shows_the_server_nothing() {
+        let vault = UnlockedVault::create_with_params("pw", fast()).unwrap();
+        let mut item = Item::new("Stripe");
+        item.password = Some("sk_live_do_not_leak".into());
+        item.username = Some("billing@example.com".into());
+
+        let wire = serde_json::to_string(&vault.seal_item(&item).unwrap()).unwrap();
+
+        // Everything the server stores is in here, and none of it is readable.
+        assert!(!wire.contains("Stripe"));
+        assert!(!wire.contains("sk_live_do_not_leak"));
+        assert!(!wire.contains("billing@example.com"));
+    }
+
+    #[test]
+    fn an_item_cannot_be_refiled_under_another_id() {
+        let vault = UnlockedVault::create_with_params("pw", fast()).unwrap();
+        let item = Item::new("GitHub");
+        let sealed = vault.seal_item(&item).unwrap();
+
+        // The id is the associated data, so a server that swapped two records
+        // produces a decryption failure rather than a silent mix-up.
+        assert!(vault.open_item(Uuid::new_v4(), &sealed).is_err());
+    }
+
+    #[test]
+    fn another_vault_cannot_open_the_item() {
+        let mine = UnlockedVault::create_with_params("pw", fast()).unwrap();
+        let theirs = UnlockedVault::create_with_params("pw", fast()).unwrap();
+
+        let item = Item::new("GitHub");
+        let sealed = mine.seal_item(&item).unwrap();
+        assert!(theirs.open_item(item.id, &sealed).is_err());
+    }
+
+    #[test]
+    fn upsert_replaces_rather_than_duplicating() {
+        let mut vault = UnlockedVault::create_with_params("pw", fast()).unwrap();
+        let mut item = Item::new("GitHub");
+        vault.upsert(item.clone());
+
+        item.name = "GitHub (work)".into();
+        vault.upsert(item.clone());
+
+        assert_eq!(vault.items().len(), 1);
+        assert_eq!(vault.get(item.id).unwrap().name, "GitHub (work)");
+    }
+
+    #[test]
+    fn sync_state_survives_a_seal_and_open() {
+        let mut vault = UnlockedVault::create_with_params("pw", fast()).unwrap();
+        assert!(vault.sync_state().is_none(), "a fresh vault does not sync");
+
+        vault.set_sync_state(Some(SyncState {
+            base_url: "https://yara.rindexx.cc".into(),
+            account_id: "acct-1".into(),
+            device_id: "dev-1".into(),
+            device_seed: "c2VlZA==".into(),
+            last_revision: 7,
+            last_synced_at: 1_800_000_000,
+        }));
+
+        let file = vault.seal().unwrap();
+        let reopened = UnlockedVault::open(&file, "pw").unwrap();
+        let state = reopened.sync_state().unwrap();
+
+        assert_eq!(state.account_id, "acct-1");
+        assert_eq!(state.last_revision, 7);
+    }
+
+    #[test]
+    fn the_device_seed_is_not_readable_in_the_file() {
+        let mut vault = UnlockedVault::create_with_params("pw", fast()).unwrap();
+        vault.set_sync_state(Some(SyncState {
+            base_url: "https://yara.rindexx.cc".into(),
+            account_id: "acct-1".into(),
+            device_id: "dev-1".into(),
+            device_seed: "c2VjcmV0LXNlZWQtaGVyZQ==".into(),
+            last_revision: 0,
+            last_synced_at: 0,
+        }));
+
+        // Stored plainly inside the vault, which is the whole point: the file
+        // around it is what keeps it secret.
+        let bytes = vault.seal().unwrap().to_bytes().unwrap();
+        assert!(!String::from_utf8_lossy(&bytes).contains("c2VjcmV0LXNlZWQtaGVyZQ"));
     }
 
     fn vault_with_one_item(password: &str) -> UnlockedVault {

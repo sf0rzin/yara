@@ -353,6 +353,88 @@ async fn a_device_registers_on_an_invite_and_the_code_burns() {
     assert_eq!(status, StatusCode::FORBIDDEN, "an invite is single use");
 }
 
+/// The gap that only showed up when the client was written: nothing created
+/// an account, and a device cannot be registered against one that does not
+/// exist. Enrolment does all three at once.
+#[tokio::test]
+async fn enrolment_creates_the_account_and_its_first_device() {
+    let harness = Harness::new();
+    harness
+        .app
+        .store
+        .create_invite("first-one", yara_sync::now(), 3600)
+        .unwrap();
+
+    let key = SigningKey::from_bytes(&[11u8; 32]);
+    let body = json!({
+        "accountId": "acct-new",
+        "salt": "c2FsdA",
+        "kdf": r#"{"m":65536,"t":3,"p":4}"#,
+        "wrappedVaultKey": "wrapped-vault",
+        "wrappedAccountKey": "wrapped-account",
+        "deviceId": "dev-first",
+        "publicKey": b64(key.verifying_key().as_bytes()),
+        "label": "laptop",
+        "invite": "first-one"
+    })
+    .to_string();
+
+    let (status, _) = harness.send(plain("POST", "/api/v1/account", &body)).await;
+    assert_eq!(status, StatusCode::OK);
+
+    // The account is reachable and the device can sign for it.
+    let (status, blobs) = harness
+        .send(plain("GET", "/api/v1/account/acct-new", ""))
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(blobs["wrappedVaultKey"], "wrapped-vault");
+    assert!(harness
+        .app
+        .store
+        .device_key("acct-new", "dev-first")
+        .unwrap()
+        .is_some());
+}
+
+#[tokio::test]
+async fn a_failed_enrolment_does_not_spend_the_invite() {
+    let harness = Harness::new();
+    harness
+        .app
+        .store
+        .create_invite("only-one", yara_sync::now(), 3600)
+        .unwrap();
+
+    // Same account id as the one the harness already created, so the insert
+    // fails after the invite has been marked used inside the transaction.
+    let key = SigningKey::from_bytes(&[11u8; 32]);
+    let clashing = json!({
+        "accountId": ACCOUNT,
+        "salt": "c2FsdA",
+        "kdf": "{}",
+        "wrappedVaultKey": "v",
+        "wrappedAccountKey": "a",
+        "deviceId": "dev-x",
+        "publicKey": b64(key.verifying_key().as_bytes()),
+        "invite": "only-one"
+    })
+    .to_string();
+
+    let (status, _) = harness
+        .send(plain("POST", "/api/v1/account", &clashing))
+        .await;
+    assert_ne!(status, StatusCode::OK);
+
+    // The transaction rolled back, so the invite is still good.
+    let good = clashing.replace(&format!("\"{ACCOUNT}\""), "\"acct-fresh\"");
+    let (status, _) = harness.send(plain("POST", "/api/v1/account", &good)).await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "a failure must not burn the only invite someone has"
+    );
+}
+
 #[tokio::test]
 async fn a_bad_public_key_is_refused_before_anything_is_stored() {
     let harness = Harness::new();
