@@ -5,6 +5,7 @@ use std::sync::{Arc, Mutex};
 
 use tokio::sync::oneshot;
 use uuid::Uuid;
+use yara_broker::audit::Entry;
 use yara_broker::grant::ClientId;
 use yara_broker::protocol::{AccessRequest, Field, Intent, ItemRef, Refusal, Request, Response};
 use yara_broker::transport::{
@@ -18,6 +19,9 @@ struct FakeVault {
     unlocked: bool,
     item: ItemRef,
     ambiguous: bool,
+    /// Stands in for the encrypted vault the real bridge writes to, so a test
+    /// can tell "the broker recorded it" from "the broker remembered it".
+    stored_audit: Mutex<Vec<Entry>>,
 }
 
 impl FakeVault {
@@ -32,6 +36,7 @@ impl FakeVault {
                 has_totp: false,
             },
             ambiguous: false,
+            stored_audit: Mutex::new(Vec::new()),
         }
     }
 }
@@ -62,6 +67,19 @@ impl VaultBridge for FakeVault {
             Field::Username => self.item.username.clone().map(SecretString::new),
             Field::Totp => None,
         }
+    }
+
+    fn record_audit(&self, entry: &Entry) {
+        if let Ok(mut stored) = self.stored_audit.lock() {
+            stored.push(entry.clone());
+        }
+    }
+
+    fn load_audit(&self) -> Vec<Entry> {
+        self.stored_audit
+            .lock()
+            .map(|stored| stored.clone())
+            .unwrap_or_default()
     }
 }
 
@@ -140,6 +158,52 @@ fn run(item: &str, command: &str, args: &[&str]) -> Request {
         },
         reason: "run the migration".into(),
     })
+}
+
+/// The log has to outlive the session that produced it.
+///
+/// Held only in memory it vanished at every lock, which made the Agent access
+/// screen read like a fresh install each morning — and an accountability
+/// record that forgets overnight is not one.
+#[tokio::test]
+async fn the_log_survives_a_lock_because_it_lives_in_the_vault() {
+    let vault = Arc::new(FakeVault::new());
+    let broker = Broker::new(
+        Arc::clone(&vault) as Arc<dyn VaultBridge>,
+        ScriptedUser::new(Decision::AllowOnce),
+    );
+
+    broker.handle(reveal("db-prod"), &client()).await;
+    assert_eq!(broker.recent_audit(10).len(), 1);
+    assert_eq!(vault.load_audit().len(), 1, "it must reach the vault");
+
+    // Locking wipes what is in memory, as it should: the key is gone and the
+    // interface must not keep showing what the vault is meant to be hiding.
+    broker.forget_grants();
+    assert!(broker.recent_audit(10).is_empty());
+
+    // Unlocking reads it back.
+    broker.restore_audit();
+    assert_eq!(broker.recent_audit(10).len(), 1);
+}
+
+#[tokio::test]
+async fn refusals_reach_the_vault_too() {
+    let vault = Arc::new(FakeVault::new());
+    let broker = Broker::new(
+        Arc::clone(&vault) as Arc<dyn VaultBridge>,
+        ScriptedUser::new(Decision::Deny),
+    );
+
+    broker.handle(reveal("db-prod"), &client()).await;
+
+    let stored = vault.load_audit();
+    assert_eq!(stored.len(), 1);
+    assert!(
+        !stored[0].outcome.was_allowed(),
+        "\"something asked for the production password and I said no\" is \
+         exactly the event worth keeping"
+    );
 }
 
 #[tokio::test]

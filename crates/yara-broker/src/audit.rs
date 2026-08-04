@@ -5,10 +5,13 @@
 //! lands here, including the refusals, because "something asked for the
 //! production password and I said no" is exactly the event worth noticing.
 //!
-//! Held in memory for now. Persisting it belongs inside the encrypted vault —
-//! an audit log naming every credential an agent touched is itself sensitive,
-//! and writing it beside the vault in the clear would leak the shape of a
+//! Stored inside the encrypted vault, through [`crate::transport::VaultBridge`].
+//! A log naming every credential an agent touched is itself sensitive, and
+//! writing it beside the vault in the clear would describe the shape of a
 //! vault nobody could otherwise read.
+//!
+//! The copy held here is a read cache for the interface, filled at unlock and
+//! dropped at lock. The vault is the record.
 
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;

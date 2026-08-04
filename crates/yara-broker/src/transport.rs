@@ -49,6 +49,19 @@ pub trait VaultBridge: Send + Sync + 'static {
     fn resolve(&self, needle: &str) -> Resolution;
     /// The value, or `None` if that field is empty.
     fn secret(&self, id: Uuid, field: Field) -> Option<SecretString>;
+
+    /// Writes an audit record into the vault.
+    ///
+    /// Required rather than defaulted: a no-op default would let an
+    /// implementation lose the log by forgetting to write one, and silently
+    /// is the only way an audit log ever fails.
+    fn record_audit(&self, entry: &Entry);
+
+    /// The records already in the vault, oldest first.
+    ///
+    /// Only readable while unlocked, which is why the broker asks for it at
+    /// unlock rather than holding it across the lock.
+    fn load_audit(&self) -> Vec<Entry>;
 }
 
 /// What the user is being asked to approve.
@@ -123,9 +136,30 @@ impl Broker {
     }
 
     /// Called when the vault locks.
+    ///
+    /// Grants go because a permission that outlives the key behind it is a
+    /// permission to nothing. The audit log goes because it lives in the
+    /// vault now — keeping a readable copy in memory after the key is gone
+    /// would leave the interface showing what the vault is meant to be
+    /// hiding.
     pub fn forget_grants(&self) {
         if let Ok(mut store) = self.grants.lock() {
             store.clear();
+        }
+        if let Ok(mut log) = self.audit.lock() {
+            *log = AuditLog::new();
+        }
+    }
+
+    /// Loads the log out of the vault. Called on unlock, which is the first
+    /// moment the history is readable.
+    pub fn restore_audit(&self) {
+        let entries = self.vault.load_audit();
+        if let Ok(mut log) = self.audit.lock() {
+            *log = AuditLog::new();
+            for entry in entries {
+                log.record(entry);
+            }
         }
     }
 
@@ -325,6 +359,11 @@ impl Broker {
     }
 
     fn record(&self, entry: Entry) {
+        // The vault first. An entry that only reached memory is gone at the
+        // next lock, and a log that does not survive the session that made it
+        // is not a log.
+        self.vault.record_audit(&entry);
+
         if let Ok(mut log) = self.audit.lock() {
             log.record(entry);
         }
