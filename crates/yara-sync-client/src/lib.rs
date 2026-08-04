@@ -15,5 +15,5 @@ pub mod client;
 pub mod merge;
 pub mod signing;
 
-pub use client::{Account, Client, Error, ItemPage, Result, SyncItem};
+pub use client::{Account, Client, Enrolment, Error, ItemPage, Result, SyncItem};
 pub use merge::{reconcile, Resolution};

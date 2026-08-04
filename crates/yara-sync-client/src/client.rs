@@ -92,6 +92,23 @@ struct ApiError {
     error: String,
 }
 
+/// Everything a brand new account needs, computed on this machine.
+///
+/// Every field the server keeps is already opaque by the time it gets here:
+/// the two wrapped keys came out of `enc_key`, and `enc_key` came from a
+/// password and a kit the server has never seen.
+pub struct Enrolment<'a> {
+    pub account_id: &'a str,
+    pub salt: &'a str,
+    pub kdf: &'a str,
+    pub wrapped_vault_key: &'a str,
+    pub wrapped_account_key: &'a str,
+    pub device_id: &'a str,
+    pub public_key: &'a [u8],
+    pub label: Option<&'a str>,
+    pub invite: &'a str,
+}
+
 pub struct Client {
     base: String,
     http: reqwest::Client,
@@ -127,6 +144,45 @@ impl Client {
             device_id: device_id.into(),
             device_key,
         })
+    }
+
+    /// Creates an account and this machine as its first device.
+    ///
+    /// One request, because the server does the three writes in one
+    /// transaction: an invite spent on an account with no device is an account
+    /// nobody can reach and nobody can finish.
+    ///
+    /// Unsigned, because this is the request that brings the first key into
+    /// existence. The invite is the gate.
+    pub async fn enrol(base: &str, request: Enrolment<'_>) -> Result<()> {
+        use base64::Engine as _;
+
+        let http = reqwest::Client::builder()
+            .timeout(TIMEOUT)
+            .build()
+            .map_err(|_| Error::Unreachable)?;
+
+        let body = serde_json::json!({
+            "accountId": request.account_id,
+            "salt": request.salt,
+            "kdf": request.kdf,
+            "wrappedVaultKey": request.wrapped_vault_key,
+            "wrappedAccountKey": request.wrapped_account_key,
+            "deviceId": request.device_id,
+            "publicKey": base64::engine::general_purpose::STANDARD.encode(request.public_key),
+            "label": request.label,
+            "invite": request.invite,
+        });
+
+        let url = format!("{}/api/v1/account", base.trim_end_matches('/'));
+        let response = http
+            .post(url)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|_| Error::Unreachable)?;
+
+        interpret::<serde_json::Value>(response).await.map(|_| ())
     }
 
     /// Fetches the wrapped blobs. No signature: a new device has none yet.

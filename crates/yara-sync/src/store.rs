@@ -45,6 +45,20 @@ pub struct AccountBlobs {
     pub revision: i64,
 }
 
+/// The opaque halves of a new account, as the client computed them.
+///
+/// Borrowed rather than owned: these come straight off a request body and go
+/// straight into a statement, and copying them would only mean holding two of
+/// each for no reason.
+#[derive(Clone, Copy, Debug)]
+pub struct NewAccount<'a> {
+    pub id: &'a str,
+    pub salt: &'a str,
+    pub kdf: &'a str,
+    pub wrapped_vault_key: &'a str,
+    pub wrapped_account_key: &'a str,
+}
+
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ItemRecord {
@@ -182,6 +196,58 @@ impl Store {
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             params![id, salt, kdf, wrapped_vault_key, wrapped_account_key, now],
         )?;
+        Ok(())
+    }
+
+    /// Creates an account and its first device against one invite.
+    ///
+    /// All three in a single transaction, deliberately. Done in steps, a
+    /// failure between them spends the invite on an account with no device —
+    /// which nobody can reach and nobody can finish, and the only way out is
+    /// another invite.
+    #[allow(clippy::too_many_arguments)]
+    pub fn enrol(
+        &self,
+        invite: &str,
+        account: NewAccount<'_>,
+        device_id: &str,
+        public_key: &[u8],
+        label: Option<&str>,
+        now: i64,
+    ) -> Result<()> {
+        let mut conn = self.lock();
+        let tx = conn.transaction()?;
+
+        let spent = tx.execute(
+            "UPDATE invites SET used_by = ?2
+             WHERE code_hash = ?1 AND used_by IS NULL AND expires_at > ?3",
+            params![Self::hash_code(invite), account.id, now],
+        )?;
+        if spent == 0 {
+            return Err(Error::BadInvite);
+        }
+
+        tx.execute(
+            "INSERT INTO accounts
+               (id, salt, kdf, wrapped_vault_key, wrapped_account_key, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                account.id,
+                account.salt,
+                account.kdf,
+                account.wrapped_vault_key,
+                account.wrapped_account_key,
+                now
+            ],
+        )?;
+
+        tx.execute(
+            "INSERT INTO devices (id, account_id, public_key, label, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![device_id, account.id, public_key, label, now],
+        )?;
+
+        tx.commit()?;
         Ok(())
     }
 
