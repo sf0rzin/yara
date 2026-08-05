@@ -1,49 +1,91 @@
 /*
  * Design tokens.
  *
- * The six surface and text values come from the design. Everything else is
- * derived from them, and the rules the design states are enforced here rather
- * than left to each component:
+ * Apple's structure without Apple's accent: alpha-stacked hierarchy, inset
+ * grouped lists, squircles. The rules the design states are enforced here
+ * rather than left to each component:
  *
  *   - No accent colour. Hierarchy comes from contrast, spacing and type.
  *   - No status colour either, so success and danger are expressed through
  *     weight, placement and iconography instead of hue.
  *   - Quiet borders: they separate, they never decorate.
+ *
+ * Almost every value is white at some opacity over the window. That single
+ * choice is what makes the interface read as a Mac app: a surface is not a
+ * different grey, it is the same light admitted more or less.
  */
 
 :root {
-  /* Surfaces, darkest to lightest. */
-  --bg: #101010;
-  --sidebar: #171717;
-  --surface: #1b1b1b;
-  --raised: #222222;
-  --border: #303030;
+  /*
+   * The window. The only opaque background in the file, because everything
+   * else is defined as light over it.
+   */
+  --bg: #0d0d0d;
 
-  /* Borders come in two weights: one that reads, one that barely does. */
-  --border-strong: #3a3a3a;
-  --border-faint: #242424;
+  /* Surfaces, as alpha over --bg. */
+  --sidebar: rgba(255, 255, 255, 0.03);
+  --surface: rgba(255, 255, 255, 0.04);
+  --raised: rgba(255, 255, 255, 0.05);
 
   /*
-   * Text ramp derived from the #F2F2F2 anchor. --text-muted is the dimmest
-   * value used for real content: it holds ~4.8:1 against --bg, above the 4.5:1
-   * floor for body text. --text-disabled falls below that and is therefore
-   * only for decorative or genuinely inactive elements.
+   * Popovers are opaque on purpose. They float over content rather than over
+   * the window, so alpha would let whatever is beneath bleed through and the
+   * text on top would lose its contrast guarantee.
    */
-  --text: #f2f2f2;
-  --text-secondary: #b0b0b0;
-  --text-muted: #858585;
-  --text-disabled: #5a5a5a;
+  --bg-popover: #1e1e1e;
+
+  /* Borders come in two weights: one that reads, one that barely does. */
+  --border: rgba(255, 255, 255, 0.09);
+  --border-strong: rgba(255, 255, 255, 0.14);
+  --border-faint: rgba(255, 255, 255, 0.06);
+
+  /*
+   * Column dividers are opaque rather than alpha. They sit between two
+   * surfaces of different opacity, and an alpha line across that boundary
+   * changes value halfway along.
+   */
+  --separator-opaque: #242424;
+
+  /* Controls: buttons, fields, menu rows. */
+  --control-bg: rgba(255, 255, 255, 0.06);
+  --control-bg-hover: rgba(255, 255, 255, 0.09);
+  --control-bg-selected: rgba(255, 255, 255, 0.12);
+  --control-stroke: rgba(255, 255, 255, 0.1);
+
+  /* Fills, for tiles and wells that hold something else. */
+  --fill-tertiary: rgba(255, 255, 255, 0.08);
+  --fill-quaternary: rgba(255, 255, 255, 0.05);
+
+  /*
+   * Text ramp. --text-muted is the dimmest value used for real content: it
+   * holds ~4.9:1 against --bg, above the 4.5:1 floor for body text. It carries
+   * field labels, which are content rather than decoration, so it was raised
+   * from the 38% originally drafted.
+   *
+   * --text-disabled falls to ~1.9:1 and is therefore only for decorative or
+   * genuinely inactive elements — keyboard hints, the provenance line, a
+   * countdown that repeats what a ring already shows.
+   */
+  --text: rgba(255, 255, 255, 0.92);
+  --text-secondary: rgba(255, 255, 255, 0.58);
+  --text-muted: rgba(255, 255, 255, 0.48);
+  --text-disabled: rgba(255, 255, 255, 0.22);
 
   /* The one high-contrast element on screen: the primary action. */
   --inverse-bg: #f2f2f2;
-  --inverse-text: #101010;
+  --inverse-text: #0d0d0d;
 
-  /* Radius scale. The design calls for 12–28 on surfaces; controls sit below. */
-  --radius-xs: 6px;
-  --radius-sm: 8px;
-  --radius-md: 12px;
-  --radius-lg: 16px;
-  --radius-xl: 22px;
+  /*
+   * Radius scale. Squircle-ish: generous on surfaces, tight on controls, and
+   * a tile is rounded a little more than the control beside it so the two do
+   * not read as the same object at different sizes.
+   */
+  --radius-xs: 5px;
+  --radius-sm: 7px;
+  --radius-md: 8px;
+  --radius-tile: 9px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
   --radius-pill: 999px;
 
   /* 4px base spacing scale. */
@@ -58,17 +100,26 @@
 
   --font-sans: "Inter Variable", Inter, system-ui, -apple-system,
     "Segoe UI Variable Text", "Segoe UI", sans-serif;
-  --font-mono: ui-monospace, "Cascadia Mono", "SF Mono", Menlo, monospace;
+  /*
+   * Bundled rather than a system stack. A masked password is a column of
+   * identical dots and a one-time code is read aloud digit by digit; both
+   * depend on the figures being the same width, and on Windows the system
+   * monospace varies by install.
+   */
+  --font-mono: "JetBrains Mono Variable", "JetBrains Mono", ui-monospace,
+    "Cascadia Mono", Consolas, monospace;
 
   /* Type scale. */
   --text-display: 26px;
+  --text-title: 17px;
   --text-lg: 15px;
-  --text-base: 13.5px;
+  --text-base: 13px;
   --text-sm: 12.5px;
-  --text-xs: 11.5px;
+  --text-xs: 11px;
   --text-label: 10.5px;
 
   --tracking-tight: -0.02em;
+  --tracking-title: -0.019em;
   --tracking-label: 0.08em;
 
   /* Motion. Quiet and quick: nothing here should draw attention to itself. */
@@ -76,7 +127,19 @@
   --duration-fast: 120ms;
   --duration: 160ms;
 
-  --sidebar-width: 248px;
+  /*
+   * Shadows. Two layers each: a tight one that seats the edge, and a wide
+   * soft one that lifts it. One layer alone reads as a sticker.
+   */
+  --shadow-popover: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 24px -6px rgba(0, 0, 0, 0.45);
+  --shadow-window: 0 4px 12px -4px rgba(0, 0, 0, 0.4), 0 32px 64px -16px rgba(0, 0, 0, 0.55);
+
+  /* Chrome. */
+  --sidebar-width: 236px;
+  --list-width: 332px;
+  --titlebar-height: 38px;
+  --control-size: 26px;
+  --row-height: 30px;
 
   color-scheme: dark;
 }

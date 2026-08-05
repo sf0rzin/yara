@@ -4,6 +4,7 @@ import ReactDOM from "react-dom/client";
 // Bundled locally rather than fetched: the app must work offline and its CSP
 // forbids loading anything from a remote origin.
 import "@fontsource-variable/inter";
+import "@fontsource-variable/jetbrains-mono";
 
 import "./styles/tokens.css";
 import "./styles/global.css";
