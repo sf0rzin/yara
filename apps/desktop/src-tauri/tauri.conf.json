@@ -17,7 +17,8 @@
         "height": 720,
         "minWidth": 880,
         "minHeight": 600,
-        "resizable": true
+        "resizable": true,
+        "decorations": false
       }
     ],
     "security": {
@@ -27,12 +28,17 @@
   "plugins": {
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDNFNEJGQUE2RUI2MUFEMTcKUldRWHJXSHJwdnBMUHFlU1hhLzJvclJVVzFwQ2Jic1ZyVy9Sd1kyU0JpdlY1VUJmKzZzVnZteEkK",
-      "endpoints": ["https://yara.rindexx.cc/updates/latest.json"]
+      "endpoints": [
+        "https://yara.rindexx.cc/updates/latest.json"
+      ]
     }
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis", "msi"],
+    "targets": [
+      "nsis",
+      "msi"
+    ],
     "createUpdaterArtifacts": true,
     "icon": [
       "icons/32x32.png",

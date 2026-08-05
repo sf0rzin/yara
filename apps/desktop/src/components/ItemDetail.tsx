@@ -9,6 +9,7 @@ import {
 import { copySecret } from "../lib/clipboard";
 import { itemHealth } from "../lib/health";
 import { Icon } from "./Icon";
+import { Tile } from "./Tile";
 import { TotpBadge } from "./TotpBadge";
 
 interface ItemDetailProps {
@@ -112,9 +113,7 @@ export function ItemDetail({ item, health, onChanged }: ItemDetailProps): JSX.El
 
       <div className="detail__scroll">
         <div className="detail__header">
-          <span className="tile tile--large" aria-hidden="true">
-            <Icon name={item.kind} size={20} />
-          </span>
+          <Tile name={item.name} kind={item.kind} large />
           <div className="detail__heading">
             <h2 className="detail__name">{item.name}</h2>
             {host && <p className="detail__host">{host}</p>}

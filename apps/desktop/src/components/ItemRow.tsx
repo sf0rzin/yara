@@ -1,13 +1,7 @@
 import type { JSX } from "react";
-import type { ItemKind, ItemSummary } from "../api";
-import { Icon, type IconName } from "./Icon";
+import type { ItemSummary } from "../api";
+import { Tile } from "./Tile";
 import { TotpBadge } from "./TotpBadge";
-
-const KIND_ICONS: Record<ItemKind, IconName> = {
-  login: "login",
-  card: "card",
-  note: "note",
-};
 
 interface ItemRowProps {
   item: ItemSummary;
@@ -28,9 +22,7 @@ export function ItemRow({ item, selected, onSelect }: ItemRowProps): JSX.Element
         data-selected={selected || undefined}
         onClick={() => onSelect(item.id)}
       >
-        <span className="tile" aria-hidden="true">
-          <Icon name={KIND_ICONS[item.kind]} size={16} />
-        </span>
+        <Tile name={item.name} kind={item.kind} />
 
         <span className="row__text">
           <span className="row__name">{item.name}</span>

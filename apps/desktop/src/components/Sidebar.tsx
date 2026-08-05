@@ -1,6 +1,7 @@
-import type { JSX } from "react";
+import { useState, type JSX } from "react";
 import type { VaultCounts } from "../api";
 import { formatCountdown } from "../lib/useAutoLock";
+import { AutoLockMenu } from "./AutoLockMenu";
 import { Icon, type IconName } from "./Icon";
 import type { View } from "../views";
 
@@ -15,7 +16,9 @@ interface SidebarProps {
   view: View;
   counts: VaultCounts | null;
   lockRemainingMs: number;
+  autoLockSeconds: number | null;
   onSelect: (view: View) => void;
+  onChangeAutoLock: (seconds: number | null) => void;
   onLock: () => void;
 }
 
@@ -30,9 +33,12 @@ export function Sidebar({
   view,
   counts,
   lockRemainingMs,
+  autoLockSeconds,
   onSelect,
+  onChangeAutoLock,
   onLock,
 }: SidebarProps): JSX.Element {
+  const [menuOpen, setMenuOpen] = useState(false);
   // Collections are ways of looking at the vault. Subscriptions sits here
   // rather than under Types because a subscription is an attachment on a
   // login, not a kind of item — a charge with no account behind it is trivia.
@@ -112,17 +118,42 @@ export function Sidebar({
         naming the vault twice. The countdown is the only moving thing in the
         sidebar, so it earns its place by being the one fact that changes.
       */}
-      <button type="button" className="sidebar__footer" onClick={onLock}>
-        <span className="sidebar__footer-tile" aria-hidden="true">
-          <Icon name="lock" size={14} />
-        </span>
-        <span className="sidebar__footer-text">
-          <span className="sidebar__footer-title">Unlocked</span>
-          <span className="sidebar__footer-sub">
-            Locks in {formatCountdown(lockRemainingMs)}
+      <div className="sidebar__footer-anchor">
+        {menuOpen && (
+          <AutoLockMenu
+            current={autoLockSeconds}
+            onChoose={(seconds) => {
+              onChangeAutoLock(seconds);
+              setMenuOpen(false);
+            }}
+            onLockNow={() => {
+              setMenuOpen(false);
+              onLock();
+            }}
+            onDismiss={() => setMenuOpen(false)}
+          />
+        )}
+
+        <button
+          type="button"
+          className="sidebar__footer"
+          aria-haspopup="menu"
+          aria-expanded={menuOpen}
+          onClick={() => setMenuOpen((open) => !open)}
+        >
+          <span className="sidebar__footer-tile" aria-hidden="true">
+            <Icon name="lock" size={14} />
           </span>
-        </span>
-      </button>
+          <span className="sidebar__footer-text">
+            <span className="sidebar__footer-title">Unlocked</span>
+            <span className="sidebar__footer-sub">
+              {autoLockSeconds === null
+                ? "Until you lock it"
+                : `Locks in ${formatCountdown(lockRemainingMs)}`}
+            </span>
+          </span>
+        </button>
+      </div>
     </aside>
   );
 }

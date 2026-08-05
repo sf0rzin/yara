@@ -279,3 +279,16 @@ export function errorMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
   return "Something went wrong.";
 }
+
+/**
+ * Idle seconds before the vault locks itself, or null for never.
+ *
+ * Stored inside the vault rather than beside it: how long this machine stays
+ * unlocked deserves the same protection as what it is protecting, and a
+ * setting kept in the clear could be edited to "never" by anything running as
+ * the user.
+ */
+export const autoLockSeconds = () => invoke<number | null>("auto_lock_seconds");
+
+export const setAutoLockSeconds = (seconds: number | null) =>
+  invoke<void>("set_auto_lock_seconds", { seconds });

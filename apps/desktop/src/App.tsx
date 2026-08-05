@@ -1,5 +1,6 @@
 import { useEffect, useState, type JSX } from "react";
 import { vaultExists } from "./api";
+import { TitleBar } from "./components/TitleBar";
 import { Unlock } from "./screens/Unlock";
 import { Vault } from "./screens/Vault";
 
@@ -14,6 +15,21 @@ export default function App(): JSX.Element {
       .catch(() => setScreen("setup"));
   }, []);
 
+  // The title bar is outside the switch: the frame is off, so without it a
+  // vault stuck on the loading frame would be a window nobody can move or
+  // close.
+  return (
+    <>
+      <TitleBar />
+      {content(screen, setScreen)}
+    </>
+  );
+}
+
+function content(
+  screen: Screen,
+  setScreen: (screen: Screen) => void,
+): JSX.Element {
   switch (screen) {
     case "loading":
       // Deliberately blank: the check is a filesystem stat, so a spinner would

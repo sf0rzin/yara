@@ -159,6 +159,89 @@
   letter-spacing: 0.02em;
 }
 
+/*
+ * The footer is the popover's anchor, so the menu rises from the control it
+ * belongs to rather than appearing somewhere on the screen.
+ */
+.sidebar__footer-anchor {
+  position: relative;
+}
+
+.popover {
+  position: absolute;
+  bottom: calc(100% + var(--space-2));
+  left: var(--space-2);
+  right: var(--space-2);
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-1) 0;
+  background: var(--bg-popover);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-popover);
+}
+
+.popover .section-label {
+  padding: var(--space-2) var(--space-3) var(--space-1);
+  color: var(--text-muted);
+}
+
+.popover__options {
+  display: flex;
+  flex-direction: column;
+  padding: 0 var(--space-1);
+}
+
+.popover__item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  height: var(--row-height);
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-xs);
+  color: var(--text-secondary);
+  font-size: var(--text-base);
+  text-align: left;
+  transition:
+    background var(--duration-fast) var(--ease),
+    color var(--duration-fast) var(--ease);
+}
+
+.popover__item:hover {
+  background: var(--control-bg);
+  color: var(--text);
+}
+
+.popover__item[data-chosen] {
+  background: var(--control-bg-selected);
+  color: var(--text);
+  font-weight: 500;
+}
+
+/*
+ * The tick has a reserved slot whether or not it is drawn, so choosing a
+ * different option does not shift every label sideways.
+ */
+.popover__check {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 13px;
+}
+
+.popover__label {
+  flex: 1;
+  min-width: 0;
+}
+
+.popover__separator {
+  height: 1px;
+  margin: var(--space-1) var(--space-3);
+  background: var(--border);
+}
+
 /* --------------------------------------------------------------- columns */
 
 .list-column,
@@ -1359,4 +1442,89 @@
   overflow: hidden;
   clip-path: inset(50%);
   white-space: nowrap;
+}
+
+/* -------------------------------------------------------------- titlebar */
+
+/*
+ * The window frame is off, so this strip is the frame. It floats over the
+ * column toolbars rather than taking a row of its own — the toolbars were
+ * already padded away from the top edge, and giving the chrome its own band
+ * would push everything down for no gain.
+ */
+.titlebar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 50;
+  display: flex;
+  height: var(--titlebar-height);
+  pointer-events: none;
+}
+
+/*
+ * Only the empty stretch drags. It stops short of the controls so a press on
+ * close cannot be read as the start of a drag.
+ */
+.titlebar__drag {
+  flex: 1;
+  pointer-events: auto;
+  -webkit-app-region: drag;
+}
+
+.titlebar__controls {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 var(--space-2);
+  pointer-events: auto;
+}
+
+.titlebar__button {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 26px;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  transition:
+    background var(--duration-fast) var(--ease),
+    color var(--duration-fast) var(--ease);
+}
+
+.titlebar__button:hover {
+  background: var(--control-bg);
+  color: var(--text);
+}
+
+.titlebar__button--close:hover {
+  background: var(--control-bg-selected);
+}
+
+/*
+ * The detail toolbar shares the top-right corner with the controls, so its own
+ * buttons stop before them.
+ */
+.detail__toolbar {
+  padding-right: 104px;
+}
+
+/*
+ * A monogram tile. Letter-spacing is negative because two capitals set at this
+ * size drift apart and stop reading as one mark.
+ */
+.tile[data-monogram] {
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.tile--large[data-monogram] {
+  font-size: var(--text-lg);
+}
+
+.row[data-selected] .tile[data-monogram] {
+  color: var(--text);
 }
