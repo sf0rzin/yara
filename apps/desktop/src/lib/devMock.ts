@@ -101,6 +101,7 @@ const items: MockItem[] = [
 let unlocked = false;
 
 let mockAutoLock: number | null = 15 * 60;
+let mockIcons = true;
 
 interface MockSubscription {
   plan: string | null;
@@ -276,6 +277,15 @@ const handlers: Record<string, (args: Record<string, unknown>) => unknown> = {
     const id = String(args.id);
     if (args.subscription === null) delete subscriptions[id];
     else subscriptions[id] = args.subscription as MockSubscription;
+  },
+
+  // No network in a dev session, and none wanted: the point of the proxy is
+  // that the browser never reaches a site directly, so the mock returning null
+  // exercises exactly the fallback a blocked or iconless domain produces.
+  icon_for: () => null,
+  icons_enabled: () => mockIcons,
+  set_icons_enabled: (args) => {
+    mockIcons = Boolean(args.enabled);
   },
 
   auto_lock_seconds: () => mockAutoLock,

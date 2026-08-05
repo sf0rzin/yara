@@ -467,6 +467,133 @@ fn resolve_approval(
     Ok(())
 }
 
+// ---- icons -------------------------------------------------------------
+
+/// Where icons are fetched from when this vault has no sync server of its own.
+const DEFAULT_ICON_ORIGIN: &str = "https://yara.rindexx.cc";
+
+/// The icon for a domain, as a data URL, or `None` if there is not one.
+///
+/// Fetched through a proxy rather than from the site. Asking github.com
+/// directly tells github.com that this machine holds a GitHub account, and
+/// doing it for every row puts the shape of the vault on the wire — which the
+/// interface promises does not happen.
+///
+/// Cached on disk, so the exposure is once per domain rather than once per
+/// launch. Failures are cached too, as an empty file: a domain with no icon
+/// should not be re-fetched on every render for the rest of time.
+#[tauri::command]
+async fn icon_for(
+    state: State<'_, Arc<AppState>>,
+    domain: String,
+) -> CommandResult<Option<String>> {
+    if !state.with_vault(|vault| Ok(vault.icons_enabled()))? {
+        return Ok(None);
+    }
+
+    // The same validation the proxy applies, repeated here so a malformed
+    // domain never becomes a filename on this machine either.
+    let domain = match sanitise_domain(&domain) {
+        Some(domain) => domain,
+        None => return Ok(None),
+    };
+
+    let dir = state.icon_cache_dir();
+    let cached = dir.join(format!("{domain}.ico"));
+
+    if let Ok(bytes) = std::fs::read(&cached) {
+        return Ok(as_data_url(&bytes));
+    }
+
+    // The origin this vault syncs with, so an account on a private server does
+    // not quietly reach out to the public one.
+    let origin = state
+        .with_vault(|vault| {
+            Ok(vault
+                .sync_state()
+                .map(|sync| sync.base_url.clone())
+                .unwrap_or_else(|| DEFAULT_ICON_ORIGIN.to_string()))
+        })
+        .unwrap_or_else(|_| DEFAULT_ICON_ORIGIN.to_string());
+
+    let url = format!("{}/api/v1/icons/{domain}", origin.trim_end_matches('/'));
+    let bytes = match reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(8))
+        .build()
+        .map_err(to_message)?
+        .get(&url)
+        .send()
+        .await
+    {
+        Ok(response) if response.status().is_success() => response
+            .bytes()
+            .await
+            .map(|b| b.to_vec())
+            .unwrap_or_default(),
+        // A miss is remembered as an empty file. Anything else — the server
+        // down, no network — is not, because it will be true again later.
+        Ok(_) => Vec::new(),
+        Err(_) => return Ok(None),
+    };
+
+    let _ = std::fs::create_dir_all(&dir);
+    let _ = std::fs::write(&cached, &bytes);
+
+    Ok(as_data_url(&bytes))
+}
+
+fn as_data_url(bytes: &[u8]) -> Option<String> {
+    use base64::Engine as _;
+    if bytes.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "data:image/x-icon;base64,{}",
+        base64::engine::general_purpose::STANDARD.encode(bytes)
+    ))
+}
+
+fn sanitise_domain(input: &str) -> Option<String> {
+    let domain = input.trim().trim_end_matches('.').to_ascii_lowercase();
+    if domain.is_empty() || domain.len() > 253 || !domain.contains('.') {
+        return None;
+    }
+    domain
+        .split('.')
+        .all(|label| {
+            !label.is_empty()
+                && label.len() <= 63
+                && !label.starts_with('-')
+                && !label.ends_with('-')
+                && label
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'-')
+        })
+        .then_some(domain)
+}
+
+#[tauri::command]
+fn icons_enabled(state: State<'_, Arc<AppState>>) -> CommandResult<bool> {
+    state.with_vault(|vault| Ok(vault.icons_enabled()))
+}
+
+/// Turns icons on or off, and forgets what was fetched when turning them off.
+///
+/// Deleting the cache matters: leaving it would keep a list of the domains in
+/// this vault sitting in app data after the user asked for exactly that not to
+/// exist.
+#[tauri::command]
+fn set_icons_enabled(state: State<'_, Arc<AppState>>, enabled: bool) -> CommandResult<()> {
+    state.with_vault_mut(|vault| {
+        vault.set_icons_enabled(enabled);
+        Ok(())
+    })?;
+    if !enabled {
+        let _ = std::fs::remove_dir_all(state.icon_cache_dir());
+    }
+    state.save()
+}
+
 // ---- billing -----------------------------------------------------------
 
 /// A subscription as the interface reads it.
@@ -822,6 +949,9 @@ pub fn run() {
             revoke_grant,
             audit_entries,
             resolve_approval,
+            icon_for,
+            icons_enabled,
+            set_icons_enabled,
             list_subscriptions,
             item_subscription,
             set_subscription,

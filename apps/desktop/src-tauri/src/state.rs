@@ -45,6 +45,18 @@ impl AppState {
         }
     }
 
+    /// Where fetched icons live: beside the vault, not inside it.
+    ///
+    /// Outside the encrypted file on purpose. They are public images, they
+    /// would bloat a payload that is rewritten in full on every save, and the
+    /// setting that disables them deletes this directory outright.
+    pub fn icon_cache_dir(&self) -> std::path::PathBuf {
+        self.vault_path()
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .join("icons")
+    }
+
     pub fn vault_path(&self) -> &Path {
         &self.vault_path
     }

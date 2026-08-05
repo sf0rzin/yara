@@ -1560,3 +1560,18 @@
   font-size: var(--text-xs);
   line-height: 1.5;
 }
+
+/*
+ * A fetched icon fills the tile rather than sitting in it. Sites ship square
+ * icons with the artwork bleeding to the edge as often as not, and padding
+ * those makes them look shrunken next to a monogram at full size.
+ */
+.tile[data-icon] {
+  background: var(--fill-quaternary);
+}
+
+.tile img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}

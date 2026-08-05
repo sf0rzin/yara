@@ -38,15 +38,23 @@ const MAX_BODY: usize = 4 * 1024 * 1024;
 pub struct App {
     pub store: Store,
     nonces: Mutex<NonceCache>,
-    limiter: Mutex<RateLimiter>,
+    pub(crate) limiter: Mutex<RateLimiter>,
+    /// Where fetched favicons are kept. Beside the database, since both are
+    /// state this service owns and neither survives a fresh install.
+    pub icon_cache: std::path::PathBuf,
 }
 
 impl App {
     pub fn new(store: Store) -> Arc<Self> {
+        Self::with_icon_cache(store, std::path::PathBuf::from("/var/lib/yara-sync/icons"))
+    }
+
+    pub fn with_icon_cache(store: Store, icon_cache: std::path::PathBuf) -> Arc<Self> {
         Arc::new(Self {
             store,
             nonces: Mutex::new(NonceCache::new()),
             limiter: Mutex::new(RateLimiter::default()),
+            icon_cache,
         })
     }
 }
@@ -54,12 +62,12 @@ impl App {
 /// A fixed window per address. Crude, and correct enough: the thing being
 /// prevented is grinding, not a precisely fair share.
 #[derive(Debug, Default)]
-struct RateLimiter {
+pub(crate) struct RateLimiter {
     windows: HashMap<IpAddr, (i64, u32)>,
 }
 
 impl RateLimiter {
-    fn allow(&mut self, addr: IpAddr, now: i64) -> bool {
+    pub(crate) fn allow(&mut self, addr: IpAddr, now: i64) -> bool {
         let window = now / 60;
         let entry = self.windows.entry(addr).or_insert((window, 0));
 
@@ -83,6 +91,7 @@ impl RateLimiter {
 pub fn router(app: Arc<App>) -> Router {
     Router::new()
         .route("/api/v1/health", get(health))
+        .route("/api/v1/icons/{domain}", get(crate::icons::favicon))
         .route("/api/v1/account", post(enrol))
         .route("/api/v1/account/{id}", get(account))
         .route("/api/v1/devices", post(register_device))
@@ -92,7 +101,7 @@ pub fn router(app: Arc<App>) -> Router {
 
 // ---- errors ------------------------------------------------------------
 
-struct ApiError(StatusCode, String);
+pub struct ApiError(pub StatusCode, pub String);
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
@@ -435,7 +444,7 @@ async fn push_items(
 /// `X-Forwarded-For`, and this reads the first entry. Break either half and
 /// this becomes attacker-controlled, which for a rate limit means the limit
 /// stops applying.
-fn client_ip(headers: &HeaderMap) -> IpAddr {
+pub(crate) fn client_ip(headers: &HeaderMap) -> IpAddr {
     headers
         .get("x-forwarded-for")
         .and_then(|value| value.to_str().ok())

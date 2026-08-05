@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState, type JSX } from "react";
 import {
   errorMessage,
+  iconsEnabled,
+  setIconsEnabled,
   syncEnrol,
   syncForget,
   syncNow,
@@ -62,6 +64,8 @@ export function SyncView(): JSX.Element {
           {error}
         </p>
       )}
+
+      <IconSetting />
 
       {status?.enrolled ? (
         <Enrolled
@@ -337,4 +341,42 @@ function whenever(at: number): string {
   if (seconds < 3600) return `${Math.floor(seconds / 60)} min ago`;
   if (seconds < 86400) return `${Math.floor(seconds / 3600)} h ago`;
   return new Date(at * 1000).toLocaleDateString();
+}
+
+/**
+ * Site icons, and the honest sentence about what fetching them costs.
+ *
+ * It lives on this screen because this is where the app already accounts for
+ * what leaves the machine. A control about network fetching hidden anywhere
+ * else would be a control nobody finds until after they wanted it.
+ */
+function IconSetting(): JSX.Element {
+  const [on, setOn] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    void iconsEnabled().then(setOn).catch(() => setOn(null));
+  }, []);
+
+  if (on === null) return <></>;
+
+  return (
+    <label className="sync__confirm">
+      <input
+        type="checkbox"
+        checked={on}
+        onChange={(event) => {
+          setOn(event.target.checked);
+          void setIconsEnabled(event.target.checked);
+        }}
+      />
+      <span>
+        Show site icons.
+        <span className="input-hint">
+          Fetched through {"yara.rindexx.cc"} rather than from each site, so no
+          site learns you hold an account with it. That server sees which
+          domains are asked about. Turning this off deletes what was cached.
+        </span>
+      </span>
+    </label>
+  );
 }

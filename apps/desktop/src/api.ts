@@ -362,3 +362,18 @@ export function formatCharge(at: number | null): string {
   if (days === 1) return `${date} · tomorrow`;
   return `${date} · in ${days} days`;
 }
+
+/**
+ * The icon for a domain, as a data URL, or null if there is not one.
+ *
+ * Fetched through the origin's proxy rather than from the site: asking
+ * github.com directly would tell github.com that this vault holds a GitHub
+ * account, and doing it per row would put the shape of the vault on the wire.
+ */
+export const iconFor = (domain: string) =>
+  invoke<string | null>("icon_for", { domain });
+
+export const iconsEnabled = () => invoke<boolean>("icons_enabled");
+
+export const setIconsEnabled = (enabled: boolean) =>
+  invoke<void>("set_icons_enabled", { enabled });
