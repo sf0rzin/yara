@@ -6,6 +6,7 @@ const WINDOW_MINUTES = 15;
 
 interface ApprovalDialogProps {
   prompt: ApprovalPrompt;
+  queueLength?: number;
   onSettled: () => void;
 }
 
@@ -23,9 +24,14 @@ interface ApprovalDialogProps {
  * claim rather than presented as fact. It is rendered as text, never markup:
  * a request that could style itself could dress up as part of this dialog.
  */
-export function ApprovalDialog({ prompt, onSettled }: ApprovalDialogProps): JSX.Element {
-  const [busy, setBusy] = useState(false);
+export function ApprovalDialog({
+  prompt,
+  queueLength = 1,
+  onSettled,
+}: ApprovalDialogProps): JSX.Element {
+  const [busyChoice, setBusyChoice] = useState<"deny" | "once" | "window" | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [moreOpen, setMoreOpen] = useState(false);
 
   const isReveal = prompt.mode === "reveal";
 
@@ -33,16 +39,26 @@ export function ApprovalDialog({ prompt, onSettled }: ApprovalDialogProps): JSX.
   // value — a shell, or an interpreter handed a program. The two differ in
   // wording and not in consequence, so the dialog treats them the same.
   const discloses = prompt.discloses;
+  const modeLabel = isReveal
+    ? "REVEAL"
+    : discloses
+      ? "RUN · DISCLOSES SECRET"
+      : "RUN";
+  const consequence = isReveal
+    ? `${prompt.program} receives the ${prompt.field} in full. It can save or forward it, and yara cannot revoke it afterward.`
+    : discloses
+      ? `This command can print the ${prompt.field}. Approving it discloses the credential as fully as Reveal would.`
+      : `The launched process receives the ${prompt.field}${prompt.envVar ? ` in $${prompt.envVar}` : ""}. The requesting agent receives only the command output.`;
 
   async function answer(choice: "deny" | "once" | "window") {
-    setBusy(true);
+    setBusyChoice(choice);
     setError(null);
     try {
       await resolveApproval(prompt.id, choice, choice === "window" ? WINDOW_MINUTES : undefined);
       onSettled();
     } catch (caught) {
       setError(errorMessage(caught));
-      setBusy(false);
+      setBusyChoice(null);
     }
   }
 
@@ -64,25 +80,24 @@ export function ApprovalDialog({ prompt, onSettled }: ApprovalDialogProps): JSX.
           <span className="approval__mark" aria-hidden="true">
             <Icon name="sparkle" size={16} />
           </span>
-          <div>
+          <div className="approval__heading">
+            <div className="approval__eyebrow">
+              <span>{modeLabel}</span>
+              {queueLength > 1 && <span>Request 1 of {queueLength}</span>}
+            </div>
             <h2 className="dialog__title">
-              {prompt.program} wants {discloses ? "to see" : "to use"} a credential
+              {prompt.program} wants {discloses ? "to see" : "to use"} {prompt.item}
             </h2>
-            <p className="approval__pid">
-              Process {prompt.pid}
-              {prompt.programPath && ` · ${prompt.programPath}`}
+            <p className="approval__identity selectable">
+              {prompt.programPath ?? "Executable path unavailable"} · process {prompt.pid}
             </p>
           </div>
         </header>
 
         <dl className="approval__facts">
           <div>
-            <dt>Item</dt>
-            <dd>{prompt.item}</dd>
-          </div>
-          <div>
-            <dt>Field</dt>
-            <dd>{prompt.field}</dd>
+            <dt>Credential</dt>
+            <dd>{prompt.item} · {prompt.field}</dd>
           </div>
           {prompt.command && (
             <div>
@@ -99,17 +114,13 @@ export function ApprovalDialog({ prompt, onSettled }: ApprovalDialogProps): JSX.
         </dl>
 
         <div className="approval__reason">
-          <p className="approval__reason-label">It says this is for:</p>
-          <p className="approval__reason-text selectable">{prompt.reason}</p>
+          <p className="approval__reason-label">Reason claimed by {prompt.program}</p>
+          <p className="approval__reason-text selectable">“{prompt.reason}”</p>
         </div>
 
         <p className="approval__consequence">
-          <Icon name={discloses ? "alert" : "check"} size={14} />
-          {isReveal
-            ? "The value will be given to that program in full. Once it is out, yara cannot take it back."
-            : discloses
-              ? "This command can print the value, so approving it hands the credential over as surely as revealing it would. yara cannot take it back."
-              : "yara runs the command itself. The value goes into the command's environment, and the program only sees its output."}
+          <Icon name={discloses ? "alert" : "security"} size={14} />
+          <span>{consequence}</span>
         </p>
 
         {error && (
@@ -119,38 +130,54 @@ export function ApprovalDialog({ prompt, onSettled }: ApprovalDialogProps): JSX.
           </p>
         )}
 
+        {!discloses && moreOpen && (
+          <div className="approval__more">
+            <div>
+              <p className="approval__more-title">Allow this exact request for {WINDOW_MINUTES} minutes</p>
+              <p className="approval__more-copy">
+                Reuses are limited to this program, credential and command. Locking the vault cancels the grant.
+              </p>
+            </div>
+            <button
+              type="button"
+              className="button button--outline"
+              disabled={busyChoice !== null}
+              onClick={() => void answer("window")}
+            >
+              {busyChoice === "window" ? "Allowing…" : `Allow for ${WINDOW_MINUTES} min`}
+            </button>
+          </div>
+        )}
+
         <div className="approval__actions">
           <button
             type="button"
             className="button button--primary"
-            disabled={busy}
+            disabled={busyChoice !== null}
             onClick={() => void answer("deny")}
             autoFocus
           >
-            Deny
+            {busyChoice === "deny" ? "Denying…" : "Deny"}
           </button>
 
           <button
             type="button"
-            className="button button--quiet"
-            disabled={busy}
+            className="button button--outline"
+            disabled={busyChoice !== null}
             onClick={() => void answer("once")}
           >
-            Allow once
+            {busyChoice === "once" ? "Allowing…" : "Allow once"}
           </button>
 
-          {/* A disclosure never earns a standing grant — whether it calls
-              itself a reveal or hides behind a command that prints the value.
-              The backend enforces this by downgrading the answer; the option
-              is not offered so the interface cannot imply otherwise. */}
           {!discloses && (
             <button
               type="button"
               className="button button--quiet"
-              disabled={busy}
-              onClick={() => void answer("window")}
+              disabled={busyChoice !== null}
+              aria-expanded={moreOpen}
+              onClick={() => setMoreOpen((open) => !open)}
             >
-              Allow for {WINDOW_MINUTES} min
+              More options…
             </button>
           )}
         </div>

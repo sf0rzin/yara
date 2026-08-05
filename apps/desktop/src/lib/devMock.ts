@@ -519,4 +519,19 @@ export function installDevMock(): void {
       emit("broker://approval", SAMPLE_PROMPTS[kind]),
     configurable: true,
   });
+
+  window.addEventListener("keydown", (event) => {
+    if (event.ctrlKey && event.shiftKey && event.key.toLowerCase() === "a") {
+      emit("broker://approval", SAMPLE_PROMPTS.run);
+    } else if (event.ctrlKey && event.shiftKey && event.key.toLowerCase() === "r") {
+      emit("broker://approval", SAMPLE_PROMPTS.reveal);
+    }
+  });
+
+  // A query string makes the safety-critical dialog directly reviewable in a
+  // browser screenshot without exposing a trigger in the shipped interface.
+  const sample = new URLSearchParams(window.location.search).get("approval");
+  if (sample === "run" || sample === "reveal" || sample === "shell") {
+    setTimeout(() => emit("broker://approval", SAMPLE_PROMPTS[sample]), 2_000);
+  }
 }

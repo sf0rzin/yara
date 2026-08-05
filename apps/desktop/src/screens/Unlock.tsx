@@ -6,6 +6,7 @@ import {
   unlockVault,
   type Strength,
 } from "../api";
+import vaultMountain from "../assets/vault-mountain.png";
 import { Icon } from "../components/Icon";
 
 const STRENGTH_STEPS: Record<Strength, number> = { weak: 1, fair: 2, strong: 3 };
@@ -76,80 +77,98 @@ export function Unlock({ mode, onOpen }: UnlockProps): JSX.Element {
   }
 
   return (
-    <main className="gate">
-      <form className="gate__card" onSubmit={(event) => void submit(event)}>
-        <span className="gate__mark" aria-hidden="true">
-          <Icon name="lock" size={18} />
-        </span>
-
-        <div className="gate__intro">
-          <h1 className="gate__title">
-            {isSetup ? "Create your vault" : "yara"}
-          </h1>
-          <p className="gate__sub">
-            {isSetup
-              ? "Your master password encrypts everything. It is never stored and cannot be reset — if you lose it, the vault is gone."
-              : "Enter your master password to continue."}
-          </p>
-        </div>
-
-        <input
-          className="input"
-          type="password"
-          value={password}
-          autoFocus
-          placeholder="Master password"
-          aria-label="Master password"
-          onChange={(event) => setPassword(event.target.value)}
+    <main className="gate gate--split">
+      <div className="gate__art" aria-hidden="true">
+        <img
+          className="gate__art-image"
+          src={vaultMountain}
+          alt=""
+          draggable={false}
         />
+        <div className="gate__art-caption">
+          <span className="gate__wordmark">yara</span>
+          <span className="gate__art-line">Private by design.</span>
+        </div>
+      </div>
 
-        {isSetup && (
-          <>
-            <div className="meter" aria-live="polite">
-              <div className="meter__track">
-                {[1, 2, 3].map((step) => (
-                  <span
-                    key={step}
-                    className="meter__step"
-                    data-filled={
-                      strength && STRENGTH_STEPS[strength] >= step
-                        ? true
-                        : undefined
-                    }
-                  />
-                ))}
+      <section
+        className="gate__form-shell"
+        aria-label={isSetup ? "Create your vault" : "Unlock your vault"}
+      >
+        <form className="gate__card" onSubmit={(event) => void submit(event)}>
+          <span className="gate__mark" aria-hidden="true">
+            <Icon name="lock" size={18} />
+          </span>
+
+          <div className="gate__intro">
+            <h1 className="gate__title">
+              {isSetup ? "Create your vault" : "Welcome back"}
+            </h1>
+            <p className="gate__sub">
+              {isSetup
+                ? "Your master password encrypts everything. It is never stored and cannot be reset — if you lose it, the vault is gone."
+                : "Unlock your local vault to continue."}
+            </p>
+          </div>
+
+          <input
+            className="input"
+            type="password"
+            value={password}
+            autoFocus
+            placeholder="Master password"
+            aria-label="Master password"
+            onChange={(event) => setPassword(event.target.value)}
+          />
+
+          {isSetup && (
+            <>
+              <div className="meter" aria-live="polite">
+                <div className="meter__track">
+                  {[1, 2, 3].map((step) => (
+                    <span
+                      key={step}
+                      className="meter__step"
+                      data-filled={
+                        strength && STRENGTH_STEPS[strength] >= step
+                          ? true
+                          : undefined
+                      }
+                    />
+                  ))}
+                </div>
+                <span className="meter__word">
+                  {strength ? STRENGTH_WORDS[strength] : "At least 12 characters"}
+                </span>
               </div>
-              <span className="meter__word">
-                {strength ? STRENGTH_WORDS[strength] : "At least 12 characters"}
-              </span>
-            </div>
 
-            <input
-              className="input"
-              type="password"
-              value={confirmation}
-              placeholder="Confirm master password"
-              aria-label="Confirm master password"
-              onChange={(event) => setConfirmation(event.target.value)}
-            />
-          </>
-        )}
+              <input
+                className="input"
+                type="password"
+                value={confirmation}
+                placeholder="Confirm master password"
+                aria-label="Confirm master password"
+                onChange={(event) => setConfirmation(event.target.value)}
+              />
+            </>
+          )}
 
-        {error && (
-          <p className="notice notice--loud">
-            <Icon name="alert" size={13} />
-            {error}
-          </p>
-        )}
+          {error && (
+            <p className="notice notice--loud">
+              <Icon name="alert" size={13} />
+              {error}
+            </p>
+          )}
 
-        <button
-          type="submit"
-          className="button button--primary button--block"
-          disabled={busy || password.length === 0}
-        >
-          {busy ? "Working…" : isSetup ? "Create vault" : "Unlock"}
-        </button>
-      </form>
+          <button
+            type="submit"
+            className="button button--primary button--block"
+            disabled={busy || password.length === 0}
+          >
+            {busy ? "Working…" : isSetup ? "Create vault" : "Unlock"}
+          </button>
+        </form>
+      </section>
     </main>
   );
 }

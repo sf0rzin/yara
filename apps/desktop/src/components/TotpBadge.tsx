@@ -8,6 +8,8 @@ interface TotpBadgeProps {
   itemId: string;
   /** Larger presentation for the detail panel. */
   prominent?: boolean;
+  /** Generic lists only need to say that 2FA exists, without polling a secret. */
+  showCode?: boolean;
 }
 
 /**
@@ -18,10 +20,19 @@ interface TotpBadgeProps {
  * code is short-lived and single-use, so it is far less sensitive than the
  * seed that generates it.
  */
-export function TotpBadge({ itemId, prominent }: TotpBadgeProps): JSX.Element | null {
+export function TotpBadge({
+  itemId,
+  prominent,
+  showCode = true,
+}: TotpBadgeProps): JSX.Element | null {
   const [code, setCode] = useState<TotpCode | null>(null);
 
   useEffect(() => {
+    if (!showCode) {
+      setCode(null);
+      return;
+    }
+
     let active = true;
 
     const tick = () => {
@@ -36,7 +47,19 @@ export function TotpBadge({ itemId, prominent }: TotpBadgeProps): JSX.Element | 
       active = false;
       clearInterval(timer);
     };
-  }, [itemId]);
+  }, [itemId, showCode]);
+
+  if (!showCode) {
+    return (
+      <div className="totp totp--presence" aria-label="Two-factor authentication enabled">
+        <span className="totp__presence-label" aria-hidden="true">2FA</span>
+        <svg aria-hidden="true" className="totp__ring" width="16" height="16" viewBox="0 0 18 18">
+          <circle cx="9" cy="9" r={RADIUS} className="totp__track" />
+          <circle cx="9" cy="9" r={RADIUS} className="totp__progress" />
+        </svg>
+      </div>
+    );
+  }
 
   if (!code) return null;
 

@@ -1,5 +1,4 @@
 import { useState, type JSX } from "react";
-import type { VaultCounts } from "../api";
 import { formatCountdown } from "../lib/useAutoLock";
 import { AutoLockMenu } from "./AutoLockMenu";
 import { Icon, type IconName } from "./Icon";
@@ -9,12 +8,10 @@ interface NavEntry {
   view: View;
   label: string;
   icon: IconName;
-  count?: number;
 }
 
 interface SidebarProps {
   view: View;
-  counts: VaultCounts | null;
   lockRemainingMs: number;
   autoLockSeconds: number | null;
   onSelect: (view: View) => void;
@@ -31,7 +28,6 @@ function isSameView(a: View, b: View): boolean {
 
 export function Sidebar({
   view,
-  counts,
   lockRemainingMs,
   autoLockSeconds,
   onSelect,
@@ -46,8 +42,10 @@ export function Sidebar({
     { view: { kind: "all" }, label: "All items", icon: "allItems" },
     { view: { kind: "recent" }, label: "Recent", icon: "recent" },
     { view: { kind: "subscriptions" }, label: "Subscriptions", icon: "calendar" },
+  ];
+
+  const agents: NavEntry[] = [
     { view: { kind: "agents" }, label: "Agent access", icon: "sparkle" },
-    { view: { kind: "sync" }, label: "Sync", icon: "sync" },
   ];
 
   const types: NavEntry[] = [
@@ -55,25 +53,21 @@ export function Sidebar({
       view: { kind: "type", itemKind: "login" },
       label: "Logins",
       icon: "login",
-      count: counts?.logins,
     },
     {
       view: { kind: "type", itemKind: "card" },
       label: "Cards",
       icon: "card",
-      count: counts?.cards,
     },
     {
       view: { kind: "type", itemKind: "note" },
       label: "Notes",
       icon: "note",
-      count: counts?.notes,
     },
     {
       view: { kind: "authenticator" },
       label: "Authenticator",
       icon: "authenticator",
-      count: counts?.authenticator,
     },
   ];
 
@@ -86,13 +80,11 @@ export function Sidebar({
           className="nav-item"
           data-active={active || undefined}
           aria-current={active ? "page" : undefined}
+          title={entry.label}
           onClick={() => onSelect(entry.view)}
         >
           <Icon name={entry.icon} size={16} />
           <span className="nav-item__label">{entry.label}</span>
-          {entry.count !== undefined && (
-            <span className="nav-item__count">{entry.count}</span>
-          )}
         </button>
       </li>
     );
@@ -101,13 +93,16 @@ export function Sidebar({
   return (
     <aside className="sidebar">
       <div className="sidebar__brand">
-        <span className="sidebar__name">yara</span>
+        <span className="sidebar__name" aria-label="yara">yara</span>
         <span className="sidebar__tagline">Local vault</span>
       </div>
 
       <nav className="sidebar__nav">
         <p className="section-label">Collections</p>
         <ul>{collections.map(renderEntry)}</ul>
+
+        <p className="section-label section-label--spaced">Agents</p>
+        <ul>{agents.map(renderEntry)}</ul>
 
         <p className="section-label section-label--spaced">Types</p>
         <ul>{types.map(renderEntry)}</ul>
@@ -133,6 +128,18 @@ export function Sidebar({
             onDismiss={() => setMenuOpen(false)}
           />
         )}
+
+        <button
+          type="button"
+          className="sidebar__utility"
+          data-active={view.kind === "sync" || undefined}
+          aria-current={view.kind === "sync" ? "page" : undefined}
+          title="Sync & settings"
+          onClick={() => onSelect({ kind: "sync" })}
+        >
+          <Icon name="sync" size={15} />
+          <span>Sync &amp; settings</span>
+        </button>
 
         <button
           type="button"
