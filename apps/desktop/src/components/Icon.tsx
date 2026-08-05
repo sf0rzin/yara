@@ -23,6 +23,36 @@ const paths = {
       <path d="M2.75 12.25h10.5" />
     </>
   ),
+  /* Two arcs chasing each other: reconciliation, not a download. */
+  sync: (
+    <>
+      <path d="M2.4 8a5.6 5.6 0 0 1 9.56-3.96l1.64 1.6" />
+      <path d="M13.6 8a5.6 5.6 0 0 1-9.56 3.96l-1.64-1.6" />
+      <path d="M13.6 2.6v3.04h-3.04" />
+      <path d="M2.4 13.4v-3.04h3.04" />
+    </>
+  ),
+  calendar: (
+    <>
+      <rect x="2.1" y="3.4" width="11.8" height="10.5" rx="2.2" />
+      <path d="M2.1 6.6h11.8" />
+      <path d="M5.4 2.1v2.6" />
+      <path d="M10.6 2.1v2.6" />
+    </>
+  ),
+  ellipsis: (
+    <>
+      <circle cx="3.4" cy="8" r="0.95" fill="currentColor" stroke="none" />
+      <circle cx="8" cy="8" r="0.95" fill="currentColor" stroke="none" />
+      <circle cx="12.6" cy="8" r="0.95" fill="currentColor" stroke="none" />
+    </>
+  ),
+  pencil: (
+    <>
+      <path d="M10.35 2.85a1.63 1.63 0 0 1 2.3 2.3l-7 7-3.05.75.75-3.05Z" />
+      <path d="M9.3 3.9l2.3 2.3" />
+    </>
+  ),
   recent: (
     <>
       <circle cx="8" cy="8" r="6.25" />
