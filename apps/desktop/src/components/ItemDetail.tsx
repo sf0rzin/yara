@@ -1,22 +1,42 @@
 import { useEffect, useState, type JSX } from "react";
-import { deleteItem, errorMessage, revealPassword, type ItemSummary } from "../api";
-import { clipboardClearSeconds, copySecret } from "../lib/clipboard";
+import {
+  deleteItem,
+  errorMessage,
+  revealPassword,
+  type ItemSummary,
+  type VaultHealth,
+} from "../api";
+import { copySecret } from "../lib/clipboard";
+import { itemHealth } from "../lib/health";
 import { Icon } from "./Icon";
 import { TotpBadge } from "./TotpBadge";
 
 interface ItemDetailProps {
   item: ItemSummary;
-  onClose: () => void;
+  health: VaultHealth | null;
   onChanged: () => void;
 }
 
-export function ItemDetail({ item, onClose, onChanged }: ItemDetailProps): JSX.Element {
+/**
+ * The right-hand pane.
+ *
+ * A pane rather than the overlay this used to be. An overlay says "you are
+ * doing one thing now"; a vault is read by moving between items, and covering
+ * the list to show one of them fought that every time.
+ *
+ * Sections are inset grouped lists: a label outside, rows inside a rounded
+ * well. What that buys is a place to put the label that is not a table header,
+ * so "Credentials" and "Details" can be quiet without becoming ambiguous.
+ */
+export function ItemDetail({ item, health, onChanged }: ItemDetailProps): JSX.Element {
   const [revealed, setRevealed] = useState<string | null>(null);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  // Re-selecting a different item must never carry the previous plaintext over.
+  // Switching items must not carry the previous one's revealed password, its
+  // half-pressed delete, or a notice about something you are no longer looking
+  // at. Keyed on the id so it fires on selection rather than on every render.
   useEffect(() => {
     setRevealed(null);
     setConfirmingDelete(false);
@@ -24,30 +44,22 @@ export function ItemDetail({ item, onClose, onChanged }: ItemDetailProps): JSX.E
     setError(null);
   }, [item.id]);
 
-  // A password left on screen is a shoulder-surfing risk; hide it again.
+  // A revealed password does not stay revealed. Leaving one on screen is how a
+  // shoulder becomes a leak, and the person who revealed it has already read it.
   useEffect(() => {
-    if (!revealed) return;
+    if (revealed === null) return;
     const timer = setTimeout(() => setRevealed(null), 30_000);
     return () => clearTimeout(timer);
   }, [revealed]);
 
   useEffect(() => {
-    if (!notice) return;
+    if (notice === null) return;
     const timer = setTimeout(() => setNotice(null), 2_500);
     return () => clearTimeout(timer);
   }, [notice]);
 
-  // Escape closes the panel, and does not merely hide the revealed password.
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
-
   async function toggleReveal() {
-    if (revealed) {
+    if (revealed !== null) {
       setRevealed(null);
       return;
     }
@@ -60,9 +72,10 @@ export function ItemDetail({ item, onClose, onChanged }: ItemDetailProps): JSX.E
 
   async function copyPassword() {
     try {
-      const password = await revealPassword(item.id);
-      await copySecret(password);
-      setNotice(`Copied. Clipboard clears in ${clipboardClearSeconds}s.`);
+      // Fetched fresh rather than reused from `revealed`, so copying works
+      // whether or not it is currently on screen.
+      await copySecret(await revealPassword(item.id));
+      setNotice("Password copied. Clipboard clears shortly.");
     } catch (caught) {
       setError(errorMessage(caught));
     }
@@ -74,152 +87,214 @@ export function ItemDetail({ item, onClose, onChanged }: ItemDetailProps): JSX.E
   }
 
   async function remove() {
-    if (!confirmingDelete) {
-      setConfirmingDelete(true);
-      return;
-    }
     try {
       await deleteItem(item.id);
       onChanged();
-      onClose();
     } catch (caught) {
       setError(errorMessage(caught));
     }
   }
 
+  const host = hostOf(item.url);
+  const health_ = itemHealth(item, health);
+
   return (
-    <aside className="detail" aria-label={`Details for ${item.name}`}>
-      <header className="detail__head">
-        <div>
-          <h2 className="detail__title">{item.name}</h2>
-          <p className="detail__kind">{item.kind}</p>
-        </div>
-        <button
-          type="button"
-          className="icon-button"
-          onClick={onClose}
-          aria-label="Close details"
-        >
-          <Icon name="close" size={14} />
+    <section className="detail" aria-label={item.name}>
+      <header className="detail__toolbar">
+        <span className="detail__toolbar-spacer" />
+        <button type="button" className="icon-button" aria-label="Edit item" disabled>
+          <Icon name="pencil" size={14} />
+        </button>
+        <button type="button" className="icon-button" aria-label="More actions" disabled>
+          <Icon name="ellipsis" size={14} />
         </button>
       </header>
 
-      <div className="detail__fields">
-        {item.username && (
-          <Field label="Username" value={item.username}>
-            <button
-              type="button"
-              className="icon-button"
-              onClick={() => void copyPlain("Username", item.username!)}
-              aria-label="Copy username"
-            >
-              <Icon name="copy" size={14} />
-            </button>
-          </Field>
-        )}
-
-        {item.hasPassword && (
-          <Field
-            label="Password"
-            value={revealed ?? "••••••••••••"}
-            monospace
-            selectable={Boolean(revealed)}
-          >
-            <button
-              type="button"
-              className="icon-button"
-              onClick={() => void toggleReveal()}
-              aria-label={revealed ? "Hide password" : "Reveal password"}
-            >
-              <Icon name={revealed ? "eyeOff" : "eye"} size={14} />
-            </button>
-            <button
-              type="button"
-              className="icon-button"
-              onClick={() => void copyPassword()}
-              aria-label="Copy password"
-            >
-              <Icon name="copy" size={14} />
-            </button>
-          </Field>
-        )}
-
-        {item.url && (
-          <Field label="Website" value={item.url}>
-            <button
-              type="button"
-              className="icon-button"
-              onClick={() => void copyPlain("Address", item.url!)}
-              aria-label="Copy address"
-            >
-              <Icon name="copy" size={14} />
-            </button>
-          </Field>
-        )}
-
-        {item.hasTotp && (
-          <div className="field">
-            <p className="field__label">One-time code</p>
-            <div className="field__row">
-              <TotpBadge itemId={item.id} prominent />
-            </div>
+      <div className="detail__scroll">
+        <div className="detail__header">
+          <span className="tile tile--large" aria-hidden="true">
+            <Icon name={item.kind} size={20} />
+          </span>
+          <div className="detail__heading">
+            <h2 className="detail__name">{item.name}</h2>
+            {host && <p className="detail__host">{host}</p>}
           </div>
-        )}
+        </div>
 
-        {item.tags.length > 0 && (
-          <div className="field">
-            <p className="field__label">Tags</p>
-            <div className="tags">
-              {item.tags.map((tag) => (
-                <span key={tag} className="tag">
-                  {tag}
-                </span>
-              ))}
-            </div>
-          </div>
-        )}
-      </div>
-
-      <div className="detail__foot">
-        {notice && <p className="notice">{notice}</p>}
         {error && (
           <p className="notice notice--loud">
             <Icon name="alert" size={13} />
             {error}
           </p>
         )}
+        {notice && (
+          <p className="notice">
+            <Icon name="check" size={13} />
+            {notice}
+          </p>
+        )}
 
-        <button type="button" className="button button--quiet" onClick={() => void remove()}>
-          <Icon name="trash" size={14} />
-          {confirmingDelete ? "Click again to delete" : "Delete item"}
-        </button>
+        {(item.username || item.hasPassword) && (
+          <Section label="Credentials">
+            {item.username && (
+              <Row label="Username" value={item.username}>
+                <button
+                  type="button"
+                  className="icon-button"
+                  aria-label="Copy username"
+                  onClick={() => void copyPlain("Username", item.username as string)}
+                >
+                  <Icon name="copy" size={14} />
+                </button>
+              </Row>
+            )}
+
+            {item.hasPassword && (
+              <Row
+                label="Password"
+                value={revealed ?? "••••••••••••••••"}
+                mono
+                title={revealed ? undefined : "Hidden until you ask"}
+              >
+                <button
+                  type="button"
+                  className="icon-button"
+                  aria-label={revealed ? "Hide password" : "Reveal password"}
+                  onClick={() => void toggleReveal()}
+                >
+                  <Icon name={revealed ? "eyeOff" : "eye"} size={14} />
+                </button>
+                <button
+                  type="button"
+                  className="icon-button"
+                  aria-label="Copy password"
+                  onClick={() => void copyPassword()}
+                >
+                  <Icon name="copy" size={14} />
+                </button>
+              </Row>
+            )}
+          </Section>
+        )}
+
+        {item.hasTotp && (
+          <Section label="One-time code">
+            <div className="detail__row detail__row--tall">
+              <span className="detail__label">Code</span>
+              <span className="detail__value">
+                <TotpBadge itemId={item.id} prominent />
+              </span>
+            </div>
+          </Section>
+        )}
+
+        <Section label="Details">
+          {host && (
+            <Row label="Website" value={host}>
+              <Icon name="chevronRight" size={13} />
+            </Row>
+          )}
+          <Row label="Added" value={formatDate(item.createdAt)} />
+          <Row label="Updated" value={formatRelative(item.updatedAt)} />
+          {health_ && <Row label="Health" value={health_} />}
+        </Section>
+
+        {/*
+          Two presses, not a confirm dialog. There is no red to make this look
+          dangerous, so the safeguard is that the first press only changes the
+          words — and the words then say exactly what is about to happen.
+        */}
+        <div className="group group--destructive">
+          <button
+            type="button"
+            className="detail__row detail__row--action"
+            onClick={() => (confirmingDelete ? void remove() : setConfirmingDelete(true))}
+            onBlur={() => setConfirmingDelete(false)}
+          >
+            <span className="detail__action-text">
+              {confirmingDelete ? `Delete ${item.name} for good` : "Delete item…"}
+            </span>
+          </button>
+        </div>
+
+        <p className="detail__provenance">
+          Encrypted under your vault key. Never leaves this machine unless Sync
+          is on.
+        </p>
       </div>
-    </aside>
+    </section>
   );
 }
 
-interface FieldProps {
+function Section({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}): JSX.Element {
+  return (
+    <section className="detail__section">
+      <p className="section-label">{label}</p>
+      <div className="group">{children}</div>
+    </section>
+  );
+}
+
+function Row({
+  label,
+  value,
+  mono,
+  title,
+  children,
+}: {
   label: string;
   value: string;
-  monospace?: boolean;
-  selectable?: boolean;
+  mono?: boolean;
+  title?: string;
   children?: React.ReactNode;
-}
-
-function Field({ label, value, monospace, selectable, children }: FieldProps): JSX.Element {
+}): JSX.Element {
   return (
-    <div className="field">
-      <p className="field__label">{label}</p>
-      <div className="field__row">
-        <span
-          className={`field__value${monospace ? " field__value--mono" : ""}${
-            selectable ? " selectable" : ""
-          }`}
-        >
-          {value}
-        </span>
-        <span className="field__actions">{children}</span>
-      </div>
+    <div className="detail__row">
+      <span className="detail__label">{label}</span>
+      <span
+        className="detail__value"
+        data-mono={mono || undefined}
+        title={title}
+      >
+        {value}
+      </span>
+      {children}
     </div>
   );
+}
+
+function hostOf(url: string | null): string | null {
+  if (!url) return null;
+  try {
+    return new URL(url).host.replace(/^www\./, "");
+  } catch {
+    return url;
+  }
+}
+
+function formatDate(seconds: number): string {
+  if (!seconds) return "Unknown";
+  return new Date(seconds * 1000).toLocaleDateString(undefined, {
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+  });
+}
+
+function formatRelative(seconds: number): string {
+  if (!seconds) return "Unknown";
+  const elapsed = Math.max(0, Math.floor(Date.now() / 1000) - seconds);
+  if (elapsed < 60) return "Just now";
+  if (elapsed < 3600) return `${Math.floor(elapsed / 60)} minutes ago`;
+  if (elapsed < 86_400) return `${Math.floor(elapsed / 3600)} hours ago`;
+  const days = Math.floor(elapsed / 86_400);
+  if (days === 1) return "Yesterday";
+  if (days < 30) return `${days} days ago`;
+  return formatDate(seconds);
 }

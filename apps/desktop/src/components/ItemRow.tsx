@@ -28,8 +28,8 @@ export function ItemRow({ item, selected, onSelect }: ItemRowProps): JSX.Element
         data-selected={selected || undefined}
         onClick={() => onSelect(item.id)}
       >
-        <span className="row__icon" aria-hidden="true">
-          <Icon name={KIND_ICONS[item.kind]} size={14} />
+        <span className="tile" aria-hidden="true">
+          <Icon name={KIND_ICONS[item.kind]} size={16} />
         </span>
 
         <span className="row__text">

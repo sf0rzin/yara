@@ -197,7 +197,7 @@ function KitOnce({
   const [confirmed, setConfirmed] = useState(false);
 
   return (
-    <section className="sync sync--kit">
+    <section className="sync">
       <h2 className="sync__title">Write this down before you continue</h2>
 
       <p className="sync__lead">
