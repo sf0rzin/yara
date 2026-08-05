@@ -33,7 +33,7 @@ pub mod vault;
 pub use account::{AccountKeypair, AccountKeys, SecretKey};
 pub use crypto::{KdfParams, Key, Sealed};
 pub use error::{Error, Result};
-pub use health::{Strength, VaultHealth};
+pub use health::Strength;
 pub use import::{from_proton_authenticator, Import, Imported, Skipped};
 pub use qr::decode_enrollment;
 pub use secret::SecretString;

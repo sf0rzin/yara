@@ -32,7 +32,17 @@ export function ItemRow({
         onClick={() => onSelect(item.id)}
         onContextMenu={(event) => {
           event.preventDefault();
-          onContextMenu(item, event.clientX, event.clientY);
+          // Shift+F10 and the Menu key raise this with no pointer behind them,
+          // and report (0, 0). Taken literally that puts a menu whose only
+          // entry is Delete in the window corner, nowhere near the row it acts
+          // on — so a keyboard press anchors on the row instead.
+          const rect = event.currentTarget.getBoundingClientRect();
+          const keyboard = event.clientX === 0 && event.clientY === 0;
+          onContextMenu(
+            item,
+            keyboard ? rect.left + rect.width / 3 : event.clientX,
+            keyboard ? rect.bottom - 6 : event.clientY,
+          );
         }}
       >
         <Tile name={item.name} kind={item.kind} url={item.url} />

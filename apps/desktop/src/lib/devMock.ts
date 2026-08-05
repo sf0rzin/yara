@@ -185,21 +185,7 @@ const summary = (item: MockItem) => ({
   // mock omits renders as "Unknown" or, worse, as a claim the real backend
   // would never make.
   createdAt: item.updatedAt - 86_400 * 420,
-  strength: rateMock(item.password),
 });
-
-/**
- * A crude stand-in for the backend's rating.
- *
- * Deliberately not the real algorithm: the point is that the interface gets a
- * value of the right shape, so a dev session shows "Adequate" where production
- * would rather than defaulting everything to the most flattering answer.
- */
-function rateMock(password: string | null): "weak" | "fair" | "strong" | null {
-  if (password === null) return null;
-  if (password.length < 10) return "weak";
-  return password.length < 16 ? "fair" : "strong";
-}
 
 function matches(item: MockItem, query: string): boolean {
   const q = query.trim().toLowerCase();
@@ -291,29 +277,6 @@ const handlers: Record<string, (args: Record<string, unknown>) => unknown> = {
   auto_lock_seconds: () => mockAutoLock,
   set_auto_lock_seconds: (args) => {
     mockAutoLock = (args.seconds as number | null) ?? null;
-  },
-
-  vault_health: () => {
-    const withPasswords = items.filter((i) => i.password);
-    const weak = withPasswords
-      .filter((i) => strengthOf(i.password!) === "weak")
-      .map((i) => i.id);
-
-    const groups = new Map<string, string[]>();
-    for (const item of withPasswords) {
-      const bucket = groups.get(item.password!) ?? [];
-      bucket.push(item.id);
-      groups.set(item.password!, bucket);
-    }
-
-    return {
-      weak,
-      reused: [...groups.values()]
-        .filter((ids) => ids.length > 1)
-        .map((ids) => ({ items: ids })),
-      missingTotp: withPasswords.filter((i) => !i.totpSeed).map((i) => i.id),
-      itemsWithPasswords: withPasswords.length,
-    };
   },
 
   reveal_password: (args) =>

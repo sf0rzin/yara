@@ -66,6 +66,8 @@ export function Vault({ onLock }: VaultProps): JSX.Element {
 
   const searchRef = useRef<HTMLInputElement>(null);
   const requestRef = useRef(0);
+  const menuOpenerRef = useRef<HTMLElement | null>(null);
+  const menuItemRef = useRef<HTMLButtonElement>(null);
 
   const lock = useCallback(() => {
     void lockVault();
@@ -220,16 +222,34 @@ export function Vault({ onLock }: VaultProps): JSX.Element {
     }
   }, [items, loading, selectedId, view.kind]);
 
+  // Dismissing without choosing hands focus back to the row. The menu takes
+  // focus when it opens, so closing it any other way drops a keyboard user at
+  // the top of the document, having lost their place in the list.
+  const closeContextMenu = useCallback(() => {
+    setContextMenu(null);
+    menuOpenerRef.current?.focus();
+    menuOpenerRef.current = null;
+  }, []);
+
   useEffect(() => {
     if (contextMenu === null) return;
+
+    // Focused here rather than with `autoFocus`, which React does not apply to
+    // an element mounted after the first render — verified in the browser, the
+    // menu was opening with focus left behind on the row. A menu raised from
+    // the keyboard that cannot then be operated from the keyboard is worse
+    // than no menu at all.
+    menuItemRef.current?.focus();
+
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setContextMenu(null);
+      if (event.key === "Escape") closeContextMenu();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [contextMenu]);
+  }, [closeContextMenu, contextMenu]);
 
   function openContextMenu(item: ItemSummary, x: number, y: number) {
+    menuOpenerRef.current = document.activeElement as HTMLElement | null;
     setSelectedId(item.id);
     setContextMenu({
       item,
@@ -248,7 +268,10 @@ export function Vault({ onLock }: VaultProps): JSX.Element {
 
     try {
       await deleteItem(contextMenu.item.id);
+      // Not closeContextMenu: the row that opened this no longer exists, so
+      // there is nothing to hand focus back to.
       setContextMenu(null);
+      menuOpenerRef.current = null;
       setSelectedId(null);
       await refresh();
     } catch (caught) {
@@ -408,7 +431,7 @@ export function Vault({ onLock }: VaultProps): JSX.Element {
         <div
           className="context-menu-layer"
           role="presentation"
-          onPointerDown={() => setContextMenu(null)}
+          onPointerDown={closeContextMenu}
           onContextMenu={(event) => event.preventDefault()}
         >
           <div
@@ -419,9 +442,9 @@ export function Vault({ onLock }: VaultProps): JSX.Element {
           >
             <button
               type="button"
+              ref={menuItemRef}
               className="popover__item"
               role="menuitem"
-              autoFocus
               onClick={() => void removeContextItem()}
             >
               <Icon name="trash" size={13} />

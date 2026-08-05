@@ -33,7 +33,6 @@ export function ItemDetail({ item }: ItemDetailProps): JSX.Element {
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [billing, setBilling] = useState<SubscriptionView | null>(null);
-  const [billingOpen, setBillingOpen] = useState(false);
 
   // Switching items must not carry the previous one's revealed password, its
   // half-pressed delete, or a notice about something you are no longer looking
@@ -43,7 +42,6 @@ export function ItemDetail({ item }: ItemDetailProps): JSX.Element {
     setNotice(null);
     setError(null);
     setBilling(null);
-    setBillingOpen(false);
     // Fetched per item rather than carried on the summary: most items have no
     // subscription, and a field that is null for nine rows in ten does not
     // belong in the list payload.
@@ -170,32 +168,25 @@ export function ItemDetail({ item }: ItemDetailProps): JSX.Element {
           </Section>
         )}
 
+        {/*
+          Three rows, none of them folded away. A disclosure here would save
+          about sixty pixels on a pane that already scrolls, and it would spend
+          them hiding "Paid with" — the row this whole section exists for.
+        */}
         {billing && (
           <Section label="Billing">
-            <button
-              type="button"
-              className="detail__row detail__row--summary"
-              aria-expanded={billingOpen}
-              onClick={() => setBillingOpen((open) => !open)}
-            >
-              <span className="detail__label">Subscription</span>
-              <span className="detail__value">
-                {billing.plan ?? "Recurring charge"} · {formatMoney(billing.amountMinor, billing.currency)}
-              </span>
-              <Icon className="detail__disclosure" name="chevronRight" size={13} />
-            </button>
-            {billingOpen && (
-              <>
-                <Row
-                  label="Cadence"
-                  value={billing.cadence}
-                />
-                <Row label="Next charge" value={formatCharge(billing.nextCharge)} />
+            <Row
+              label="Subscription"
+              value={`${billing.plan ?? "Recurring charge"} · ${formatMoney(
+                billing.amountMinor,
+                billing.currency,
+              )} ${billing.cadence}`}
+            />
+            <Row label="Next charge" value={formatCharge(billing.nextCharge)} />
             {/*
-              The row this feature exists for. A card that has since been
-              deleted says so rather than showing a blank — blank reads as "no
-              card" when the truth is "a card that is gone", and those lead to
-              opposite actions.
+              A card that has since been deleted says so rather than showing a
+              blank — blank reads as "no card" when the truth is "a card that
+              is gone", and those lead to opposite actions.
             */}
             <Row
               label="Paid with"
@@ -207,8 +198,6 @@ export function ItemDetail({ item }: ItemDetailProps): JSX.Element {
             >
               {billing.paidWithName && <Icon name="chevronRight" size={13} />}
             </Row>
-              </>
-            )}
           </Section>
         )}
 
