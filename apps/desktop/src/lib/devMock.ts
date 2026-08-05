@@ -102,6 +102,74 @@ let unlocked = false;
 
 let mockAutoLock: number | null = 15 * 60;
 
+interface MockSubscription {
+  plan: string | null;
+  amountMinor: number;
+  currency: string;
+  cadence: "monthly" | "yearly" | "usage";
+  nextCharge: number | null;
+  paidWith: string | null;
+}
+
+const day = 86_400;
+const soon = (days: number) => Math.floor(Date.now() / 1000) + days * day;
+
+/**
+ * Invented charges, chosen to exercise the cases the view has to get right:
+ * one this week, one later this month, a yearly plan that has to be spread,
+ * and a usage-based one that must stay out of the total.
+ */
+const subscriptions: Record<string, MockSubscription> = {
+  "1": {
+    plan: "GitHub Pro",
+    amountMinor: 400,
+    currency: "USD",
+    cadence: "monthly",
+    nextCharge: soon(3),
+    paidWith: "6",
+  },
+  "2": {
+    plan: "Figma Professional",
+    amountMinor: 1500,
+    currency: "USD",
+    cadence: "monthly",
+    nextCharge: soon(19),
+    paidWith: "6",
+  },
+  "3": {
+    plan: "AWS",
+    amountMinor: 0,
+    currency: "USD",
+    cadence: "usage",
+    nextCharge: null,
+    paidWith: null,
+  },
+  "5": {
+    plan: "Stripe Atlas",
+    amountMinor: 24_000,
+    currency: "USD",
+    cadence: "yearly",
+    nextCharge: soon(96),
+    // Points at a card that is not in the list, so the "gone" path is
+    // reachable in a dev session rather than only in production.
+    paidWith: "99",
+  },
+};
+
+const subView = (itemId: string, sub: MockSubscription) => ({
+  itemId,
+  itemName: items.find((i) => i.id === itemId)?.name ?? "Unknown",
+  ...sub,
+  paidWithName:
+    items.find((i) => i.id === sub.paidWith && i.kind === "card")?.name ?? null,
+  monthlyMinor:
+    sub.cadence === "usage"
+      ? null
+      : sub.cadence === "yearly"
+        ? Math.floor(sub.amountMinor / 12)
+        : sub.amountMinor,
+});
+
 const summary = (item: MockItem) => ({
   id: item.id,
   name: item.name,
@@ -189,6 +257,26 @@ const handlers: Record<string, (args: Record<string, unknown>) => unknown> = {
     notes: items.filter((i) => i.kind === "note").length,
     authenticator: items.filter((i) => i.totpSeed !== null).length,
   }),
+
+  list_subscriptions: () =>
+    Object.entries(subscriptions)
+      .map(([itemId, sub]) => subView(itemId, sub))
+      .sort((a, b) => {
+        if (a.nextCharge === null) return 1;
+        if (b.nextCharge === null) return -1;
+        return a.nextCharge - b.nextCharge;
+      }),
+
+  item_subscription: (args) => {
+    const sub = subscriptions[String(args.id)];
+    return sub ? subView(String(args.id), sub) : null;
+  },
+
+  set_subscription: (args) => {
+    const id = String(args.id);
+    if (args.subscription === null) delete subscriptions[id];
+    else subscriptions[id] = args.subscription as MockSubscription;
+  },
 
   auto_lock_seconds: () => mockAutoLock,
   set_auto_lock_seconds: (args) => {

@@ -124,8 +124,78 @@ pub struct Item {
     pub totp: Option<TotpConfig>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tags: Vec<String>,
+    /// What this login charges you, if it charges you.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subscription: Option<Subscription>,
     pub created_at: u64,
     pub updated_at: u64,
+}
+
+/// How often a subscription charges.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Cadence {
+    #[default]
+    Monthly,
+    Yearly,
+    /// Charged, but not on a schedule anyone can predict — metered usage, or
+    /// a plan that bills when you cross a threshold.
+    Usage,
+}
+
+impl Cadence {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Monthly => "monthly",
+            Self::Yearly => "yearly",
+            Self::Usage => "usage",
+        }
+    }
+}
+
+/// A recurring charge attached to a login.
+///
+/// An attachment rather than a kind of item, and the distinction is the whole
+/// design: a charge with no account behind it is trivia a spreadsheet handles
+/// better. What makes this belong in a password manager is `paid_with` — the
+/// card it lands on is already here, so the vault can answer "if I cancel this
+/// card, what breaks?"
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Subscription {
+    /// What the plan is called, in the vendor's words.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plan: Option<String>,
+    /// Minor units — cents — so arithmetic on money never rounds.
+    pub amount_minor: i64,
+    /// ISO 4217, uppercased on the way in.
+    pub currency: String,
+    pub cadence: Cadence,
+    /// Unix seconds of the next charge, when there is a date to know.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_charge: Option<u64>,
+    /// The Card item this lands on.
+    ///
+    /// A pointer rather than a copy of the last four digits: a copy goes stale
+    /// the moment the card is replaced, and the question worth answering is
+    /// which stored card this is, not what it looked like once.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub paid_with: Option<Uuid>,
+}
+
+impl Subscription {
+    /// What this costs in a month, in minor units.
+    ///
+    /// Yearly plans are spread rather than shown in the month they land, so a
+    /// total means "what this costs to keep" rather than "what leaves the
+    /// account in August". Usage-based plans return `None`: their amount is a
+    /// guess, and adding a guess to a total makes the whole total a guess.
+    pub fn monthly_minor(&self) -> Option<i64> {
+        match self.cadence {
+            Cadence::Monthly => Some(self.amount_minor),
+            Cadence::Yearly => Some(self.amount_minor / 12),
+            Cadence::Usage => None,
+        }
+    }
 }
 
 impl Item {
@@ -141,6 +211,7 @@ impl Item {
             notes: None,
             totp: None,
             tags: Vec::new(),
+            subscription: None,
             created_at: now,
             updated_at: now,
         }
@@ -418,6 +489,15 @@ impl UnlockedVault {
         self.data.items.iter().find(|item| item.id == id)
     }
 
+    /// The same item, to be edited in place.
+    ///
+    /// Callers are responsible for stamping `updated_at`. Doing it here would
+    /// mark an item changed for a caller that only looked at it, and sync
+    /// decides what to push by that timestamp.
+    pub fn get_mut(&mut self, id: Uuid) -> Option<&mut Item> {
+        self.data.items.iter_mut().find(|item| item.id == id)
+    }
+
     /// Appends an audit record.
     ///
     /// Inside the vault rather than beside it, because a log naming every
@@ -551,7 +631,8 @@ impl UnlockedVault {
     }
 }
 
-fn unix_now() -> u64 {
+/// Seconds since the Unix epoch.
+pub fn unix_now() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
@@ -569,6 +650,89 @@ mod tests {
             iterations: 1,
             parallelism: 1,
         }
+    }
+
+    fn subscription(amount_minor: i64, cadence: Cadence) -> Subscription {
+        Subscription {
+            plan: None,
+            amount_minor,
+            currency: "USD".into(),
+            cadence,
+            next_charge: None,
+            paid_with: None,
+        }
+    }
+
+    #[test]
+    fn a_yearly_plan_is_spread_across_the_year() {
+        // A total should mean "what this costs to keep", not "what leaves the
+        // account in the month it lands".
+        assert_eq!(
+            subscription(24_000, Cadence::Yearly).monthly_minor(),
+            Some(2_000)
+        );
+        assert_eq!(
+            subscription(1_500, Cadence::Monthly).monthly_minor(),
+            Some(1_500)
+        );
+    }
+
+    #[test]
+    fn a_usage_plan_contributes_nothing_to_a_total() {
+        // Its amount is a guess, and one guess makes the whole total a guess.
+        assert_eq!(subscription(9_999, Cadence::Usage).monthly_minor(), None);
+    }
+
+    #[test]
+    fn money_is_held_in_minor_units_so_it_does_not_drift() {
+        // £9.99 a year is not a round number of pence a month. Storing pounds
+        // as a float would accumulate error; integers just truncate once.
+        let yearly = subscription(999, Cadence::Yearly);
+        assert_eq!(yearly.monthly_minor(), Some(83));
+    }
+
+    #[test]
+    fn a_subscription_survives_a_seal_and_open() {
+        let mut vault = UnlockedVault::create_with_params("pw", fast()).unwrap();
+        let card = vault.add(Item::new("Visa").with_kind(ItemKind::Card));
+
+        let mut login = Item::new("GitHub");
+        login.subscription = Some(Subscription {
+            plan: Some("GitHub Pro".into()),
+            amount_minor: 400,
+            currency: "USD".into(),
+            cadence: Cadence::Monthly,
+            next_charge: Some(1_800_000_000),
+            paid_with: Some(card),
+        });
+        let id = vault.add(login);
+
+        let reopened = UnlockedVault::open(&vault.seal().unwrap(), "pw").unwrap();
+        let sub = reopened.get(id).unwrap().subscription.as_ref().unwrap();
+
+        assert_eq!(sub.plan.as_deref(), Some("GitHub Pro"));
+        assert_eq!(sub.paid_with, Some(card));
+    }
+
+    #[test]
+    fn an_item_without_a_subscription_writes_no_field() {
+        // Most items have none. Serialising a null for each would grow every
+        // vault for nothing.
+        let item = Item::new("Plain");
+        let json = serde_json::to_string(&item).unwrap();
+        assert!(!json.contains("subscription"));
+    }
+
+    #[test]
+    fn a_vault_written_before_subscriptions_still_opens() {
+        let mut vault = UnlockedVault::create_with_params("pw", fast()).unwrap();
+        vault.add(Item::new("Old"));
+        let file = vault.seal().unwrap();
+
+        // The field is absent from anything written by an earlier build; it
+        // has to read as "no subscription" rather than as a corrupt file.
+        let reopened = UnlockedVault::open(&file, "pw").unwrap();
+        assert!(reopened.items()[0].subscription.is_none());
     }
 
     #[test]

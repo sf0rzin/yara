@@ -17,7 +17,8 @@ use state::AppState;
 use tauri::{Manager, State};
 use uuid::Uuid;
 use yara_core::{
-    Item, ItemKind, Strength, TotpConfig, UnlockedVault, VaultCounts, VaultFile, VaultHealth,
+    Cadence, Item, ItemKind, Strength, Subscription, TotpConfig, UnlockedVault, VaultCounts,
+    VaultFile, VaultHealth,
 };
 
 /// An item as the frontend sees it: everything except the secrets.
@@ -466,6 +467,150 @@ fn resolve_approval(
     Ok(())
 }
 
+// ---- billing -----------------------------------------------------------
+
+/// A subscription as the interface reads it.
+///
+/// `paid_with` is resolved to a name here rather than in the frontend. The
+/// interface would otherwise have to hold the card list to render one row, and
+/// a card that has since been deleted would render as a bare uuid.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SubscriptionView {
+    pub item_id: Uuid,
+    pub item_name: String,
+    pub plan: Option<String>,
+    pub amount_minor: i64,
+    pub currency: String,
+    pub cadence: String,
+    pub next_charge: Option<u64>,
+    pub paid_with: Option<Uuid>,
+    /// The card's name, or `None` if it points at something no longer here.
+    pub paid_with_name: Option<String>,
+    /// Cost per month in minor units; `None` for usage-based plans.
+    pub monthly_minor: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SubscriptionInput {
+    pub plan: Option<String>,
+    pub amount_minor: i64,
+    pub currency: String,
+    pub cadence: Cadence,
+    pub next_charge: Option<u64>,
+    pub paid_with: Option<Uuid>,
+}
+
+fn view_of(
+    item: &Item,
+    cards: &std::collections::HashMap<Uuid, String>,
+) -> Option<SubscriptionView> {
+    let sub = item.subscription.as_ref()?;
+    Some(SubscriptionView {
+        item_id: item.id,
+        item_name: item.name.clone(),
+        plan: sub.plan.clone(),
+        amount_minor: sub.amount_minor,
+        currency: sub.currency.clone(),
+        cadence: sub.cadence.as_str().to_string(),
+        next_charge: sub.next_charge,
+        paid_with: sub.paid_with,
+        paid_with_name: sub.paid_with.and_then(|id| cards.get(&id).cloned()),
+        monthly_minor: sub.monthly_minor(),
+    })
+}
+
+/// Every subscription in the vault, soonest charge first.
+#[tauri::command]
+fn list_subscriptions(state: State<'_, Arc<AppState>>) -> CommandResult<Vec<SubscriptionView>> {
+    state.with_vault(|vault| {
+        let cards: std::collections::HashMap<Uuid, String> = vault
+            .items()
+            .iter()
+            .filter(|item| item.kind == ItemKind::Card)
+            .map(|item| (item.id, item.name.clone()))
+            .collect();
+
+        let mut views: Vec<SubscriptionView> = vault
+            .items()
+            .iter()
+            .filter_map(|item| view_of(item, &cards))
+            .collect();
+
+        // Undated last rather than first. A charge with no date cannot be
+        // planned around, so it belongs after everything that can.
+        views.sort_by_key(|view| (view.next_charge.is_none(), view.next_charge));
+        Ok(views)
+    })
+}
+
+/// The subscription on one item, if it has one.
+#[tauri::command]
+fn item_subscription(
+    state: State<'_, Arc<AppState>>,
+    id: Uuid,
+) -> CommandResult<Option<SubscriptionView>> {
+    state.with_vault(|vault| {
+        let cards: std::collections::HashMap<Uuid, String> = vault
+            .items()
+            .iter()
+            .filter(|item| item.kind == ItemKind::Card)
+            .map(|item| (item.id, item.name.clone()))
+            .collect();
+
+        Ok(vault.get(id).and_then(|item| view_of(item, &cards)))
+    })
+}
+
+/// Attaches or replaces a subscription. `None` detaches it.
+#[tauri::command]
+fn set_subscription(
+    state: State<'_, Arc<AppState>>,
+    id: Uuid,
+    subscription: Option<SubscriptionInput>,
+) -> CommandResult<()> {
+    let built = match subscription {
+        None => None,
+        Some(input) => {
+            if input.amount_minor < 0 {
+                return Err("an amount cannot be negative".into());
+            }
+            // Pointing at something that is not a card would render as a blank
+            // row later, which reads as "no card" rather than "wrong card".
+            if let Some(card) = input.paid_with {
+                let ok = state.with_vault(|vault| {
+                    Ok(vault
+                        .get(card)
+                        .is_some_and(|item| item.kind == ItemKind::Card))
+                })?;
+                if !ok {
+                    return Err("that card is not in this vault".into());
+                }
+            }
+
+            Some(Subscription {
+                plan: input.plan.filter(|plan| !plan.trim().is_empty()),
+                amount_minor: input.amount_minor,
+                currency: input.currency.trim().to_uppercase(),
+                cadence: input.cadence,
+                next_charge: input.next_charge,
+                paid_with: input.paid_with,
+            })
+        }
+    };
+
+    state.with_vault_mut(|vault| {
+        let item = vault
+            .get_mut(id)
+            .ok_or_else(|| format!("item {id} not found"))?;
+        item.subscription = built;
+        item.updated_at = yara_core::unix_now();
+        Ok(())
+    })?;
+    state.save()
+}
+
 // ---- auto-lock ---------------------------------------------------------
 
 /// Idle seconds before the vault locks itself, or `None` for never.
@@ -677,6 +822,9 @@ pub fn run() {
             revoke_grant,
             audit_entries,
             resolve_approval,
+            list_subscriptions,
+            item_subscription,
+            set_subscription,
             auto_lock_seconds,
             set_auto_lock_seconds,
             preview_import,

@@ -38,9 +38,10 @@ pub use import::{from_proton_authenticator, Import, Imported, Skipped};
 pub use qr::decode_enrollment;
 pub use secret::SecretString;
 pub use totp::{TotpAlgorithm, TotpConfig};
+pub use vault::unix_now;
 pub use vault::{
-    Item, ItemKind, KdfHeader, SyncState, UnlockedVault, VaultCounts, VaultData, VaultFile,
-    FORMAT_VERSION,
+    Cadence, Item, ItemKind, KdfHeader, Subscription, SyncState, UnlockedVault, VaultCounts,
+    VaultData, VaultFile, FORMAT_VERSION,
 };
 
 /// Serde helper that stores byte arrays as base64 strings, so a vault file stays

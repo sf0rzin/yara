@@ -1528,3 +1528,35 @@
 .row[data-selected] .tile[data-monogram] {
   color: var(--text);
 }
+
+/* --------------------------------------------------------- subscriptions */
+
+.sub__amount {
+  flex-shrink: 0;
+  font-size: var(--text-base);
+  font-variant-numeric: tabular-nums;
+}
+
+/*
+ * The total states how it was derived. A number that quietly spreads yearly
+ * plans and drops usage-based ones is a number somebody later finds wrong.
+ */
+.sub__total {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--space-3) var(--space-2) var(--space-4);
+}
+
+.sub__total-amount {
+  font-size: var(--text-display);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: var(--tracking-tight);
+}
+
+.sub__total-note {
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  line-height: 1.5;
+}
