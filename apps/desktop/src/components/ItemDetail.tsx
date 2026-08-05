@@ -2,8 +2,12 @@ import { useEffect, useState, type JSX } from "react";
 import {
   deleteItem,
   errorMessage,
+  formatCharge,
+  formatMoney,
+  itemSubscription,
   revealPassword,
   type ItemSummary,
+  type SubscriptionView,
   type VaultHealth,
 } from "../api";
 import { copySecret } from "../lib/clipboard";
@@ -34,6 +38,7 @@ export function ItemDetail({ item, health, onChanged }: ItemDetailProps): JSX.El
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [billing, setBilling] = useState<SubscriptionView | null>(null);
 
   // Switching items must not carry the previous one's revealed password, its
   // half-pressed delete, or a notice about something you are no longer looking
@@ -43,6 +48,13 @@ export function ItemDetail({ item, health, onChanged }: ItemDetailProps): JSX.El
     setConfirmingDelete(false);
     setNotice(null);
     setError(null);
+    setBilling(null);
+    // Fetched per item rather than carried on the summary: most items have no
+    // subscription, and a field that is null for nine rows in ten does not
+    // belong in the list payload.
+    void itemSubscription(item.id)
+      .then(setBilling)
+      .catch(() => setBilling(null));
   }, [item.id]);
 
   // A revealed password does not stay revealed. Leaving one on screen is how a
@@ -184,6 +196,33 @@ export function ItemDetail({ item, health, onChanged }: ItemDetailProps): JSX.El
                 <TotpBadge itemId={item.id} prominent />
               </span>
             </div>
+          </Section>
+        )}
+
+        {billing && (
+          <Section label="Billing">
+            {billing.plan && <Row label="Plan" value={billing.plan} />}
+            <Row
+              label="Amount"
+              value={`${formatMoney(billing.amountMinor, billing.currency)} ${billing.cadence}`}
+            />
+            <Row label="Next charge" value={formatCharge(billing.nextCharge)} />
+            {/*
+              The row this feature exists for. A card that has since been
+              deleted says so rather than showing a blank — blank reads as "no
+              card" when the truth is "a card that is gone", and those lead to
+              opposite actions.
+            */}
+            <Row
+              label="Paid with"
+              value={
+                billing.paidWith === null
+                  ? "Not recorded"
+                  : (billing.paidWithName ?? "A card no longer in this vault")
+              }
+            >
+              {billing.paidWithName && <Icon name="chevronRight" size={13} />}
+            </Row>
           </Section>
         )}
 

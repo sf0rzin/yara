@@ -292,3 +292,73 @@ export const autoLockSeconds = () => invoke<number | null>("auto_lock_seconds");
 
 export const setAutoLockSeconds = (seconds: number | null) =>
   invoke<void>("set_auto_lock_seconds", { seconds });
+
+export type Cadence = "monthly" | "yearly" | "usage";
+
+/**
+ * A recurring charge attached to a login.
+ *
+ * `paidWithName` is resolved in the backend. The interface would otherwise
+ * need the card list to render one row, and a card since deleted would show as
+ * a bare uuid.
+ */
+export interface SubscriptionView {
+  itemId: string;
+  itemName: string;
+  plan: string | null;
+  amountMinor: number;
+  currency: string;
+  cadence: Cadence;
+  nextCharge: number | null;
+  paidWith: string | null;
+  paidWithName: string | null;
+  /** Cost per month in minor units; null for usage-based plans. */
+  monthlyMinor: number | null;
+}
+
+export interface SubscriptionInput {
+  plan: string | null;
+  amountMinor: number;
+  currency: string;
+  cadence: Cadence;
+  nextCharge: number | null;
+  paidWith: string | null;
+}
+
+export const listSubscriptions = () =>
+  invoke<SubscriptionView[]>("list_subscriptions");
+
+export const itemSubscription = (id: string) =>
+  invoke<SubscriptionView | null>("item_subscription", { id });
+
+export const setSubscription = (id: string, subscription: SubscriptionInput | null) =>
+  invoke<void>("set_subscription", { id, subscription });
+
+/** Minor units to something a person reads. */
+export function formatMoney(minor: number, currency: string): string {
+  try {
+    return new Intl.NumberFormat(undefined, {
+      style: "currency",
+      currency,
+    }).format(minor / 100);
+  } catch {
+    // An unknown or mistyped currency code must not blank the amount.
+    return `${(minor / 100).toFixed(2)} ${currency}`;
+  }
+}
+
+/** "14 August · in 10 days", as the design words it. */
+export function formatCharge(at: number | null): string {
+  if (at === null) return "No fixed date";
+
+  const date = new Date(at * 1000).toLocaleDateString(undefined, {
+    day: "numeric",
+    month: "long",
+  });
+
+  const days = Math.round((at - Date.now() / 1000) / 86_400);
+  if (days < 0) return `${date} · overdue`;
+  if (days === 0) return `${date} · today`;
+  if (days === 1) return `${date} · tomorrow`;
+  return `${date} · in ${days} days`;
+}

@@ -21,6 +21,7 @@ import { ItemDetail } from "../components/ItemDetail";
 import { ItemRow } from "../components/ItemRow";
 import { NewItemDialog } from "../components/NewItemDialog";
 import { Sidebar } from "../components/Sidebar";
+import { SubscriptionsView } from "../components/SubscriptionsView";
 import { SyncView } from "../components/SyncView";
 import { UpdateNotice } from "../components/UpdateNotice";
 import { useAutoLock } from "../lib/useAutoLock";
@@ -239,10 +240,7 @@ export function Vault({ onLock }: VaultProps): JSX.Element {
               )}
 
               {view.kind === "subscriptions" ? (
-                <p className="empty">
-                  Nothing is charging you yet. Attach a subscription to a login
-                  from its detail pane.
-                </p>
+                <SubscriptionsView onSelect={setSelectedId} />
               ) : items.length === 0 ? (
                 <p className="empty">
                   {searching ? "Nothing matches that." : "Nothing here yet."}
