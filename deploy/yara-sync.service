@@ -43,8 +43,28 @@ SystemCallFilter=@system-service
 # Loopback only. Caddy is the only thing that should reach this, and the
 # service has no reason to make outbound connections at all.
 RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
-IPAddressDeny=any
-IPAddressAllow=localhost
+
+# The icon proxy fetches from the public internet, so outbound can no longer
+# be denied outright. What replaces the blanket deny is a hole-punched one:
+# everything is reachable except the address ranges that are not the internet.
+#
+# This is the backstop, not the check. The domain is validated in the service
+# too, but a name that resolves to 10.10.1.20 passes any string validation
+# there is — and DNS rebinding makes an application-level resolve-then-connect
+# check racy by construction. A kernel filter is neither.
+#
+# Deny-only, with no IPAddressAllow beside it. That is not a style choice:
+# an allow entry wins over a deny entry, so pairing this with
+#  matches everything on the allow side and the deny list
+# is never consulted. Verified by testing rather than assumed — the paired
+# form let this service reach 10.10.1.2, and this form does not.
+#
+# 127.0.0.0/8 is absent from the list and therefore still reachable, which is
+# what lets Caddy talk to this service.
+IPAddressDeny=10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 169.254.0.0/16 100.64.0.0/10 192.0.0.0/24 198.18.0.0/15 fc00::/7 fe80::/10
+
+# The icon cache, beside the database.
+ReadWritePaths=/var/lib/yara-sync
 
 [Install]
 WantedBy=multi-user.target
