@@ -100,6 +100,8 @@ const items: MockItem[] = [
 
 let unlocked = false;
 
+let mockAutoLock: number | null = 15 * 60;
+
 const summary = (item: MockItem) => ({
   id: item.id,
   name: item.name,
@@ -187,6 +189,11 @@ const handlers: Record<string, (args: Record<string, unknown>) => unknown> = {
     notes: items.filter((i) => i.kind === "note").length,
     authenticator: items.filter((i) => i.totpSeed !== null).length,
   }),
+
+  auto_lock_seconds: () => mockAutoLock,
+  set_auto_lock_seconds: (args) => {
+    mockAutoLock = (args.seconds as number | null) ?? null;
+  },
 
   vault_health: () => {
     const withPasswords = items.filter((i) => i.password);

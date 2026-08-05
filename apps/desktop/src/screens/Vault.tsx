@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type JSX } from "react";
 import {
+  autoLockSeconds as readAutoLock,
   errorMessage,
   listItems,
   lockVault,
   recentItems,
+  setAutoLockSeconds,
   vaultCounts,
   vaultHealth,
   type ItemSummary,
@@ -24,8 +26,8 @@ import { UpdateNotice } from "../components/UpdateNotice";
 import { useAutoLock } from "../lib/useAutoLock";
 import { isItemList, viewSubtitle, viewTitle, type View } from "../views";
 
-/** Matches the countdown the design shows in the sidebar. */
-const AUTO_LOCK_MS = 8 * 60 * 1000;
+/** Until the vault says otherwise. Matches the core default. */
+const FALLBACK_AUTO_LOCK = 15 * 60;
 
 interface VaultProps {
   onLock: () => void;
@@ -51,6 +53,7 @@ export function Vault({ onLock }: VaultProps): JSX.Element {
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [approvals, setApprovals] = useState<ApprovalPrompt[]>([]);
+  const [autoLock, setAutoLock] = useState<number | null>(FALLBACK_AUTO_LOCK);
 
   const searchRef = useRef<HTMLInputElement>(null);
 
@@ -59,7 +62,18 @@ export function Vault({ onLock }: VaultProps): JSX.Element {
     onLock();
   }, [onLock]);
 
-  const lockRemaining = useAutoLock(AUTO_LOCK_MS, lock);
+  // Never means never: an interval of Infinity leaves the countdown pinned
+  // and the callback unreachable, which is exactly the intent.
+  const lockRemaining = useAutoLock(
+    autoLock === null ? Number.POSITIVE_INFINITY : autoLock * 1000,
+    lock,
+  );
+
+  useEffect(() => {
+    void readAutoLock()
+      .then(setAutoLock)
+      .catch(() => setAutoLock(FALLBACK_AUTO_LOCK));
+  }, []);
 
   const showsItems = isItemList(view);
 
@@ -120,15 +134,21 @@ export function Vault({ onLock }: VaultProps): JSX.Element {
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
+      if (!(event.ctrlKey || event.metaKey)) return;
+      const key = event.key.toLowerCase();
+      if (key === "k") {
         event.preventDefault();
         searchRef.current?.focus();
         searchRef.current?.select();
       }
+      if (key === "l") {
+        event.preventDefault();
+        lock();
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  }, [lock]);
 
   const selected = useMemo(
     () => items.find((item) => item.id === selectedId) ?? null,
@@ -143,6 +163,11 @@ export function Vault({ onLock }: VaultProps): JSX.Element {
         view={view}
         counts={counts}
         lockRemainingMs={lockRemaining}
+        autoLockSeconds={autoLock}
+        onChangeAutoLock={(seconds) => {
+          setAutoLock(seconds);
+          void setAutoLockSeconds(seconds);
+        }}
         onSelect={(next) => {
           setView(next);
           setQuery("");

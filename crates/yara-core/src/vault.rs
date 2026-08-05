@@ -28,6 +28,9 @@ use crate::totp::TotpConfig;
 
 /// Current on-disk format version.
 pub const FORMAT_VERSION: u32 = 1;
+
+/// Idle seconds before the vault locks itself, when nothing else is chosen.
+const DEFAULT_AUTO_LOCK: u64 = 15 * 60;
 const KDF_ALGORITHM: &str = "argon2id";
 
 /// Plaintext header describing how the master key is derived.
@@ -230,6 +233,17 @@ pub struct VaultData {
     /// Where this machine syncs to, if it does. `None` until enrolled.
     #[serde(default)]
     pub sync: Option<SyncState>,
+    /// Idle seconds before the vault locks itself, or `None` to never.
+    ///
+    /// Inside the vault rather than beside it, because how long this machine
+    /// stays unlocked is a fact about the vault worth the same protection as
+    /// the rest — and because a setting stored in the clear could be edited to
+    /// `never` by anything running as the user.
+    ///
+    /// Absent in files written before the setting existed, which is why the
+    /// accessor supplies the default rather than serde.
+    #[serde(default)]
+    pub auto_lock_seconds: Option<Option<u64>>,
 }
 
 /// What this machine needs to remember between syncs.
@@ -442,6 +456,21 @@ impl UnlockedVault {
     /// can leak them.
     pub fn vault_key_bytes(&self) -> &[u8; crypto::KEY_LEN] {
         self.vault_key.expose()
+    }
+
+    /// Idle seconds before locking, or `None` to never.
+    ///
+    /// Fifteen minutes when the vault has never been asked. Long enough to
+    /// read a page and come back, short enough that a walked-away-from desk
+    /// does not stay open all afternoon.
+    pub fn auto_lock_seconds(&self) -> Option<u64> {
+        self.data
+            .auto_lock_seconds
+            .unwrap_or(Some(DEFAULT_AUTO_LOCK))
+    }
+
+    pub fn set_auto_lock_seconds(&mut self, seconds: Option<u64>) {
+        self.data.auto_lock_seconds = Some(seconds);
     }
 
     pub fn sync_state(&self) -> Option<&SyncState> {

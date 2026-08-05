@@ -466,6 +466,32 @@ fn resolve_approval(
     Ok(())
 }
 
+// ---- auto-lock ---------------------------------------------------------
+
+/// Idle seconds before the vault locks itself, or `None` for never.
+#[tauri::command]
+fn auto_lock_seconds(state: State<'_, Arc<AppState>>) -> CommandResult<Option<u64>> {
+    state.with_vault(|vault| Ok(vault.auto_lock_seconds()))
+}
+
+/// Changes it, and writes the vault so the choice survives a restart.
+///
+/// The value is clamped rather than trusted. It arrives from the frontend and
+/// ends up governing when a key is zeroized; a rounding error or a stray zero
+/// should not be able to turn that into "immediately" or "in a decade".
+#[tauri::command]
+fn set_auto_lock_seconds(
+    state: State<'_, Arc<AppState>>,
+    seconds: Option<u64>,
+) -> CommandResult<()> {
+    let clamped = seconds.map(|value| value.clamp(30, 24 * 60 * 60));
+    state.with_vault_mut(|vault| {
+        vault.set_auto_lock_seconds(clamped);
+        Ok(())
+    })?;
+    state.save()
+}
+
 // ---- import ------------------------------------------------------------
 
 /// What an import would do, before it does any of it.
@@ -651,6 +677,8 @@ pub fn run() {
             revoke_grant,
             audit_entries,
             resolve_approval,
+            auto_lock_seconds,
+            set_auto_lock_seconds,
             preview_import,
             run_import,
             sync_status,
