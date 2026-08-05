@@ -31,20 +31,20 @@ export function AgentAccess(): JSX.Element {
   }, [refresh]);
 
   return (
-    <div className="security">
-      <section className="finding">
-        <header className="finding__head">
-          <h3 className="finding__title">Active permissions</h3>
-          <span className="finding__count">{grants.length}</span>
+    <div className="panel">
+      <section className="panel__section">
+        <header className="panel__head">
+          <h3 className="panel__title">Active permissions</h3>
+          <span className="panel__count">{grants.length}</span>
         </header>
-        <p className="finding__desc">
+        <p className="panel__desc">
           {grants.length === 0
             ? "No program currently holds permission to use anything."
             : "Each of these expires on its own. Locking the vault cancels them all."}
         </p>
 
         {grants.length > 0 && (
-          <div className="finding__group">
+          <div className="panel__group">
             {grants.map((grant) => (
               <div key={grant.id} className="grant">
                 <span className="grant__text">
@@ -73,19 +73,19 @@ export function AgentAccess(): JSX.Element {
         )}
       </section>
 
-      <section className="finding">
-        <header className="finding__head">
-          <h3 className="finding__title">History</h3>
-          <span className="finding__count">{entries.length}</span>
+      <section className="panel__section">
+        <header className="panel__head">
+          <h3 className="panel__title">History</h3>
+          <span className="panel__count">{entries.length}</span>
         </header>
-        <p className="finding__desc">
+        <p className="panel__desc">
           Every request, including the ones that were turned down.
         </p>
 
         {entries.length === 0 ? (
           <p className="empty">Nothing has asked for anything yet.</p>
         ) : (
-          <div className="finding__group">
+          <div className="panel__group">
             {entries.map((entry) => (
               <div key={entry.id} className="audit" data-notable={entry.notable || undefined}>
                 <Icon name={entry.allowed ? "check" : "close"} size={13} />
@@ -103,7 +103,7 @@ export function AgentAccess(): JSX.Element {
         )}
       </section>
 
-      <p className="security__note">
+      <p className="panel__note">
         yara can only vouch for what it was asked. A program that already runs
         as you can read this app's memory while the vault is unlocked, and no
         password manager running in your own session can prevent that.

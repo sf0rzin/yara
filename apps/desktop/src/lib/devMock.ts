@@ -110,7 +110,25 @@ const summary = (item: MockItem) => ({
   hasPassword: item.password !== null,
   hasTotp: item.totpSeed !== null,
   updatedAt: item.updatedAt,
+  // Invented, like everything else here — but present, because a field the
+  // mock omits renders as "Unknown" or, worse, as a claim the real backend
+  // would never make.
+  createdAt: item.updatedAt - 86_400 * 420,
+  strength: rateMock(item.password),
 });
+
+/**
+ * A crude stand-in for the backend's rating.
+ *
+ * Deliberately not the real algorithm: the point is that the interface gets a
+ * value of the right shape, so a dev session shows "Adequate" where production
+ * would rather than defaulting everything to the most flattering answer.
+ */
+function rateMock(password: string | null): "weak" | "fair" | "strong" | null {
+  if (password === null) return null;
+  if (password.length < 10) return "weak";
+  return password.length < 16 ? "fair" : "strong";
+}
 
 function matches(item: MockItem, query: string): boolean {
   const q = query.trim().toLowerCase();

@@ -33,6 +33,14 @@ pub struct ItemSummary {
     pub has_password: bool,
     pub has_totp: bool,
     pub updated_at: u64,
+    pub created_at: u64,
+    /// How the password rates, or `None` when there is no password.
+    ///
+    /// Computed here rather than inferred in the interface. The health report
+    /// only names the passwords it considers weak, so a caller working from
+    /// that alone can conclude "not weak" and would have to call anything else
+    /// strong — which overclaims for a merely adequate password.
+    pub strength: Option<Strength>,
 }
 
 impl From<&Item> for ItemSummary {
@@ -47,6 +55,11 @@ impl From<&Item> for ItemSummary {
             has_password: item.password.is_some(),
             has_totp: item.totp.is_some(),
             updated_at: item.updated_at,
+            created_at: item.created_at,
+            strength: item
+                .password
+                .as_ref()
+                .map(|password| yara_core::health::strength(password.expose())),
         }
     }
 }

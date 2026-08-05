@@ -16,13 +16,14 @@ interface SidebarProps {
   counts: VaultCounts | null;
   lockRemainingMs: number;
   onSelect: (view: View) => void;
-  onFocusSearch: () => void;
   onLock: () => void;
 }
 
 function isSameView(a: View, b: View): boolean {
-  return a.kind === b.kind && ("itemKind" in a ? a.itemKind : null) ===
-    ("itemKind" in b ? b.itemKind : null);
+  return (
+    a.kind === b.kind &&
+    ("itemKind" in a ? a.itemKind : null) === ("itemKind" in b ? b.itemKind : null)
+  );
 }
 
 export function Sidebar({
@@ -30,15 +31,17 @@ export function Sidebar({
   counts,
   lockRemainingMs,
   onSelect,
-  onFocusSearch,
   onLock,
 }: SidebarProps): JSX.Element {
+  // Collections are ways of looking at the vault. Subscriptions sits here
+  // rather than under Types because a subscription is an attachment on a
+  // login, not a kind of item — a charge with no account behind it is trivia.
   const collections: NavEntry[] = [
     { view: { kind: "all" }, label: "All items", icon: "allItems" },
     { view: { kind: "recent" }, label: "Recent", icon: "recent" },
-    { view: { kind: "security" }, label: "Security", icon: "security" },
+    { view: { kind: "subscriptions" }, label: "Subscriptions", icon: "calendar" },
     { view: { kind: "agents" }, label: "Agent access", icon: "sparkle" },
-    { view: { kind: "sync" }, label: "Sync", icon: "download" },
+    { view: { kind: "sync" }, label: "Sync", icon: "sync" },
   ];
 
   const types: NavEntry[] = [
@@ -79,7 +82,7 @@ export function Sidebar({
           aria-current={active ? "page" : undefined}
           onClick={() => onSelect(entry.view)}
         >
-          <Icon name={entry.icon} size={15} />
+          <Icon name={entry.icon} size={16} />
           <span className="nav-item__label">{entry.label}</span>
           {entry.count !== undefined && (
             <span className="nav-item__count">{entry.count}</span>
@@ -93,13 +96,8 @@ export function Sidebar({
     <aside className="sidebar">
       <div className="sidebar__brand">
         <span className="sidebar__name">yara</span>
-        <span className="sidebar__tagline">Password Vault</span>
+        <span className="sidebar__tagline">Local vault</span>
       </div>
-
-      <button type="button" className="sidebar__search" onClick={onFocusSearch}>
-        <kbd className="kbd">Ctrl K</kbd>
-        <span>Search</span>
-      </button>
 
       <nav className="sidebar__nav">
         <p className="section-label">Collections</p>
@@ -109,12 +107,17 @@ export function Sidebar({
         <ul>{types.map(renderEntry)}</ul>
       </nav>
 
+      {/*
+        States what is true now — unlocked — and what happens next, rather than
+        naming the vault twice. The countdown is the only moving thing in the
+        sidebar, so it earns its place by being the one fact that changes.
+      */}
       <button type="button" className="sidebar__footer" onClick={onLock}>
-        <span className="avatar" aria-hidden="true">
-          <Icon name="lock" size={13} />
+        <span className="sidebar__footer-tile" aria-hidden="true">
+          <Icon name="lock" size={14} />
         </span>
         <span className="sidebar__footer-text">
-          <span className="sidebar__footer-title">Local vault</span>
+          <span className="sidebar__footer-title">Unlocked</span>
           <span className="sidebar__footer-sub">
             Locks in {formatCountdown(lockRemainingMs)}
           </span>

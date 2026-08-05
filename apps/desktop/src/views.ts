@@ -1,10 +1,19 @@
 import type { ItemKind, VaultCounts } from "./api";
 
-/** Which collection or type filter the main pane is showing. */
+/**
+ * Which collection or type filter the list column is showing.
+ *
+ * Collections are ways of looking at the vault; Types say what an item is.
+ * Subscriptions belongs to the first group because a subscription is an
+ * attachment on a login rather than a fifth kind of item.
+ *
+ * There is no `security`. Password health moved onto the item itself, where
+ * the password is, rather than living on a page you have to remember to open.
+ */
 export type View =
   | { kind: "all" }
   | { kind: "recent" }
-  | { kind: "security" }
+  | { kind: "subscriptions" }
   | { kind: "agents" }
   | { kind: "sync" }
   | { kind: "authenticator" }
@@ -22,8 +31,8 @@ export function viewTitle(view: View): string {
       return "All items";
     case "recent":
       return "Recent";
-    case "security":
-      return "Security";
+    case "subscriptions":
+      return "Subscriptions";
     case "agents":
       return "Agent access";
     case "sync":
@@ -37,14 +46,14 @@ export function viewTitle(view: View): string {
 
 /** The line under the page title. Plural handling included. */
 export function viewSubtitle(view: View, counts: VaultCounts | null): string {
-  if (view.kind === "security") {
-    return "Password health across your vault";
-  }
   if (view.kind === "agents") {
     return "What programs have been allowed to use";
   }
   if (view.kind === "sync") {
     return "Keeping this vault on more than one machine";
+  }
+  if (view.kind === "subscriptions") {
+    return "What is charging you, and on which card";
   }
   if (view.kind === "recent") {
     return "Most recently updated";
@@ -65,4 +74,9 @@ export function viewSubtitle(view: View, counts: VaultCounts | null): string {
 
   if (total === null) return "";
   return `${total} ${total === 1 ? "item" : "items"}`;
+}
+
+/** Views that show a list of items rather than a screen of their own. */
+export function isItemList(view: View): boolean {
+  return view.kind !== "agents" && view.kind !== "sync";
 }

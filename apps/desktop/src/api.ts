@@ -2,6 +2,8 @@ import { invoke } from "@tauri-apps/api/core";
 
 export type ItemKind = "login" | "card" | "note";
 
+export type Strength = "weak" | "fair" | "strong";
+
 /**
  * An item as the backend hands it over.
  *
@@ -19,6 +21,15 @@ export interface ItemSummary {
   hasPassword: boolean;
   hasTotp: boolean;
   updatedAt: number;
+  createdAt: number;
+  /**
+   * How the password rates, or null when there is no password.
+   *
+   * Rated in the backend, where the plaintext is. Deriving it here from the
+   * health report's list of weak passwords would leave everything else to be
+   * called strong, which overclaims for a merely adequate one.
+   */
+  strength: Strength | null;
 }
 
 export interface TotpCode {
@@ -35,10 +46,16 @@ export interface VaultCounts {
   authenticator: number;
 }
 
+/** Items sharing one password, by id. */
 export interface ReusedGroup {
   items: string[];
 }
 
+/**
+ * The health report. Every list identifies items by **id**, not by name —
+ * two items may share a name, and matching on one would both miss real reuse
+ * and invent it between unrelated entries.
+ */
 export interface VaultHealth {
   weak: string[];
   reused: ReusedGroup[];
@@ -183,8 +200,6 @@ export const revealPassword = (id: string) =>
   invoke<string>("reveal_password", { id });
 
 export const totpCode = (id: string) => invoke<TotpCode>("totp_code", { id });
-
-export type Strength = "weak" | "fair" | "strong";
 
 export const estimateStrength = (password: string) =>
   invoke<Strength>("estimate_strength", { password });
