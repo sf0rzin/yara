@@ -125,7 +125,7 @@ export function ItemDetail({ item, health, onChanged }: ItemDetailProps): JSX.El
 
       <div className="detail__scroll">
         <div className="detail__header">
-          <Tile name={item.name} kind={item.kind} large />
+          <Tile name={item.name} kind={item.kind} url={item.url} large />
           <div className="detail__heading">
             <h2 className="detail__name">{item.name}</h2>
             {host && <p className="detail__host">{host}</p>}

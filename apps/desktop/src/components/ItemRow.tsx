@@ -22,7 +22,7 @@ export function ItemRow({ item, selected, onSelect }: ItemRowProps): JSX.Element
         data-selected={selected || undefined}
         onClick={() => onSelect(item.id)}
       >
-        <Tile name={item.name} kind={item.kind} />
+        <Tile name={item.name} kind={item.kind} url={item.url} />
 
         <span className="row__text">
           <span className="row__name">{item.name}</span>

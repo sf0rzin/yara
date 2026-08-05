@@ -1,6 +1,18 @@
-import type { JSX } from "react";
-import type { ItemKind } from "../api";
+import { useEffect, useState, type JSX } from "react";
+import { iconFor, type ItemKind } from "../api";
 import { Icon, type IconName } from "./Icon";
+
+/**
+ * Icons already asked for, so scrolling a list does not re-ask.
+ *
+ * Module-level and never evicted: it holds a few hundred small strings at
+ * most, and the alternative — refetching as rows mount and unmount — is the
+ * thing the disk cache downstream exists to prevent.
+ *
+ * `null` is a remembered miss. Without it a domain with no icon would be
+ * retried on every render for the rest of the session.
+ */
+const seen = new Map<string, string | null>();
 
 const KIND_ICONS: Record<ItemKind, IconName> = {
   login: "login",
@@ -27,23 +39,67 @@ const KIND_ICONS: Record<ItemKind, IconName> = {
 export function Tile({
   name,
   kind,
+  url,
   large,
 }: {
   name: string;
   kind: ItemKind;
+  url?: string | null;
   large?: boolean;
 }): JSX.Element {
+  const domain = kind === "login" ? domainOf(url) : null;
+  const [icon, setIcon] = useState<string | null>(() =>
+    domain ? (seen.get(domain) ?? null) : null,
+  );
+
+  useEffect(() => {
+    if (!domain || seen.has(domain)) return;
+
+    let live = true;
+    void iconFor(domain)
+      .then((found) => {
+        seen.set(domain, found);
+        if (live) setIcon(found);
+      })
+      .catch(() => seen.set(domain, null));
+
+    return () => {
+      live = false;
+    };
+  }, [domain]);
+
   const monogram = kind === "login" ? initialsOf(name) : null;
 
   return (
     <span
       className={large ? "tile tile--large" : "tile"}
-      data-monogram={monogram ? "" : undefined}
+      data-monogram={!icon && monogram ? "" : undefined}
+      data-icon={icon ? "" : undefined}
       aria-hidden="true"
     >
-      {monogram ?? <Icon name={KIND_ICONS[kind]} size={large ? 20 : 16} />}
+      {/*
+        The monogram is the fallback rather than a placeholder that gets
+        replaced. A tile that starts blank and fills in a moment later makes
+        the whole list twitch as it loads.
+      */}
+      {icon ? (
+        <img src={icon} alt="" />
+      ) : (
+        (monogram ?? <Icon name={KIND_ICONS[kind]} size={large ? 20 : 16} />)
+      )}
     </span>
   );
+}
+
+/** The host an icon would belong to, or null if there is nothing to ask about. */
+function domainOf(url: string | null | undefined): string | null {
+  if (!url) return null;
+  try {
+    const host = new URL(url).hostname.replace(/^www\./, "");
+    return host.includes(".") ? host : null;
+  } catch {
+    return null;
+  }
 }
 
 /**

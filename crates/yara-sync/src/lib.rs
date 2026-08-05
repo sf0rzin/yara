@@ -18,6 +18,7 @@
 
 pub mod api;
 pub mod auth;
+pub mod icons;
 pub mod store;
 
 use std::time::{SystemTime, UNIX_EPOCH};

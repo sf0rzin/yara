@@ -315,6 +315,9 @@ pub struct VaultData {
     /// accessor supplies the default rather than serde.
     #[serde(default)]
     pub auto_lock_seconds: Option<Option<u64>>,
+    /// Whether to fetch site icons. Absent means never asked.
+    #[serde(default)]
+    pub icons_enabled: Option<bool>,
 }
 
 /// What this machine needs to remember between syncs.
@@ -551,6 +554,19 @@ impl UnlockedVault {
 
     pub fn set_auto_lock_seconds(&mut self, seconds: Option<u64>) {
         self.data.auto_lock_seconds = Some(seconds);
+    }
+
+    /// Whether site icons are fetched. On unless turned off.
+    ///
+    /// A default worth stating: it means a fresh vault reaches the icon proxy
+    /// the first time it shows a login. That is the trade every password
+    /// manager with icons makes, and the setting is one click away.
+    pub fn icons_enabled(&self) -> bool {
+        self.data.icons_enabled.unwrap_or(true)
+    }
+
+    pub fn set_icons_enabled(&mut self, enabled: bool) {
+        self.data.icons_enabled = Some(enabled);
     }
 
     pub fn sync_state(&self) -> Option<&SyncState> {
