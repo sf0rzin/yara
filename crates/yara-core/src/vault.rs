@@ -475,11 +475,6 @@ impl UnlockedVault {
         }
     }
 
-    /// Audits the vault's passwords. See [`crate::health`].
-    pub fn health(&self) -> crate::health::VaultHealth {
-        crate::health::audit(&self.data.items)
-    }
-
     /// The most recently updated items first.
     pub fn recent(&self, limit: usize) -> Vec<&Item> {
         let mut items: Vec<&Item> = self.data.items.iter().collect();

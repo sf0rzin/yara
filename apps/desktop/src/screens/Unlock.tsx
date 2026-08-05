@@ -84,12 +84,12 @@ export function Unlock({ mode, onOpen }: UnlockProps): JSX.Element {
 
         <div className="gate__intro">
           <h1 className="gate__title">
-            {isSetup ? "Create your vault" : "yara"}
+            {isSetup ? "Create your vault" : "Welcome back"}
           </h1>
           <p className="gate__sub">
             {isSetup
               ? "Your master password encrypts everything. It is never stored and cannot be reset — if you lose it, the vault is gone."
-              : "Enter your master password to continue."}
+              : "Unlock your local vault to continue."}
           </p>
         </div>
 

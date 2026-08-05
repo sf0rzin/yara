@@ -67,6 +67,8 @@
    * countdown that repeats what a ring already shows.
    */
   --text: rgba(255, 255, 255, 0.92);
+  /* Security-critical secondary copy: executable identity and consequences. */
+  --text-strong-secondary: rgba(255, 255, 255, 0.68);
   --text-secondary: rgba(255, 255, 255, 0.58);
   --text-muted: rgba(255, 255, 255, 0.48);
   --text-disabled: rgba(255, 255, 255, 0.22);
@@ -135,8 +137,8 @@
   --shadow-window: 0 4px 12px -4px rgba(0, 0, 0, 0.4), 0 32px 64px -16px rgba(0, 0, 0, 0.55);
 
   /* Chrome. */
-  --sidebar-width: 236px;
-  --list-width: 332px;
+  --sidebar-width: 220px;
+  --list-width: 360px;
   --titlebar-height: 38px;
   --control-size: 26px;
   --row-height: 30px;

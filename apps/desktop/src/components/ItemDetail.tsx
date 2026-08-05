@@ -1,6 +1,5 @@
 import { useEffect, useState, type JSX } from "react";
 import {
-  deleteItem,
   errorMessage,
   formatCharge,
   formatMoney,
@@ -8,18 +7,14 @@ import {
   revealPassword,
   type ItemSummary,
   type SubscriptionView,
-  type VaultHealth,
 } from "../api";
 import { copySecret } from "../lib/clipboard";
-import { itemHealth } from "../lib/health";
 import { Icon } from "./Icon";
 import { Tile } from "./Tile";
 import { TotpBadge } from "./TotpBadge";
 
 interface ItemDetailProps {
   item: ItemSummary;
-  health: VaultHealth | null;
-  onChanged: () => void;
 }
 
 /**
@@ -33,9 +28,8 @@ interface ItemDetailProps {
  * well. What that buys is a place to put the label that is not a table header,
  * so "Credentials" and "Details" can be quiet without becoming ambiguous.
  */
-export function ItemDetail({ item, health, onChanged }: ItemDetailProps): JSX.Element {
+export function ItemDetail({ item }: ItemDetailProps): JSX.Element {
   const [revealed, setRevealed] = useState<string | null>(null);
-  const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [billing, setBilling] = useState<SubscriptionView | null>(null);
@@ -45,7 +39,6 @@ export function ItemDetail({ item, health, onChanged }: ItemDetailProps): JSX.El
   // at. Keyed on the id so it fires on selection rather than on every render.
   useEffect(() => {
     setRevealed(null);
-    setConfirmingDelete(false);
     setNotice(null);
     setError(null);
     setBilling(null);
@@ -99,30 +92,9 @@ export function ItemDetail({ item, health, onChanged }: ItemDetailProps): JSX.El
     setNotice(`${label} copied.`);
   }
 
-  async function remove() {
-    try {
-      await deleteItem(item.id);
-      onChanged();
-    } catch (caught) {
-      setError(errorMessage(caught));
-    }
-  }
-
   const host = hostOf(item.url);
-  const health_ = itemHealth(item, health);
-
   return (
     <section className="detail" aria-label={item.name}>
-      <header className="detail__toolbar">
-        <span className="detail__toolbar-spacer" />
-        <button type="button" className="icon-button" aria-label="Edit item" disabled>
-          <Icon name="pencil" size={14} />
-        </button>
-        <button type="button" className="icon-button" aria-label="More actions" disabled>
-          <Icon name="ellipsis" size={14} />
-        </button>
-      </header>
-
       <div className="detail__scroll">
         <div className="detail__header">
           <Tile name={item.name} kind={item.kind} url={item.url} large />
@@ -145,8 +117,8 @@ export function ItemDetail({ item, health, onChanged }: ItemDetailProps): JSX.El
           </p>
         )}
 
-        {(item.username || item.hasPassword) && (
-          <Section label="Credentials">
+        {(item.username || item.hasPassword || item.hasTotp) && (
+          <Section label="Access">
             {item.username && (
               <Row label="Username" value={item.username}>
                 <button
@@ -185,33 +157,36 @@ export function ItemDetail({ item, health, onChanged }: ItemDetailProps): JSX.El
                 </button>
               </Row>
             )}
+            {item.hasTotp && (
+              <div className="detail__row detail__row--tall">
+                <span className="detail__label">One-time code</span>
+                <span className="detail__value">
+                  <TotpBadge itemId={item.id} prominent />
+                </span>
+              </div>
+            )}
           </Section>
         )}
 
-        {item.hasTotp && (
-          <Section label="One-time code">
-            <div className="detail__row detail__row--tall">
-              <span className="detail__label">Code</span>
-              <span className="detail__value">
-                <TotpBadge itemId={item.id} prominent />
-              </span>
-            </div>
-          </Section>
-        )}
-
+        {/*
+          Three rows, none of them folded away. A disclosure here would save
+          about sixty pixels on a pane that already scrolls, and it would spend
+          them hiding "Paid with" — the row this whole section exists for.
+        */}
         {billing && (
           <Section label="Billing">
-            {billing.plan && <Row label="Plan" value={billing.plan} />}
             <Row
-              label="Amount"
-              value={`${formatMoney(billing.amountMinor, billing.currency)} ${billing.cadence}`}
+              label="Subscription"
+              value={`${billing.plan ?? "Recurring charge"} · ${formatMoney(
+                billing.amountMinor,
+                billing.currency,
+              )} ${billing.cadence}`}
             />
             <Row label="Next charge" value={formatCharge(billing.nextCharge)} />
             {/*
-              The row this feature exists for. A card that has since been
-              deleted says so rather than showing a blank — blank reads as "no
-              card" when the truth is "a card that is gone", and those lead to
-              opposite actions.
+              A card that has since been deleted says so rather than showing a
+              blank — blank reads as "no card" when the truth is "a card that
+              is gone", and those lead to opposite actions.
             */}
             <Row
               label="Paid with"
@@ -226,39 +201,12 @@ export function ItemDetail({ item, health, onChanged }: ItemDetailProps): JSX.El
           </Section>
         )}
 
-        <Section label="Details">
-          {host && (
-            <Row label="Website" value={host}>
-              <Icon name="chevronRight" size={13} />
-            </Row>
-          )}
+        <Section label="Metadata">
           <Row label="Added" value={formatDate(item.createdAt)} />
           <Row label="Updated" value={formatRelative(item.updatedAt)} />
-          {health_ && <Row label="Health" value={health_} />}
+          {item.tags.length > 0 && <Row label="Tags" value={item.tags.join(" · ")} />}
         </Section>
 
-        {/*
-          Two presses, not a confirm dialog. There is no red to make this look
-          dangerous, so the safeguard is that the first press only changes the
-          words — and the words then say exactly what is about to happen.
-        */}
-        <div className="group group--destructive">
-          <button
-            type="button"
-            className="detail__row detail__row--action"
-            onClick={() => (confirmingDelete ? void remove() : setConfirmingDelete(true))}
-            onBlur={() => setConfirmingDelete(false)}
-          >
-            <span className="detail__action-text">
-              {confirmingDelete ? `Delete ${item.name} for good` : "Delete item…"}
-            </span>
-          </button>
-        </div>
-
-        <p className="detail__provenance">
-          Encrypted under your vault key. Never leaves this machine unless Sync
-          is on.
-        </p>
       </div>
     </section>
   );

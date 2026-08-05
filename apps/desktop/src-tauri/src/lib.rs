@@ -18,7 +18,7 @@ use tauri::{Manager, State};
 use uuid::Uuid;
 use yara_core::{
     Cadence, Item, ItemKind, Strength, Subscription, TotpConfig, UnlockedVault, VaultCounts,
-    VaultFile, VaultHealth,
+    VaultFile,
 };
 
 /// An item as the frontend sees it: everything except the secrets.
@@ -35,13 +35,6 @@ pub struct ItemSummary {
     pub has_totp: bool,
     pub updated_at: u64,
     pub created_at: u64,
-    /// How the password rates, or `None` when there is no password.
-    ///
-    /// Computed here rather than inferred in the interface. The health report
-    /// only names the passwords it considers weak, so a caller working from
-    /// that alone can conclude "not weak" and would have to call anything else
-    /// strong — which overclaims for a merely adequate password.
-    pub strength: Option<Strength>,
 }
 
 impl From<&Item> for ItemSummary {
@@ -57,10 +50,6 @@ impl From<&Item> for ItemSummary {
             has_totp: item.totp.is_some(),
             updated_at: item.updated_at,
             created_at: item.created_at,
-            strength: item
-                .password
-                .as_ref()
-                .map(|password| yara_core::health::strength(password.expose())),
         }
     }
 }
@@ -215,11 +204,6 @@ fn recent_items(
 #[tauri::command]
 fn vault_counts(state: State<'_, Arc<AppState>>) -> CommandResult<VaultCounts> {
     state.with_vault(|vault| Ok(vault.counts()))
-}
-
-#[tauri::command]
-fn vault_health(state: State<'_, Arc<AppState>>) -> CommandResult<VaultHealth> {
-    state.with_vault(|vault| Ok(vault.health()))
 }
 
 /// Reads a two-factor QR code from an image file.
@@ -935,7 +919,6 @@ pub fn run() {
             list_items,
             recent_items,
             vault_counts,
-            vault_health,
             add_item,
             delete_item,
             scan_qr_from_path,

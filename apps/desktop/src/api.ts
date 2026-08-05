@@ -22,14 +22,6 @@ export interface ItemSummary {
   hasTotp: boolean;
   updatedAt: number;
   createdAt: number;
-  /**
-   * How the password rates, or null when there is no password.
-   *
-   * Rated in the backend, where the plaintext is. Deriving it here from the
-   * health report's list of weak passwords would leave everything else to be
-   * called strong, which overclaims for a merely adequate one.
-   */
-  strength: Strength | null;
 }
 
 export interface TotpCode {
@@ -44,23 +36,6 @@ export interface VaultCounts {
   cards: number;
   notes: number;
   authenticator: number;
-}
-
-/** Items sharing one password, by id. */
-export interface ReusedGroup {
-  items: string[];
-}
-
-/**
- * The health report. Every list identifies items by **id**, not by name —
- * two items may share a name, and matching on one would both miss real reuse
- * and invent it between unrelated entries.
- */
-export interface VaultHealth {
-  weak: string[];
-  reused: ReusedGroup[];
-  missingTotp: string[];
-  itemsWithPasswords: number;
 }
 
 /**
@@ -189,8 +164,6 @@ export const recentItems = (limit = 5) =>
   invoke<ItemSummary[]>("recent_items", { limit });
 
 export const vaultCounts = () => invoke<VaultCounts>("vault_counts");
-
-export const vaultHealth = () => invoke<VaultHealth>("vault_health");
 
 export const addItem = (item: NewItem) => invoke<string>("add_item", { item });
 

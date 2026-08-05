@@ -6,13 +6,22 @@ import { TotpBadge } from "./TotpBadge";
 interface ItemRowProps {
   item: ItemSummary;
   selected: boolean;
+  showTotpCode?: boolean;
   onSelect: (id: string) => void;
+  onContextMenu: (item: ItemSummary, x: number, y: number) => void;
 }
 
-export function ItemRow({ item, selected, onSelect }: ItemRowProps): JSX.Element {
-  // Prefer the username, fall back to the host so a row is never subtitle-less
-  // just because no username was recorded.
-  const subtitle = item.username ?? hostOf(item.url);
+export function ItemRow({
+  item,
+  selected,
+  showTotpCode = false,
+  onSelect,
+  onContextMenu,
+}: ItemRowProps): JSX.Element {
+  const host = hostOf(item.url);
+  const subtitle = [item.username, host && host !== item.username ? host : null]
+    .filter(Boolean)
+    .join(" · ");
 
   return (
     <li>
@@ -21,6 +30,20 @@ export function ItemRow({ item, selected, onSelect }: ItemRowProps): JSX.Element
         className="row"
         data-selected={selected || undefined}
         onClick={() => onSelect(item.id)}
+        onContextMenu={(event) => {
+          event.preventDefault();
+          // Shift+F10 and the Menu key raise this with no pointer behind them,
+          // and report (0, 0). Taken literally that puts a menu whose only
+          // entry is Delete in the window corner, nowhere near the row it acts
+          // on — so a keyboard press anchors on the row instead.
+          const rect = event.currentTarget.getBoundingClientRect();
+          const keyboard = event.clientX === 0 && event.clientY === 0;
+          onContextMenu(
+            item,
+            keyboard ? rect.left + rect.width / 3 : event.clientX,
+            keyboard ? rect.bottom - 6 : event.clientY,
+          );
+        }}
       >
         <Tile name={item.name} kind={item.kind} url={item.url} />
 
@@ -29,7 +52,7 @@ export function ItemRow({ item, selected, onSelect }: ItemRowProps): JSX.Element
           {subtitle && <span className="row__sub">{subtitle}</span>}
         </span>
 
-        {item.hasTotp && <TotpBadge itemId={item.id} />}
+        {item.hasTotp && <TotpBadge itemId={item.id} showCode={showTotpCode} />}
       </button>
     </li>
   );
