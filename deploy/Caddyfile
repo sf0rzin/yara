@@ -77,7 +77,7 @@ http://yara.rindexx.cc {
 		file_server browse
 	}
 
-	# Sync service. Not built yet — this returns 502 until yara-sync exists.
+	# Sync service, and the icon proxy alongside it.
 	#
 	# Account ids travel in the request body and session tokens in the
 	# Authorization header, never in the path, so this log records who

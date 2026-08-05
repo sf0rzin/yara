@@ -380,6 +380,39 @@ The mirror is also quiet about the ordinary states — no releases yet, rate
 limited, GitHub down — because none of them are reasons to stop serving the
 manifest already on disk.
 
+## Site icons
+
+The origin proxies favicons so the client never asks a site directly. Asking
+github.com for its icon tells github.com that a vault holds a GitHub account,
+and doing it per row puts the shape of the vault on the wire. Bitwarden runs
+the same arrangement for the same reason.
+
+What it costs, stated rather than buried: this server learns which domains are
+asked about. Requests carry no signature and no account id, so it learns the
+domain and not whose vault — thin cover on a server with few users, which is
+why the app has a setting to turn icons off, and why turning it off deletes
+what was cached.
+
+The endpoint fetches on behalf of an unauthenticated caller, which makes it an
+SSRF vector by construction. Two things hold it:
+
+- The domain is validated identically in the client and the server. It becomes
+  both a URL to fetch and a filename to write, so a slash or a dot-dot would be
+  a path traversal and a scheme or a port would aim the fetch elsewhere.
+- The unit denies the private address ranges at the kernel. String validation
+  cannot catch `10-10-1-20.nip.io` — that is a real name that resolves inside
+  the bridge — and an application-level resolve-then-connect check is racy
+  against DNS rebinding by construction.
+
+**The deny list stands alone, with no `IPAddressAllow` beside it.** An allow
+entry wins over a deny entry, so the paired form matches everything on the
+allow side and never consults the deny list. That was found by testing the
+running service, not by reading: the paired form let it reach 10.10.1.2, and
+the deny-only form refuses the same request.
+
+`127.0.0.0/8` is deliberately absent from the list, which is what lets Caddy
+reach the service.
+
 ## Obligations
 
 Holding other people's data, even encrypted and even for friends, brings a
