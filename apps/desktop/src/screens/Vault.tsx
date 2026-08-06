@@ -15,7 +15,7 @@ import type { ApprovalPrompt } from "../api";
 import { AgentAccess } from "../components/AgentAccess";
 import { ApprovalDialog } from "../components/ApprovalDialog";
 import { Icon, type IconName } from "../components/Icon";
-import { ImportPanel } from "../components/ImportPanel";
+import { ImportDialog } from "../components/ImportPanel";
 import { ItemDetail } from "../components/ItemDetail";
 import { ItemRow } from "../components/ItemRow";
 import { NewItemDialog } from "../components/NewItemDialog";
@@ -57,6 +57,7 @@ export function Vault({ onLock }: VaultProps): JSX.Element {
   const [counts, setCounts] = useState<VaultCounts | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  const [importing, setImporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [approvals, setApprovals] = useState<ApprovalPrompt[]>([]);
   const [autoLock, setAutoLock] = useState<number | null>(FALLBACK_AUTO_LOCK);
@@ -320,6 +321,21 @@ export function Vault({ onLock }: VaultProps): JSX.Element {
                 </h1>
                 <p className="column__sub" aria-live="polite">{listMeta}</p>
               </div>
+              {/* Import belongs to the screen it applies to, and only that
+                  screen. It is an action on the collection, so it sits beside
+                  the other one rather than on top of the list. */}
+              {view.kind === "authenticator" && (
+                <button
+                  type="button"
+                  className="icon-button icon-button--bordered"
+                  aria-label="Import codes"
+                  title="Import codes"
+                  onClick={() => setImporting(true)}
+                >
+                  <Icon name="download" size={14} />
+                </button>
+              )}
+
               <button
                 type="button"
                 className="icon-button icon-button--bordered"
@@ -370,10 +386,6 @@ export function Vault({ onLock }: VaultProps): JSX.Element {
               )}
 
               <UpdateNotice />
-
-              {view.kind === "authenticator" && !searching && (
-                <ImportPanel onImported={() => void refresh()} />
-              )}
 
               {view.kind === "subscriptions" ? (
                 <SubscriptionsView onSelect={setSelectedId} />
@@ -462,6 +474,13 @@ export function Vault({ onLock }: VaultProps): JSX.Element {
             </button>
           </div>
         </div>
+      )}
+
+      {importing && (
+        <ImportDialog
+          onClose={() => setImporting(false)}
+          onImported={() => void refresh()}
+        />
       )}
 
       {creating && (

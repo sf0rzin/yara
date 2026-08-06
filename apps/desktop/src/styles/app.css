@@ -60,17 +60,10 @@
   gap: 1px;
 }
 
-.section-label {
-  padding: var(--space-1) var(--space-3) var(--space-2);
-  color: var(--text-muted);
-  font-size: var(--text-label);
-  font-weight: 600;
-  letter-spacing: var(--tracking-label);
-  text-transform: uppercase;
-}
-
-.section-label--spaced {
-  padding-top: var(--space-4);
+/* Aligned with the icons in the rows below it rather than with their text, so
+   the label reads as the head of the column the icons make. */
+.sidebar__nav .section-label {
+  padding: 0 var(--space-3);
 }
 
 .nav-item {
@@ -193,7 +186,6 @@
   position: relative;
   flex-shrink: 0;
   width: 100%;
-  padding-bottom: var(--space-2);
 }
 
 .popover {
@@ -289,12 +281,27 @@
 
 /* --------------------------------------------------------------- columns */
 
+/*
+ * The title bar's strip is reserved across the whole window, not just over the
+ * sidebar.
+ *
+ * Without this the columns started at the top of the window and their contents
+ * ran through the strip: the list's heading sat at y=16 and its new-item
+ * button at y=24, both crossing a boundary at 38 that they had no idea about.
+ * That is also what forced the drag region down to 14px — it could not be any
+ * taller without swallowing a button.
+ *
+ * The sidebar is deliberately not padded here. Its background runs the full
+ * height, the way a Mac sidebar does, and its wordmark is placed inside the
+ * strip on purpose.
+ */
 .list-column,
 .detail-column,
 .wide-column {
   display: flex;
   flex-direction: column;
   min-width: 0;
+  padding-top: var(--titlebar-height);
   overflow: hidden;
   border-left: 1px solid var(--separator-opaque);
 }
@@ -303,7 +310,7 @@
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  padding: var(--space-4) var(--space-3) var(--space-2) var(--space-4);
+  padding: var(--space-3) var(--space-3) var(--space-2) var(--space-4);
 }
 
 .column__heading {
@@ -1507,17 +1514,30 @@
 
 /* ------------------------------------------------------------- utilities */
 
+/*
+ * One definition, where there used to be two.
+ *
+ * A second `.section-label` further up the file set padding while this one set
+ * margin, and both applied to every label in the app: 8px of padding *and* 8px
+ * of margin below the text, 16px of padding *and* 24px of margin above a
+ * spaced one. The labels ended up floating between their groups rather than
+ * belonging to the one underneath.
+ *
+ * A group label wants to sit close to what it labels and far from what came
+ * before. That is the whole trick, and it only works if the two numbers are
+ * actually different.
+ */
 .section-label {
-  margin-bottom: var(--space-2);
+  margin-bottom: var(--space-1);
   color: var(--text-muted);
   font-size: var(--text-label);
-  font-weight: 500;
+  font-weight: 600;
   letter-spacing: var(--tracking-label);
   text-transform: uppercase;
 }
 
 .section-label--spaced {
-  margin-top: var(--space-6);
+  margin-top: var(--space-5);
 }
 
 .empty {
@@ -1850,12 +1870,18 @@
 
 /*
  * Only the empty stretch drags. It stops short of the controls so a press on
- * close cannot be read as the start of a drag.
+ * close cannot be read as the start of a drag — that is what the flex row
+ * buys, and it is horizontal.
+ *
+ * It used to be 14px tall, which made the window awkward to move: a third of
+ * the strip it appears to occupy. It is full height now, which it can afford
+ * to be because the columns no longer put anything under it — see the
+ * `padding-top` on them. The only thing beneath it is the wordmark, and a
+ * wordmark is not a control.
  */
 .titlebar__drag {
   flex: 1;
-  align-self: flex-start;
-  height: 14px;
+  height: 100%;
   pointer-events: auto;
   -webkit-app-region: drag;
 }

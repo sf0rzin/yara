@@ -180,7 +180,25 @@ fn list_items(
         Ok(vault
             .search(query.as_deref().unwrap_or(""))
             .into_iter()
-            .filter(|item| kind.is_none_or(|wanted| item.kind == wanted))
+            .filter(|item| match kind {
+                // An entry with a code and no password is not a login. The
+                // sidebar offers Logins and Authenticator as two places, and
+                // a two-factor seed imported on its own belongs in the second
+                // one only — it has nothing to log in with.
+                //
+                // Decided here rather than by adding ItemKind::Authenticator,
+                // because the distinction is already in the data and a new
+                // variant would mean migrating vaults to record something
+                // their contents already say. A login that has both a
+                // password and a code stays a login, and still appears under
+                // Authenticator, because that screen answers "show me my
+                // codes" rather than "show me a kind".
+                Some(ItemKind::Login) => {
+                    item.kind == ItemKind::Login && item.password.is_some()
+                }
+                Some(wanted) => item.kind == wanted,
+                None => true,
+            })
             .filter(|item| with_totp != Some(true) || item.totp.is_some())
             .map(ItemSummary::from)
             .collect())

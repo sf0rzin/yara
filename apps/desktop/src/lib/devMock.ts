@@ -96,12 +96,44 @@ const items: MockItem[] = [
     tags: [],
     updatedAt: 1_752_400_000,
   },
+  // What an authenticator export leaves behind: a name and a code, nothing to
+  // log in to. It carries the login kind because there is no other one, and it
+  // is here so the rule that keeps it out of Logins is exercised rather than
+  // assumed.
+  {
+    id: "8",
+    name: "Banco Inter",
+    kind: "login",
+    username: "anthony",
+    password: null,
+    url: null,
+    totpSeed: 53,
+    tags: [],
+    updatedAt: 1_752_300_000,
+  },
 ];
 
 let unlocked = false;
 
 let mockAutoLock: number | null = 15 * 60;
 let mockIcons = true;
+
+const unixNow = () => Math.floor(Date.now() / 1000);
+
+/** Enrolled by default: the screen worth looking at is the one with state on it. */
+let mockSync: {
+  enrolled: boolean;
+  baseUrl: string | null;
+  accountId: string | null;
+  deviceId: string | null;
+  lastSyncedAt: number | null;
+} = {
+  enrolled: true,
+  baseUrl: "https://yara.rindexx.cc",
+  accountId: "9f2c41a8-0e77-4c19-b3de-5a1f8c66d204",
+  deviceId: "d41d8cd9-8f00-3204-a980-0998ecf8427e",
+  lastSyncedAt: unixNow() - 1_800,
+};
 
 interface MockSubscription {
   plan: string | null;
@@ -226,7 +258,13 @@ const handlers: Record<string, (args: Record<string, unknown>) => unknown> = {
 
     return items
       .filter((item) => matches(item, query))
-      .filter((item) => !kind || item.kind === kind)
+      // Mirrors the same rule in `list_items`: a bare two-factor seed carries
+      // the login kind for want of another, and is not a login.
+      .filter((item) =>
+        kind === "login"
+          ? item.kind === "login" && item.password !== null
+          : !kind || item.kind === kind,
+      )
       .filter((item) => withTotp !== true || item.totpSeed !== null)
       .map(summary);
   },
@@ -239,7 +277,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => unknown> = {
 
   vault_counts: () => ({
     total: items.length,
-    logins: items.filter((i) => i.kind === "login").length,
+    logins: items.filter((i) => i.kind === "login" && i.password !== null).length,
     cards: items.filter((i) => i.kind === "card").length,
     notes: items.filter((i) => i.kind === "note").length,
     authenticator: items.filter((i) => i.totpSeed !== null).length,
@@ -272,6 +310,37 @@ const handlers: Record<string, (args: Record<string, unknown>) => unknown> = {
   icons_enabled: () => mockIcons,
   set_icons_enabled: (args) => {
     mockIcons = Boolean(args.enabled);
+  },
+
+  // Sync. Absent until now, which meant the settings screen opened with
+  // "mock: no handler for sync_status" in a loud notice at the top — the
+  // screen could not be looked at, let alone designed.
+  sync_status: () => mockSync,
+  sync_enrol: (args) => {
+    mockSync = {
+      enrolled: true,
+      baseUrl: String(args.baseUrl ?? "https://yara.rindexx.cc"),
+      accountId: "9f2c41a8-0e77-4c19-b3de-5a1f8c66d204",
+      deviceId: "d41d8cd9-8f00-3204-a980-0998ecf8427e",
+      lastSyncedAt: unixNow(),
+    };
+    return {
+      kit: "K7QM-3XPD-9WRF-2LHN-8BVC-4TGS",
+      accountId: mockSync.accountId,
+    };
+  },
+  sync_now: () => {
+    mockSync = { ...mockSync, lastSyncedAt: unixNow() };
+    return { pulled: 2, pushed: 1, conflicts: 0 };
+  },
+  sync_forget: () => {
+    mockSync = {
+      enrolled: false,
+      baseUrl: null,
+      accountId: null,
+      deviceId: null,
+      lastSyncedAt: null,
+    };
   },
 
   auto_lock_seconds: () => mockAutoLock,
