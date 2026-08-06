@@ -4,11 +4,18 @@
 //! carrying a handful of messages does not need compactness, and a protocol
 //! people can read in a log is one they can audit.
 
+use std::borrow::Cow;
+
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 /// Which part of an item is being asked for.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+///
+/// No longer `Copy`, and that is the point: [`Field::Custom`] carries the label
+/// it names, so a grant is pinned to one field rather than to "a custom field".
+/// Two API keys on the same item are two different secrets, and approving one
+/// must not hand over the other.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Field {
     Password,
@@ -16,20 +23,30 @@ pub enum Field {
     /// A generated one-time code. Short-lived and single-use, so materially
     /// less sensitive than the seed behind it, which is never released.
     Totp,
+    /// A field the user added and named.
+    Custom(String),
 }
 
 impl Field {
-    pub fn as_str(&self) -> &'static str {
+    /// How to say this field in a sentence.
+    pub fn label(&self) -> Cow<'_, str> {
         match self {
-            Self::Password => "password",
-            Self::Username => "username",
-            Self::Totp => "one-time code",
+            Self::Password => Cow::Borrowed("password"),
+            Self::Username => Cow::Borrowed("username"),
+            Self::Totp => Cow::Borrowed("one-time code"),
+            Self::Custom(label) => Cow::Borrowed(label.as_str()),
         }
     }
 
     /// Whether handing this out gives away something long-lived.
+    ///
+    /// A custom field counts, without asking whether the user marked it secret.
+    /// The broker would have to read the item to find out, and the answer only
+    /// ever softens the warning — so the wrong guess in that direction is one
+    /// that under-warns about an API key. Erring the other way costs a slightly
+    /// heavier sentence about a merchant ID.
     pub fn is_durable_secret(&self) -> bool {
-        matches!(self, Self::Password)
+        matches!(self, Self::Password | Self::Custom(_))
     }
 }
 
@@ -111,6 +128,12 @@ pub struct ItemRef {
     pub username: Option<String>,
     pub has_password: bool,
     pub has_totp: bool,
+    /// Labels only, never values. An agent has to know a field is called
+    /// "Deploy key" before it can ask for it, which is the same argument that
+    /// makes item names visible here — and a label is metadata in exactly the
+    /// way a name is.
+    #[serde(default)]
+    pub fields: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

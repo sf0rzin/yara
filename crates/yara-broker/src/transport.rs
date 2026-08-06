@@ -48,7 +48,7 @@ pub trait VaultBridge: Send + Sync + 'static {
     fn list(&self, query: Option<&str>) -> Vec<ItemRef>;
     fn resolve(&self, needle: &str) -> Resolution;
     /// The value, or `None` if that field is empty.
-    fn secret(&self, id: Uuid, field: Field) -> Option<SecretString>;
+    fn secret(&self, id: Uuid, field: &Field) -> Option<SecretString>;
 
     /// Writes an audit record into the vault.
     ///
@@ -211,20 +211,23 @@ impl Broker {
 
         // Refuse an empty field before bothering the user with a prompt they
         // would only be approving access to nothing.
-        let has_field = match access.field {
+        let has_field = match &access.field {
             Field::Password => item.has_password,
             Field::Totp => item.has_totp,
             Field::Username => item.username.is_some(),
+            // Compared exactly, not case-insensitively. A grant is pinned to
+            // the label it names, so "API key" and "api key" resolving to the
+            // same field here would let one grant redeem against the other.
+            Field::Custom(label) => item.fields.iter().any(|f| f == label),
         };
         if !has_field {
             return Response::refused(Refusal::FieldEmpty);
         }
 
         let now = crate::now();
-        let existing =
-            self.grants.lock().ok().and_then(|mut store| {
-                store.redeem(item.id, access.field, &access.intent, client, now)
-            });
+        let existing = self.grants.lock().ok().and_then(|mut store| {
+            store.redeem(item.id, &access.field, &access.intent, client, now)
+        });
 
         let outcome = match existing {
             Some(grant) => Outcome::Reused { grant },
@@ -246,7 +249,7 @@ impl Broker {
 
         self.record_access(client, &item, &access, outcome);
 
-        let Some(secret) = self.vault.secret(item.id, access.field) else {
+        let Some(secret) = self.vault.secret(item.id, &access.field) else {
             return Response::refused(Refusal::FieldEmpty);
         };
 
@@ -276,7 +279,7 @@ impl Broker {
         let receiver = self.approver.ask(ApprovalRequest {
             client: client.clone(),
             item: item.clone(),
-            field: access.field,
+            field: access.field.clone(),
             intent: access.intent.clone(),
             reason: access.reason.clone(),
             discloses,
@@ -312,7 +315,7 @@ impl Broker {
             Decision::AllowOnce => Grant::once(
                 item.id,
                 &item.name,
-                access.field,
+                access.field.clone(),
                 scope,
                 client.clone(),
                 now,
@@ -320,7 +323,7 @@ impl Broker {
             Decision::AllowFor { seconds, uses } => Grant::new(
                 item.id,
                 &item.name,
-                access.field,
+                access.field.clone(),
                 scope,
                 client.clone(),
                 now,
@@ -333,7 +336,7 @@ impl Broker {
         // use is not immediately spendable a second time.
         if let Ok(mut store) = self.grants.lock() {
             store.issue(grant);
-            store.redeem(item.id, access.field, &access.intent, client, now);
+            store.redeem(item.id, &access.field, &access.intent, client, now);
         }
 
         Ok(Outcome::Approved)
@@ -351,7 +354,7 @@ impl Broker {
             at: crate::now(),
             client: client.clone(),
             item: item.name.clone(),
-            field: access.field,
+            field: access.field.clone(),
             action: Action::from_intent(&access.intent),
             outcome,
             reason: access.reason.clone(),

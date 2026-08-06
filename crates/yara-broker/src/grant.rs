@@ -208,14 +208,14 @@ impl Grant {
     fn authorises(
         &self,
         item_id: Uuid,
-        field: Field,
+        field: &Field,
         intent: &Intent,
         client: &ClientId,
         now: u64,
     ) -> bool {
         self.is_live(now)
             && self.item_id == item_id
-            && self.field == field
+            && self.field == *field
             && self.scope.covers(intent)
             && self.client.same_program_as(client)
     }
@@ -245,7 +245,7 @@ impl GrantStore {
     pub fn redeem(
         &mut self,
         item_id: Uuid,
-        field: Field,
+        field: &Field,
         intent: &Intent,
         client: &ClientId,
         now: u64,
@@ -345,7 +345,7 @@ mod tests {
         assert!(store
             .redeem(
                 item,
-                Field::Password,
+                &Field::Password,
                 &run_intent(),
                 &client("C:\\bin\\claude.exe"),
                 NOW
@@ -361,7 +361,7 @@ mod tests {
         assert!(store
             .redeem(
                 Uuid::new_v4(),
-                Field::Password,
+                &Field::Password,
                 &run_intent(),
                 &client("C:\\bin\\a.exe"),
                 NOW
@@ -378,7 +378,7 @@ mod tests {
         assert!(store
             .redeem(
                 item,
-                Field::Totp,
+                &Field::Totp,
                 &run_intent(),
                 &client("C:\\bin\\a.exe"),
                 NOW
@@ -402,7 +402,7 @@ mod tests {
             store
                 .redeem(
                     item,
-                    Field::Password,
+                    &Field::Password,
                     &shell_intent(),
                     &client("C:\\bin\\claude.exe"),
                     NOW
@@ -415,7 +415,7 @@ mod tests {
         assert!(store
             .redeem(
                 item,
-                Field::Password,
+                &Field::Password,
                 &run_intent(),
                 &client("C:\\bin\\claude.exe"),
                 NOW
@@ -440,7 +440,7 @@ mod tests {
         assert!(store
             .redeem(
                 item,
-                Field::Password,
+                &Field::Password,
                 &elsewhere,
                 &client("C:\\bin\\a.exe"),
                 NOW
@@ -464,7 +464,7 @@ mod tests {
         assert!(store
             .redeem(
                 item,
-                Field::Password,
+                &Field::Password,
                 &other_script,
                 &client("C:\\bin\\a.exe"),
                 NOW
@@ -481,7 +481,7 @@ mod tests {
         assert!(store
             .redeem(
                 item,
-                Field::Password,
+                &Field::Password,
                 &Intent::Reveal,
                 &client("C:\\bin\\a.exe"),
                 NOW
@@ -498,7 +498,7 @@ mod tests {
         assert!(store
             .redeem(
                 item,
-                Field::Password,
+                &Field::Password,
                 &run_intent(),
                 &client("C:\\bin\\a.exe"),
                 NOW
@@ -515,7 +515,7 @@ mod tests {
         assert!(store
             .redeem(
                 item,
-                Field::Password,
+                &Field::Password,
                 &run_intent(),
                 &client("C:\\bin\\something-else.exe"),
                 NOW
@@ -532,7 +532,7 @@ mod tests {
         assert!(store
             .redeem(
                 item,
-                Field::Password,
+                &Field::Password,
                 &run_intent(),
                 &ClientId::unknown(1234),
                 NOW
@@ -558,7 +558,7 @@ mod tests {
         assert!(store
             .redeem(
                 item,
-                Field::Password,
+                &Field::Password,
                 &run_intent(),
                 &ClientId::unknown(1234),
                 NOW
@@ -575,7 +575,7 @@ mod tests {
         assert!(store
             .redeem(
                 item,
-                Field::Password,
+                &Field::Password,
                 &run_intent(),
                 &client("C:\\bin\\a.exe"),
                 NOW + 901
@@ -608,7 +608,7 @@ mod tests {
         let redeem = |store: &mut GrantStore| {
             store.redeem(
                 item,
-                Field::Password,
+                &Field::Password,
                 &run_intent(),
                 &client("C:\\bin\\a.exe"),
                 NOW,
@@ -636,7 +636,7 @@ mod tests {
         assert!(store
             .redeem(
                 item,
-                Field::Password,
+                &Field::Password,
                 &run_intent(),
                 &client("C:\\bin\\a.exe"),
                 NOW
@@ -645,7 +645,7 @@ mod tests {
         assert!(store
             .redeem(
                 item,
-                Field::Password,
+                &Field::Password,
                 &run_intent(),
                 &client("C:\\bin\\a.exe"),
                 NOW
@@ -690,7 +690,7 @@ mod tests {
         assert!(store
             .redeem(
                 item,
-                Field::Password,
+                &Field::Password,
                 &run_intent(),
                 &client("C:\\bin\\a.exe"),
                 NOW
@@ -707,7 +707,7 @@ mod tests {
         assert!(store
             .redeem(
                 item,
-                Field::Password,
+                &Field::Password,
                 &run_intent(),
                 &client("c:\\bin\\claude.exe"),
                 NOW
@@ -722,5 +722,65 @@ mod tests {
             ClientId::unknown(99).display_name(),
             "unidentified process 99"
         );
+    }
+
+    #[test]
+    fn a_grant_for_one_named_field_does_not_reach_another() {
+        // The whole reason Field carries its label. An item can hold several
+        // secrets — a deploy key and a billing key — and approving access to
+        // one of them is not approving access to the rest.
+        let item = Uuid::new_v4();
+        let mut store = GrantStore::new();
+        store.issue(Grant::new(
+            item,
+            "deploy",
+            Field::Custom("Deploy key".into()),
+            run_scope(),
+            client(r"C:\bin\claude.exe"),
+            NOW,
+            900,
+            5,
+        ));
+
+        let asking_for = |label: &str| {
+            let mut store = store_with(&store);
+            store
+                .redeem(
+                    item,
+                    &Field::Custom(label.into()),
+                    &run_intent(),
+                    &client(r"C:\bin\claude.exe"),
+                    NOW,
+                )
+                .is_some()
+        };
+
+        assert!(asking_for("Deploy key"), "the field it was issued for");
+        assert!(!asking_for("Billing key"), "a different field entirely");
+        // Case is part of the label. Folding it here would let a grant for
+        // one field redeem against another that merely looks like it.
+        assert!(!asking_for("deploy key"), "same letters, different label");
+        // And a named field is not the password, however the item is shaped.
+        assert!(
+            store_with(&store)
+                .redeem(
+                    item,
+                    &Field::Password,
+                    &run_intent(),
+                    &client(r"C:\bin\claude.exe"),
+                    NOW
+                )
+                .is_none(),
+            "a grant for a custom field is not a grant for the password"
+        );
+    }
+
+    /// A fresh store holding the same grants, so each probe starts unspent.
+    fn store_with(source: &GrantStore) -> GrantStore {
+        let mut store = GrantStore::new();
+        for grant in source.live(NOW) {
+            store.issue(grant.clone());
+        }
+        store
     }
 }

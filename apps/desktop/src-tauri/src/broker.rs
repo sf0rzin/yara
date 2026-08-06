@@ -40,6 +40,8 @@ fn to_ref(item: &yara_core::Item) -> ItemRef {
         username: item.username.clone(),
         has_password: item.password.is_some(),
         has_totp: item.totp.is_some(),
+        // Labels, never values.
+        fields: item.fields.iter().map(|f| f.label.clone()).collect(),
     }
 }
 
@@ -90,7 +92,7 @@ impl VaultBridge for VaultView {
             .unwrap_or(Resolution::NotFound)
     }
 
-    fn secret(&self, id: Uuid, field: Field) -> Option<SecretString> {
+    fn secret(&self, id: Uuid, field: &Field) -> Option<SecretString> {
         self.0
             .with_vault(|vault| {
                 let Some(item) = vault.get(id) else {
@@ -106,6 +108,12 @@ impl VaultBridge for VaultView {
                         .as_ref()
                         .and_then(|totp| totp.generate().ok())
                         .map(SecretString::new),
+                    // Matched on the exact label the grant names.
+                    Field::Custom(label) => item
+                        .fields
+                        .iter()
+                        .find(|f| &f.label == label)
+                        .map(|f| f.value.clone()),
                 })
             })
             .unwrap_or(None)
@@ -203,7 +211,7 @@ impl ApprovalPrompt {
             program_path: request.client.executable.clone(),
             pid: request.client.pid,
             item: request.item.name.clone(),
-            field: request.field.as_str().to_string(),
+            field: request.field.label().into_owned(),
             mode: mode.to_string(),
             command,
             env_var,

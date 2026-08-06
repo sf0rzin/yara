@@ -34,6 +34,7 @@ impl FakeVault {
                 username: Some("app".into()),
                 has_password: true,
                 has_totp: false,
+                fields: Vec::new(),
             },
             ambiguous: false,
             stored_audit: Mutex::new(Vec::new()),
@@ -61,11 +62,13 @@ impl VaultBridge for FakeVault {
         }
     }
 
-    fn secret(&self, _id: Uuid, field: Field) -> Option<SecretString> {
+    fn secret(&self, _id: Uuid, field: &Field) -> Option<SecretString> {
         match field {
             Field::Password => Some(SecretString::new(SECRET)),
             Field::Username => self.item.username.clone().map(SecretString::new),
             Field::Totp => None,
+            // Echoes the label, so a test can tell which field it was handed.
+            Field::Custom(label) => Some(SecretString::new(format!("value-of-{label}"))),
         }
     }
 
