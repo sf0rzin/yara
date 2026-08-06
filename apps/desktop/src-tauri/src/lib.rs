@@ -193,9 +193,7 @@ fn list_items(
                 // password and a code stays a login, and still appears under
                 // Authenticator, because that screen answers "show me my
                 // codes" rather than "show me a kind".
-                Some(ItemKind::Login) => {
-                    item.kind == ItemKind::Login && item.password.is_some()
-                }
+                Some(ItemKind::Login) => item.kind == ItemKind::Login && item.password.is_some(),
                 Some(wanted) => item.kind == wanted,
                 None => true,
             })
