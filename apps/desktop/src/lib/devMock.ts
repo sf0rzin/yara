@@ -6,6 +6,21 @@
  * a real vault, and no real cryptography runs.
  */
 
+import { version as runningVersion } from "../../package.json";
+
+/**
+ * The version an offered update would carry.
+ *
+ * Read from the manifest rather than written down, because a literal here goes
+ * stale at every release and then quietly lies about which version is running
+ * — which is the one thing the updates section exists to tell the truth about.
+ */
+function nextVersion(current: string): string {
+  const parts = current.split(".");
+  const patch = Number(parts[2] ?? 0);
+  return [parts[0] ?? "0", parts[1] ?? "0", String(patch + 1)].join(".");
+}
+
 interface MockField {
   label: string;
   value: string;
@@ -336,15 +351,15 @@ const handlers: Record<string, (args: Record<string, unknown>) => unknown> = {
   // `?update=available` offers one, so the notice can be looked at without
   // waiting for a release; `?update=broken` fails, so the sentence that says
   // why can be looked at without breaking anything.
-  "plugin:app|version": () => "0.3.0",
+  "plugin:app|version": () => runningVersion,
   "plugin:updater|check": () => {
     const asked = new URLSearchParams(window.location.search).get("update");
     if (asked === "broken") throw new Error("could not reach the update server");
     if (asked !== "available") return null;
     return {
       available: true,
-      currentVersion: "0.3.0",
-      version: "0.3.1",
+      currentVersion: runningVersion,
+      version: nextVersion(runningVersion),
       date: null,
       body: "One fix, and a smaller sidebar.",
       rid: 1,
