@@ -551,7 +551,7 @@ fn list_grants(broker: State<'_, BrokerHandle>) -> Vec<GrantView> {
         .map(|grant| GrantView {
             id: grant.id,
             item: grant.item_name.clone(),
-            field: grant.field.as_str().to_string(),
+            field: grant.field.label().into_owned(),
             program: grant.client.display_name(),
             scope: if grant.scope.is_reveal() {
                 "reveal".into()

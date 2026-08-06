@@ -96,9 +96,9 @@ fn tools() -> Value {
         {
             "name": "yara_list_items",
             "description": "List the credentials stored in the user's yara vault. \
-    Returns names, usernames, and ids only — never secret values. This needs no \
-    approval, so use it first to find out what exists before requesting access to \
-    anything.",
+    Returns names, usernames, ids, and the labels of any custom fields — never \
+    secret values. This needs no approval, so use it first to find out what exists \
+    before requesting access to anything.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -125,8 +125,9 @@ fn tools() -> Value {
                     },
                     "field": {
                         "type": "string",
-                        "enum": ["password", "username", "totp"],
-                        "description": "Which field to use. Defaults to password.",
+                        "description": "Which field to use: password, username, totp, \
+    or the exact label of a custom field as listed by yara_list_items. Labels are \
+    matched exactly, including case. Defaults to password.",
                     },
                     "env_var": {
                         "type": "string",
@@ -171,8 +172,9 @@ fn tools() -> Value {
                     },
                     "field": {
                         "type": "string",
-                        "enum": ["password", "username", "totp"],
-                        "description": "Which field to reveal. Defaults to password.",
+                        "description": "Which field to reveal: password, username, totp, \
+    or the exact label of a custom field as listed by yara_list_items. Labels are \
+    matched exactly, including case. Defaults to password.",
                     },
                     "reason": {
                         "type": "string",
@@ -258,6 +260,16 @@ fn required_str(args: &Value, key: &str) -> Result<String, String> {
         .ok_or_else(|| format!("{key} is required"))
 }
 
+/// Parses the `field` argument.
+///
+/// The three built-in names are reserved; anything else is taken as the label
+/// of a custom field, which `yara_list_items` reports for each item. Resolving
+/// it is the broker's job — this only decides which question is being asked,
+/// and an item without a field by that name is refused there rather than here.
+///
+/// No case folding. The label is what a grant is pinned to, so treating two
+/// spellings as the same field would let a grant for one redeem against
+/// another that merely looks like it.
 fn field_from(args: &Value) -> Result<Field, String> {
     match args
         .get("field")
@@ -267,9 +279,8 @@ fn field_from(args: &Value) -> Result<Field, String> {
         "password" => Ok(Field::Password),
         "username" => Ok(Field::Username),
         "totp" => Ok(Field::Totp),
-        other => Err(format!(
-            "unknown field {other:?}; expected password, username or totp"
-        )),
+        "" => Err("field cannot be empty".into()),
+        label => Ok(Field::Custom(label.to_string())),
     }
 }
 
@@ -628,6 +639,7 @@ mod tests {
                 username: Some("app".into()),
                 has_password: true,
                 has_totp: false,
+                fields: vec!["Deploy key".into()],
             }],
         });
 
@@ -639,18 +651,47 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn an_unknown_field_name_is_rejected_before_reaching_the_vault() {
+    async fn an_empty_field_name_is_rejected_before_reaching_the_vault() {
         let reply = dispatch(
             &UnreachableBroker,
             call(
                 "yara_reveal_credential",
-                json!({ "item": "db", "field": "secret", "reason": "why" }),
+                json!({ "item": "db", "field": "", "reason": "why" }),
             ),
         )
         .await
         .unwrap();
 
         assert_eq!(reply.error.unwrap().code, codes::INVALID_PARAMS);
+    }
+
+    #[tokio::test]
+    async fn a_misspelt_field_becomes_a_label_and_is_refused_without_a_prompt() {
+        // This used to be rejected here, when the three built-in names were the
+        // only ones there were. Now anything else is a custom label, so a typo
+        // reaches the broker instead of stopping at the door.
+        //
+        // What must not change is that it costs the user nothing: no item has a
+        // field called "pasword", so the broker refuses it as empty rather than
+        // raising a prompt. The guarantee moved a layer down; it did not go.
+        let broker = FakeBroker::new(Response::refused(
+            yara_broker::protocol::Refusal::FieldEmpty,
+        ));
+
+        let result = result_of(
+            &broker,
+            call(
+                "yara_reveal_credential",
+                json!({ "item": "db", "field": "pasword", "reason": "why" }),
+            ),
+        )
+        .await;
+
+        let Request::Access(access) = broker.last() else {
+            panic!("expected an access request");
+        };
+        assert_eq!(access.field, Field::Custom("pasword".into()));
+        assert_eq!(result["isError"], json!(true));
     }
 
     #[tokio::test]
@@ -676,5 +717,56 @@ mod tests {
         let description = reveal["description"].as_str().unwrap();
         assert!(description.contains("yara_run_with_credential"));
         assert!(description.contains("Last resort"));
+    }
+
+    #[tokio::test]
+    async fn a_named_field_reaches_the_broker_as_its_label() {
+        let broker = FakeBroker::new(Response::Revealed {
+            value: "value-of-Deploy key".into(),
+        });
+
+        let _ = result_of(
+            &broker,
+            call(
+                "yara_reveal_credential",
+                json!({ "item": "db-prod", "field": "Deploy key", "reason": "because" }),
+            ),
+        )
+        .await;
+
+        let Request::Access(access) = broker.last() else {
+            panic!("expected an access request");
+        };
+        // Verbatim, with its spaces and its capital D. The label is what a
+        // grant is pinned to, so anything that normalises it here would let a
+        // grant for one field redeem against another.
+        assert_eq!(access.field, Field::Custom("Deploy key".into()));
+    }
+
+    #[tokio::test]
+    async fn the_three_built_in_names_stay_reserved() {
+        for (name, expected) in [
+            ("password", Field::Password),
+            ("username", Field::Username),
+            ("totp", Field::Totp),
+        ] {
+            let broker = FakeBroker::new(Response::Revealed { value: "x".into() });
+            let _ = result_of(
+                &broker,
+                call(
+                    "yara_reveal_credential",
+                    json!({ "item": "i", "field": name, "reason": "r" }),
+                ),
+            )
+            .await;
+
+            let Request::Access(access) = broker.last() else {
+                panic!("expected an access request");
+            };
+            assert_eq!(
+                access.field, expected,
+                "{name} must not become a custom field"
+            );
+        }
     }
 }
