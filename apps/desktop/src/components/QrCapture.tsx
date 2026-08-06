@@ -48,10 +48,22 @@ export function QrCapture({ preview, onScanned }: QrCaptureProps): JSX.Element {
   );
 
   // Ctrl+V anywhere in the dialog, which is how most people will reach for this.
+  //
+  // "Anywhere" has to stop at the text boxes. This listener is on the window
+  // and used to call preventDefault before asking what was on the clipboard,
+  // so every paste in the dialog was treated as a QR image — pasting a
+  // password or a username into its own field silently did nothing, and the
+  // failure looked like the drop zone eating the keystroke.
+  //
+  // The test is the clipboard rather than the focus alone: text going into a
+  // field is the field's, but a snipped code is still ours even if the caret
+  // happens to be sitting in a box.
   useEffect(() => {
     if (preview) return;
 
-    const onPaste = (event: Event) => {
+    const onPaste = (event: ClipboardEvent) => {
+      if (isEditable(event.target) && carriesText(event.clipboardData)) return;
+
       event.preventDefault();
       void run(scanQrFromClipboard);
     };
@@ -195,4 +207,30 @@ export function QrCapture({ preview, onScanned }: QrCaptureProps): JSX.Element {
       )}
     </div>
   );
+}
+
+/**
+ * Whether a paste was aimed at something the user can type into.
+ *
+ * Narrowed with `instanceof` rather than cast: an event target is an element
+ * by convention, not by type, and `matches` does not exist on anything that
+ * is not one.
+ */
+function isEditable(target: EventTarget | null): boolean {
+  return (
+    target instanceof HTMLElement &&
+    (target.matches("input, textarea, select") || target.isContentEditable)
+  );
+}
+
+/**
+ * Whether the clipboard holds text.
+ *
+ * Asked this way round on purpose. A screenshot of a QR code carries no
+ * `text/plain`, so the uncertain case falls to the scanner rather than to the
+ * field — better to attempt a scan that fails with a message than to swallow
+ * the one gesture this component exists for.
+ */
+function carriesText(data: DataTransfer | null): boolean {
+  return Array.from(data?.types ?? []).includes("text/plain");
 }
