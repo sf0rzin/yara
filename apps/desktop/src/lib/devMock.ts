@@ -20,6 +20,7 @@ interface MockItem {
   password: string | null;
   url: string | null;
   notes: string | null;
+  folder: string | null;
   totpSeed: number | null;
   fields: MockField[];
   tags: string[];
@@ -35,6 +36,7 @@ const items: MockItem[] = [
     password: "7Gk!pQ2vXm#9Lz@4Rw",
     url: "https://github.com",
     totpSeed: 11,
+    folder: null,
     notes: null,
     fields: [],
     tags: ["work"],
@@ -48,6 +50,7 @@ const items: MockItem[] = [
     password: "hunter2",
     url: "https://figma.com",
     totpSeed: null,
+    folder: null,
     notes: null,
     fields: [],
     tags: ["design"],
@@ -61,6 +64,7 @@ const items: MockItem[] = [
     password: "Tz3$vLp8Qn!wEr5Ka",
     url: "https://console.aws.amazon.com",
     totpSeed: 29,
+    folder: null,
     notes: null,
     fields: [],
     tags: ["infra"],
@@ -74,6 +78,7 @@ const items: MockItem[] = [
     password: "hunter2",
     url: "https://linear.app",
     totpSeed: null,
+    folder: null,
     notes: null,
     fields: [],
     tags: [],
@@ -87,6 +92,7 @@ const items: MockItem[] = [
     password: "Bq7#mXt2Vd!5Zc9Ln",
     url: "https://dashboard.stripe.com",
     totpSeed: 47,
+    folder: "Work",
     notes: "Live keys rotate every 90 days. The restricted key below is the\nonly one safe to paste into a script.",
     // One of each, so the detail pane has both shapes to render and the rule
     // about which values a listing may carry is exercised.
@@ -105,6 +111,7 @@ const items: MockItem[] = [
     password: null,
     url: null,
     totpSeed: null,
+    folder: null,
     notes: null,
     fields: [],
     tags: [],
@@ -118,6 +125,7 @@ const items: MockItem[] = [
     password: null,
     url: null,
     totpSeed: null,
+    folder: null,
     notes: null,
     fields: [],
     tags: [],
@@ -135,6 +143,7 @@ const items: MockItem[] = [
     password: null,
     url: null,
     totpSeed: 53,
+    folder: null,
     notes: null,
     fields: [],
     tags: [],
@@ -146,6 +155,8 @@ let unlocked = false;
 
 let mockAutoLock: number | null = 15 * 60;
 let mockIcons = true;
+
+let mockFolders: string[] = ["Work", "Personal"];
 
 const unixNow = () => Math.floor(Date.now() / 1000);
 
@@ -238,6 +249,7 @@ const summary = (item: MockItem) => ({
   kind: item.kind,
   username: item.username,
   url: item.url,
+  folder: item.folder,
   tags: item.tags,
   hasPassword: item.password !== null,
   hasTotp: item.totpSeed !== null,
@@ -295,6 +307,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => unknown> = {
     const query = String(args.query ?? "");
     const kind = args.kind as MockItem["kind"] | null;
     const withTotp = args.withTotp as boolean | null;
+    const folder = args.folder as string | null;
 
     return items
       .filter((item) => matches(item, query))
@@ -306,6 +319,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => unknown> = {
           : !kind || item.kind === kind,
       )
       .filter((item) => withTotp !== true || item.totpSeed !== null)
+      .filter((item) => !folder || item.folder === folder)
       .map(summary);
   },
 
@@ -314,6 +328,67 @@ const handlers: Record<string, (args: Record<string, unknown>) => unknown> = {
       .sort((a, b) => b.updatedAt - a.updatedAt)
       .slice(0, Number(args.limit ?? 5))
       .map(summary),
+
+  folders: () => mockFolders,
+
+  create_folder: (args) => {
+    const name = String(args.name ?? "").trim();
+    if (name && !mockFolders.includes(name)) mockFolders.push(name);
+  },
+
+  rename_folder: (args) => {
+    const from = String(args.from);
+    const to = String(args.to).trim();
+    const at = mockFolders.indexOf(from);
+    if (at < 0) throw new Error("no folder called " + from);
+    if (mockFolders.includes(to)) throw new Error(to + " already exists");
+    mockFolders[at] = to;
+    // Both halves, like the vault: an item still pointing at the old name is
+    // an item that has quietly left its folder.
+    for (const item of items) if (item.folder === from) item.folder = to;
+  },
+
+  delete_folder: (args) => {
+    const name = String(args.name);
+    mockFolders = mockFolders.filter((f) => f !== name);
+    let freed = 0;
+    // The items outlive the folder.
+    for (const item of items) {
+      if (item.folder === name) {
+        item.folder = null;
+        freed += 1;
+      }
+    }
+    return freed;
+  },
+
+  reorder_folders: (args) => {
+    const names = (args.names as string[]) ?? [];
+    const kept = names.filter((n) => mockFolders.includes(n));
+    mockFolders = [...kept, ...mockFolders.filter((n) => !kept.includes(n))];
+  },
+
+  set_item_folder: (args) => {
+    const item = items.find((i) => i.id === String(args.id));
+    if (!item) throw new Error("item not found");
+    const folder = (args.folder as string | null) ?? null;
+    if (folder && !mockFolders.includes(folder)) {
+      throw new Error("no folder called " + folder);
+    }
+    item.folder = folder;
+  },
+
+  reorder_items: (args) => {
+    const ids = (args.ids as string[]) ?? [];
+    const moved: MockItem[] = [];
+    for (const id of ids) {
+      const at = items.findIndex((i) => i.id === id);
+      if (at >= 0) moved.push(items.splice(at, 1)[0]);
+    }
+    // What the caller did not mention keeps its relative place, rather than
+    // being dropped by a stale list.
+    items.unshift(...moved);
+  },
 
   vault_counts: () => ({
     total: items.length,
@@ -416,6 +491,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => unknown> = {
       password: (item.password as string) ?? null,
       url: (item.url as string) ?? null,
       notes: (item.notes as string) ?? null,
+      folder: (item.folder as string) ?? null,
       totpSeed: item.use_scanned_totp || item.totp_uri ? 17 : null,
       fields: ((item.fields as MockField[]) ?? []).map((f) => ({ ...f })),
       tags: (item.tags as string[]) ?? [],

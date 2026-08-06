@@ -14,10 +14,20 @@ interface SidebarProps {
   view: View;
   lockRemainingMs: number;
   autoLockSeconds: number | null;
+  folders: string[];
   onSelect: (view: View) => void;
   onChangeAutoLock: (seconds: number | null) => void;
   onLock: () => void;
+  onCreateFolder: (name: string) => void;
+  onRenameFolder: (from: string, to: string) => void;
+  onDeleteFolder: (name: string) => void;
+  onReorderFolders: (names: string[]) => void;
+  onDropItem: (itemId: string, folder: string | null) => void;
 }
+
+/** What a drag is carrying. Read on drop to tell an item from a folder. */
+const ITEM_DRAG = "application/x-yara-item";
+const FOLDER_DRAG = "application/x-yara-folder";
 
 function isSameView(a: View, b: View): boolean {
   return (
@@ -30,11 +40,21 @@ export function Sidebar({
   view,
   lockRemainingMs,
   autoLockSeconds,
+  folders,
   onSelect,
   onChangeAutoLock,
   onLock,
+  onCreateFolder,
+  onRenameFolder,
+  onDeleteFolder,
+  onReorderFolders,
+  onDropItem,
 }: SidebarProps): JSX.Element {
   const [menuOpen, setMenuOpen] = useState(false);
+  /** The folder a drag is currently over, so exactly one row can light up. */
+  const [dropTarget, setDropTarget] = useState<string | null>(null);
+  const [renaming, setRenaming] = useState<string | null>(null);
+  const [adding, setAdding] = useState(false);
   // Collections are ways of looking at the vault. Subscriptions sits here
   // rather than under Types because a subscription is an attachment on a
   // login, not a kind of item — a charge with no account behind it is trivia.
@@ -104,6 +124,144 @@ export function Sidebar({
 
         <p className="section-label section-label--spaced">Types</p>
         <ul>{types.map(renderEntry)}</ul>
+
+        <div className="folders__head">
+          <p className="section-label section-label--spaced">Folders</p>
+          <button
+            type="button"
+            className="icon-button icon-button--tiny"
+            aria-label="New folder"
+            title="New folder"
+            onClick={() => setAdding(true)}
+          >
+            <Icon name="plus" size={12} />
+          </button>
+        </div>
+
+        <ul>
+          {folders.map((folder) => {
+            const active = view.kind === "folder" && view.name === folder;
+            if (renaming === folder) {
+              return (
+                <li key={folder}>
+                  <FolderInput
+                    initial={folder}
+                    onCommit={(name) => {
+                      setRenaming(null);
+                      if (name && name !== folder) onRenameFolder(folder, name);
+                    }}
+                    onCancel={() => setRenaming(null)}
+                  />
+                </li>
+              );
+            }
+
+            return (
+              <li key={folder}>
+                <button
+                  type="button"
+                  className="nav-item"
+                  data-active={active || undefined}
+                  data-drop={dropTarget === folder || undefined}
+                  aria-current={active ? "page" : undefined}
+                  draggable
+                  onClick={() => onSelect({ kind: "folder", name: folder })}
+                  onDoubleClick={() => setRenaming(folder)}
+                  onDragStart={(event) => {
+                    event.dataTransfer.setData(FOLDER_DRAG, folder);
+                    event.dataTransfer.effectAllowed = "move";
+                  }}
+                  onDragOver={(event) => {
+                    // Only claim the drop if the drag is carrying something
+                    // this row can accept, or the cursor lies about it.
+                    const types = event.dataTransfer.types;
+                    if (!types.includes(ITEM_DRAG) && !types.includes(FOLDER_DRAG)) return;
+                    event.preventDefault();
+                    event.dataTransfer.dropEffect = "move";
+                    setDropTarget(folder);
+                  }}
+                  onDragLeave={() => setDropTarget((at) => (at === folder ? null : at))}
+                  onDrop={(event) => {
+                    event.preventDefault();
+                    setDropTarget(null);
+
+                    const item = event.dataTransfer.getData(ITEM_DRAG);
+                    if (item) {
+                      onDropItem(item, folder);
+                      return;
+                    }
+
+                    const moved = event.dataTransfer.getData(FOLDER_DRAG);
+                    if (moved && moved !== folder) {
+                      const without = folders.filter((f) => f !== moved);
+                      const at = without.indexOf(folder);
+                      onReorderFolders([
+                        ...without.slice(0, at),
+                        moved,
+                        ...without.slice(at),
+                      ]);
+                    }
+                  }}
+                >
+                  <Icon name="folder" size={16} />
+                  <span className="nav-item__label">{folder}</span>
+                </button>
+              </li>
+            );
+          })}
+
+          {adding && (
+            <li>
+              <FolderInput
+                initial=""
+                onCommit={(name) => {
+                  setAdding(false);
+                  if (name) onCreateFolder(name);
+                }}
+                onCancel={() => setAdding(false)}
+              />
+            </li>
+          )}
+
+          {/*
+            Dropping here takes an item out of its folder. Without it the only
+            way back out would be the edit dialog, and a thing you can drag in
+            should be draggable out.
+          */}
+          <li>
+            <button
+              type="button"
+              className="nav-item nav-item--loose"
+              data-drop={dropTarget === "" || undefined}
+              onClick={() => onSelect({ kind: "all" })}
+              onDragOver={(event) => {
+                if (!event.dataTransfer.types.includes(ITEM_DRAG)) return;
+                event.preventDefault();
+                setDropTarget("");
+              }}
+              onDragLeave={() => setDropTarget((at) => (at === "" ? null : at))}
+              onDrop={(event) => {
+                event.preventDefault();
+                setDropTarget(null);
+                const item = event.dataTransfer.getData(ITEM_DRAG);
+                if (item) onDropItem(item, null);
+              }}
+            >
+              <Icon name="allItems" size={16} />
+              <span className="nav-item__label">No folder</span>
+            </button>
+          </li>
+        </ul>
+
+        {view.kind === "folder" && (
+          <button
+            type="button"
+            className="linkish folders__delete"
+            onClick={() => onDeleteFolder(view.name)}
+          >
+            Delete “{view.name}” — its items stay
+          </button>
+        )}
       </nav>
 
       {/*
@@ -160,5 +318,46 @@ export function Sidebar({
         </button>
       </div>
     </aside>
+  );
+}
+
+/**
+ * The inline box for naming a folder.
+ *
+ * Commits on Enter or on losing focus, cancels on Escape. A dialog for one
+ * short string would be three interactions where one will do, and naming a
+ * folder is not a decision that wants confirming.
+ */
+function FolderInput({
+  initial,
+  onCommit,
+  onCancel,
+}: {
+  initial: string;
+  onCommit: (name: string) => void;
+  onCancel: () => void;
+}): JSX.Element {
+  const [value, setValue] = useState(initial);
+
+  return (
+    <input
+      className="input folders__input"
+      value={value}
+      autoFocus
+      placeholder="Folder name"
+      aria-label="Folder name"
+      onChange={(event) => setValue(event.target.value)}
+      onBlur={() => onCommit(value.trim())}
+      onKeyDown={(event) => {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          onCommit(value.trim());
+        }
+        if (event.key === "Escape") {
+          event.preventDefault();
+          onCancel();
+        }
+      }}
+    />
   );
 }

@@ -159,6 +159,15 @@ pub struct Item {
     /// Defaulted so vaults written before fields existed still load.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub fields: Vec<Field>,
+    /// Which folder this item is filed in, or `None` for none.
+    ///
+    /// One folder, not many. Folders are where a thing lives; the many-valued
+    /// version of that idea is a tag, and having both would ask the user to
+    /// keep two mental models of the same vault.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub folder: Option<String>,
+    /// Kept only to migrate vaults written when this was the organising idea.
+    /// Read on open, folded into `folder`, and never written again.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tags: Vec<String>,
     /// What this login charges you, if it charges you.
@@ -248,6 +257,7 @@ impl Item {
             notes: None,
             totp: None,
             fields: Vec::new(),
+            folder: None,
             tags: Vec::new(),
             subscription: None,
             created_at: now,
@@ -370,6 +380,41 @@ pub struct VaultData {
     /// Whether to fetch site icons. Absent means never asked.
     #[serde(default)]
     pub icons_enabled: Option<bool>,
+    /// Folder names, in the order the user put them.
+    ///
+    /// Stored rather than derived from the items, for two reasons: a folder
+    /// has to be able to exist while empty, and the order is a decision the
+    /// user made that nothing in the items records.
+    #[serde(default)]
+    pub folders: Vec<String>,
+}
+
+/// Folds a vault written when tags were the organising idea into folders.
+///
+/// Runs on every open and is idempotent: an item that already has a folder is
+/// left alone, and tags are cleared once read so the next write drops them.
+///
+/// The first tag wins when there are several. Nothing in the old model said
+/// which of an item's tags was the important one, so there is no better answer
+/// than "the one it was given first" — and taking one is better than dropping
+/// the item into no folder at all, which is what ignoring the field would do.
+fn migrate_tags_into_folders(data: &mut VaultData) {
+    for item in &mut data.items {
+        if item.folder.is_none() {
+            item.folder = item.tags.first().cloned();
+        }
+        item.tags.clear();
+    }
+
+    // Folders discovered this way still need an order, and the only one
+    // available is the order the items themselves are in.
+    for item in &data.items {
+        if let Some(folder) = &item.folder {
+            if !data.folders.contains(folder) {
+                data.folders.push(folder.clone());
+            }
+        }
+    }
 }
 
 /// What this machine needs to remember between syncs.
@@ -465,7 +510,8 @@ impl UnlockedVault {
         let vault_key = Key::from_slice(&vault_key_bytes)?;
 
         let plaintext = crypto::open(&vault_key, &file.payload, &aad)?;
-        let data: VaultData = serde_json::from_slice(&plaintext)?;
+        let mut data: VaultData = serde_json::from_slice(&plaintext)?;
+        migrate_tags_into_folders(&mut data);
 
         Ok(Self {
             kdf: file.kdf.clone(),
@@ -688,6 +734,108 @@ impl UnlockedVault {
         edit(item);
         item.updated_at = unix_now();
         Ok(())
+    }
+
+    pub fn folders(&self) -> &[String] {
+        &self.data.folders
+    }
+
+    /// Creates a folder, or does nothing if one by that name exists.
+    ///
+    /// Returns whether it was new, so a caller can tell "created" from
+    /// "already there" without comparing lengths.
+    pub fn create_folder(&mut self, name: impl Into<String>) -> bool {
+        let name = name.into();
+        if name.trim().is_empty() || self.data.folders.contains(&name) {
+            return false;
+        }
+        self.data.folders.push(name);
+        true
+    }
+
+    /// Renames a folder and every item filed in it.
+    ///
+    /// Both halves or neither: an item pointing at a folder name that no
+    /// longer exists is an item that has quietly left its folder.
+    pub fn rename_folder(&mut self, from: &str, to: impl Into<String>) -> Result<()> {
+        let to = to.into();
+        if to.trim().is_empty() {
+            return Err(Error::InvalidFolder("a folder needs a name".into()));
+        }
+        if self.data.folders.iter().any(|f| f == &to) {
+            return Err(Error::InvalidFolder(format!("{to} already exists")));
+        }
+        let Some(slot) = self.data.folders.iter_mut().find(|f| f.as_str() == from) else {
+            return Err(Error::InvalidFolder(format!("no folder called {from}")));
+        };
+
+        *slot = to.clone();
+        for item in &mut self.data.items {
+            if item.folder.as_deref() == Some(from) {
+                item.folder = Some(to.clone());
+                item.updated_at = unix_now();
+            }
+        }
+        Ok(())
+    }
+
+    /// Removes a folder. Its items are not removed — they leave the folder.
+    ///
+    /// Deleting a container must never delete its contents. The folder is a
+    /// filing decision; the credentials are the thing worth keeping, and a
+    /// misclick on a folder cannot be allowed to cost them.
+    pub fn delete_folder(&mut self, name: &str) -> usize {
+        self.data.folders.retain(|f| f != name);
+        let mut freed = 0;
+        for item in &mut self.data.items {
+            if item.folder.as_deref() == Some(name) {
+                item.folder = None;
+                item.updated_at = unix_now();
+                freed += 1;
+            }
+        }
+        freed
+    }
+
+    /// Reorders folders to match `names`.
+    ///
+    /// Anything the caller did not mention keeps its relative order at the
+    /// end, so a stale list from a client that has not seen a new folder
+    /// cannot delete it by omission.
+    pub fn reorder_folders(&mut self, names: &[String]) {
+        let mut ordered: Vec<String> = names
+            .iter()
+            .filter(|name| self.data.folders.contains(name))
+            .cloned()
+            .collect();
+        for existing in &self.data.folders {
+            if !ordered.contains(existing) {
+                ordered.push(existing.clone());
+            }
+        }
+        self.data.folders = ordered;
+    }
+
+    pub fn set_folder(&mut self, id: Uuid, folder: Option<String>) -> Result<()> {
+        if let Some(name) = &folder {
+            if !self.data.folders.contains(name) {
+                return Err(Error::InvalidFolder(format!("no folder called {name}")));
+            }
+        }
+        self.update(id, |item| item.folder = folder)
+    }
+
+    /// Reorders items to match `ids`, by the same rule as folders: what is not
+    /// mentioned keeps its relative order at the end rather than disappearing.
+    pub fn reorder_items(&mut self, ids: &[Uuid]) {
+        let mut ordered: Vec<Item> = Vec::with_capacity(self.data.items.len());
+        for id in ids {
+            if let Some(at) = self.data.items.iter().position(|item| item.id == *id) {
+                ordered.push(self.data.items.remove(at));
+            }
+        }
+        ordered.append(&mut self.data.items);
+        self.data.items = ordered;
     }
 
     pub fn remove(&mut self, id: Uuid) -> Result<Item> {
@@ -1133,6 +1281,70 @@ mod tests {
 
         // The password must not be reachable through search.
         assert_eq!(vault.search("zebra").len(), 0);
+    }
+
+    #[test]
+    fn deleting_a_folder_keeps_everything_that_was_in_it() {
+        // The rule worth writing down. A folder is a filing decision; the
+        // credentials are the thing worth keeping, and a misclick on a
+        // container must never cost its contents.
+        let mut vault = UnlockedVault::create_with_params("master", fast()).unwrap();
+        vault.create_folder("Work");
+        let a = vault.add(Item::new("GitHub"));
+        let b = vault.add(Item::new("Figma"));
+        vault.set_folder(a, Some("Work".into())).unwrap();
+        vault.set_folder(b, Some("Work".into())).unwrap();
+
+        assert_eq!(vault.delete_folder("Work"), 2);
+        assert_eq!(vault.items().len(), 2, "the items outlive the folder");
+        assert!(vault.get(a).unwrap().folder.is_none());
+        assert!(vault.folders().is_empty());
+    }
+
+    #[test]
+    fn renaming_a_folder_carries_its_items_with_it() {
+        let mut vault = UnlockedVault::create_with_params("master", fast()).unwrap();
+        vault.create_folder("Wrok");
+        let id = vault.add(Item::new("GitHub"));
+        vault.set_folder(id, Some("Wrok".into())).unwrap();
+
+        vault.rename_folder("Wrok", "Work").unwrap();
+
+        assert_eq!(vault.folders(), ["Work"]);
+        // The half that is easy to forget: an item still pointing at the old
+        // name is an item that has quietly left its folder.
+        assert_eq!(vault.get(id).unwrap().folder.as_deref(), Some("Work"));
+    }
+
+    #[test]
+    fn reordering_never_loses_what_the_caller_did_not_mention() {
+        // A client with a stale list must not be able to delete by omission.
+        let mut vault = UnlockedVault::create_with_params("master", fast()).unwrap();
+        let a = vault.add(Item::new("A"));
+        let b = vault.add(Item::new("B"));
+        let c = vault.add(Item::new("C"));
+
+        vault.reorder_items(&[c, a]);
+
+        let order: Vec<&str> = vault.items().iter().map(|i| i.name.as_str()).collect();
+        assert_eq!(order, ["C", "A", "B"], "B keeps its place at the end");
+        assert_eq!(vault.items().len(), 3);
+        let _ = b;
+    }
+
+    #[test]
+    fn a_vault_filed_by_tags_opens_filed_by_folders() {
+        let mut vault = UnlockedVault::create_with_params("master", fast()).unwrap();
+        let id = vault.add(Item::new("GitHub"));
+        // Written the way an older build would have.
+        vault.get_mut(id).unwrap().tags = vec!["Work".into(), "Ignored".into()];
+
+        let file = vault.seal().unwrap();
+        let reopened = UnlockedVault::open(&file, "master").unwrap();
+
+        assert_eq!(reopened.get(id).unwrap().folder.as_deref(), Some("Work"));
+        assert!(reopened.get(id).unwrap().tags.is_empty());
+        assert_eq!(reopened.folders(), ["Work"], "and the folder exists");
     }
 
     #[test]

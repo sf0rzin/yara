@@ -25,6 +25,9 @@ pub enum Error {
     #[error("malformed vault: {0}")]
     Malformed(&'static str),
 
+    #[error("{0}")]
+    InvalidFolder(String),
+
     /// Says nothing about which character was wrong.
     ///
     /// Someone typing a kit from paper wants to know it did not work, and an

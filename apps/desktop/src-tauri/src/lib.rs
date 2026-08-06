@@ -30,6 +30,7 @@ pub struct ItemSummary {
     pub kind: ItemKind,
     pub username: Option<String>,
     pub url: Option<String>,
+    pub folder: Option<String>,
     pub tags: Vec<String>,
     pub has_password: bool,
     pub has_totp: bool,
@@ -45,6 +46,7 @@ impl From<&Item> for ItemSummary {
             kind: item.kind,
             username: item.username.clone(),
             url: item.url.clone(),
+            folder: item.folder.clone(),
             tags: item.tags.clone(),
             has_password: item.password.is_some(),
             has_totp: item.totp.is_some(),
@@ -230,6 +232,7 @@ fn list_items(
     query: Option<String>,
     kind: Option<ItemKind>,
     with_totp: Option<bool>,
+    folder: Option<String>,
 ) -> CommandResult<Vec<ItemSummary>> {
     state.with_vault(|vault| {
         Ok(vault
@@ -253,6 +256,10 @@ fn list_items(
                 None => true,
             })
             .filter(|item| with_totp != Some(true) || item.totp.is_some())
+            .filter(|item| match &folder {
+                Some(wanted) => item.folder.as_ref() == Some(wanted),
+                None => true,
+            })
             .map(ItemSummary::from)
             .collect())
     })
@@ -270,6 +277,62 @@ fn recent_items(
             .map(ItemSummary::from)
             .collect())
     })
+}
+
+#[tauri::command]
+fn folders(state: State<'_, Arc<AppState>>) -> CommandResult<Vec<String>> {
+    state.with_vault(|vault| Ok(vault.folders().to_vec()))
+}
+
+#[tauri::command]
+fn create_folder(state: State<'_, Arc<AppState>>, name: String) -> CommandResult<()> {
+    state.with_vault_mut(|vault| {
+        vault.create_folder(name.trim());
+        Ok(())
+    })?;
+    state.save()
+}
+
+#[tauri::command]
+fn rename_folder(state: State<'_, Arc<AppState>>, from: String, to: String) -> CommandResult<()> {
+    state.with_vault_mut(|vault| vault.rename_folder(&from, to.trim()).map_err(to_message))?;
+    state.save()
+}
+
+/// Removes a folder. Its items stay in the vault, without a folder.
+#[tauri::command]
+fn delete_folder(state: State<'_, Arc<AppState>>, name: String) -> CommandResult<usize> {
+    let freed = state.with_vault_mut(|vault| Ok(vault.delete_folder(&name)))?;
+    state.save()?;
+    Ok(freed)
+}
+
+#[tauri::command]
+fn reorder_folders(state: State<'_, Arc<AppState>>, names: Vec<String>) -> CommandResult<()> {
+    state.with_vault_mut(|vault| {
+        vault.reorder_folders(&names);
+        Ok(())
+    })?;
+    state.save()
+}
+
+#[tauri::command]
+fn set_item_folder(
+    state: State<'_, Arc<AppState>>,
+    id: Uuid,
+    folder: Option<String>,
+) -> CommandResult<()> {
+    state.with_vault_mut(|vault| vault.set_folder(id, folder).map_err(to_message))?;
+    state.save()
+}
+
+#[tauri::command]
+fn reorder_items(state: State<'_, Arc<AppState>>, ids: Vec<Uuid>) -> CommandResult<()> {
+    state.with_vault_mut(|vault| {
+        vault.reorder_items(&ids);
+        Ok(())
+    })?;
+    state.save()
 }
 
 #[tauri::command]
@@ -1094,6 +1157,13 @@ pub fn run() {
             add_item,
             update_item,
             item_extras,
+            folders,
+            create_folder,
+            rename_folder,
+            delete_folder,
+            reorder_folders,
+            set_item_folder,
+            reorder_items,
             reveal_field,
             reveal_notes,
             delete_item,

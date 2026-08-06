@@ -1,12 +1,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type JSX } from "react";
 import {
   autoLockSeconds as readAutoLock,
+  createFolder,
+  deleteFolder,
   deleteItem,
   errorMessage,
+  folders as listFolders,
   listItems,
   lockVault,
   recentItems,
+  renameFolder,
+  reorderFolders,
+  reorderItems,
   setAutoLockSeconds,
+  setItemFolder,
   vaultCounts,
   type ItemSummary,
   type VaultCounts,
@@ -65,6 +72,11 @@ export function Vault({ onLock }: VaultProps): JSX.Element {
   const [loading, setLoading] = useState(true);
   const [showLoading, setShowLoading] = useState(false);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
+  const [folderNames, setFolderNames] = useState<string[]>([]);
+  const [dragging, setDragging] = useState<string | null>(null);
+  const [dragOver, setDragOver] = useState<{ id: string; edge: "above" | "below" } | null>(
+    null,
+  );
 
   const searchRef = useRef<HTMLInputElement>(null);
   const requestRef = useRef(0);
@@ -105,6 +117,7 @@ export function Vault({ onLock }: VaultProps): JSX.Element {
               query,
               kind: view.kind === "type" ? view.itemKind : undefined,
               withTotp: view.kind === "authenticator" ? true : undefined,
+              folder: view.kind === "folder" ? view.name : undefined,
             }),
         vaultCounts(),
       ]);
@@ -121,9 +134,22 @@ export function Vault({ onLock }: VaultProps): JSX.Element {
     }
   }, [query, view]);
 
+  const refreshFolders = useCallback(async () => {
+    try {
+      setFolderNames(await listFolders());
+    } catch {
+      // A vault that cannot list folders still lists items; the sidebar just
+      // shows none rather than the whole screen failing.
+    }
+  }, []);
+
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  useEffect(() => {
+    void refreshFolders();
+  }, [refreshFolders]);
 
   useEffect(() => {
     if (!loading) {
@@ -256,6 +282,47 @@ export function Vault({ onLock }: VaultProps): JSX.Element {
     return () => window.removeEventListener("keydown", onKey);
   }, [closeContextMenu, contextMenu]);
 
+  /**
+   * Lands a dragged row next to the one it was dropped on.
+   *
+   * The whole list is sent, not just the pair that moved. The vault stores
+   * order as the order of its items, so "put A after B" only means something
+   * once expressed as a sequence — and sending the sequence the user is
+   * looking at means the result is what they saw, even when the view is
+   * filtered to a folder.
+   */
+  function dropOnRow(targetId: string) {
+    const source = dragging;
+    setDragging(null);
+    const edge = dragOver?.edge ?? "above";
+    setDragOver(null);
+
+    if (!source || source === targetId) return;
+
+    const without = items.filter((item) => item.id !== source).map((item) => item.id);
+    const at = without.indexOf(targetId);
+    if (at < 0) return;
+
+    const next = [
+      ...without.slice(0, edge === "above" ? at : at + 1),
+      source,
+      ...without.slice(edge === "above" ? at : at + 1),
+    ];
+
+    // Reordered on screen first. A row that snaps back while the write lands
+    // reads as the drag having failed.
+    setItems((current) =>
+      next
+        .map((id) => current.find((item) => item.id === id))
+        .filter((item): item is ItemSummary => item !== undefined),
+    );
+
+    void reorderItems(next).catch((caught) => {
+      setError(errorMessage(caught));
+      void refresh();
+    });
+  }
+
   function openContextMenu(item: ItemSummary, x: number, y: number) {
     menuOpenerRef.current = document.activeElement as HTMLElement | null;
     setSelectedId(item.id);
@@ -310,6 +377,47 @@ export function Vault({ onLock }: VaultProps): JSX.Element {
           setSelectedId(null);
         }}
         onLock={lock}
+        folders={folderNames}
+        onCreateFolder={(name) => {
+          void createFolder(name)
+            .then(refreshFolders)
+            .catch((caught) => setError(errorMessage(caught)));
+        }}
+        onRenameFolder={(from, to) => {
+          void renameFolder(from, to)
+            .then(async () => {
+              await refreshFolders();
+              // The open view names the folder it is showing, so it has to
+              // follow the rename or it points at something gone.
+              if (view.kind === "folder" && view.name === from) {
+                setView({ kind: "folder", name: to });
+              }
+              await refresh();
+            })
+            .catch((caught) => setError(errorMessage(caught)));
+        }}
+        onDeleteFolder={(name) => {
+          void deleteFolder(name)
+            .then(async () => {
+              await refreshFolders();
+              setView({ kind: "all" });
+            })
+            .catch((caught) => setError(errorMessage(caught)));
+        }}
+        onReorderFolders={(names) => {
+          // Applied locally first, because a drag that snaps back while the
+          // write lands reads as a failure.
+          setFolderNames(names);
+          void reorderFolders(names).catch((caught) => {
+            setError(errorMessage(caught));
+            void refreshFolders();
+          });
+        }}
+        onDropItem={(itemId, folder) => {
+          void setItemFolder(itemId, folder)
+            .then(refresh)
+            .catch((caught) => setError(errorMessage(caught)));
+        }}
       />
 
       {showsItems ? (
@@ -410,8 +518,16 @@ export function Vault({ onLock }: VaultProps): JSX.Element {
                       item={item}
                       selected={item.id === selectedId}
                       showTotpCode={view.kind === "authenticator"}
+                      dropEdge={dragOver?.id === item.id ? dragOver.edge : undefined}
                       onSelect={setSelectedId}
                       onContextMenu={openContextMenu}
+                      onDragStart={setDragging}
+                      onDragOverRow={(id, edge) => setDragOver({ id, edge })}
+                      onDropRow={dropOnRow}
+                      onDragEnd={() => {
+                        setDragging(null);
+                        setDragOver(null);
+                      }}
                     />
                   ))}
                 </ul>

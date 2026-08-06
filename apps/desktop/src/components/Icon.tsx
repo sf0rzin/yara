@@ -125,6 +125,9 @@ const paths = {
     </>
   ),
   chevronRight: <path d="M6 3.5 10.5 8 6 12.5" />,
+  folder: (
+    <path d="M1.75 4.25a1 1 0 0 1 1-1h3l1.5 1.75h5a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-9.5a1 1 0 0 1-1-1Z" />
+  ),
   key: (
     <>
       <circle cx="5" cy="11" r="3.25" />

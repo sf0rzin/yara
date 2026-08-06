@@ -404,6 +404,7 @@
 }
 
 .row {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -2101,4 +2102,61 @@
   padding: var(--space-2) var(--space-3);
   line-height: 1.5;
   resize: vertical;
+}
+
+/* ---------------------------------------------------------------- folders */
+
+.folders__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.folders__head .section-label {
+  flex: 1;
+}
+
+.folders__input {
+  width: calc(100% - var(--space-4));
+  height: var(--row-height);
+  margin: 0 var(--space-2);
+}
+
+.folders__delete {
+  margin: var(--space-3) var(--space-3) var(--space-4);
+}
+
+/* A drop target lifts the way a selection does. No outline: an outline would
+   be a second visual language for "here", and the surface already says it. */
+.nav-item[data-drop] {
+  background: var(--control-bg-selected);
+  color: var(--text);
+  box-shadow: inset 0 0 0 1px var(--border-strong);
+}
+
+.nav-item--loose {
+  color: var(--text-muted);
+}
+
+/*
+ * Where a dropped row would land. A line rather than a gap: opening a gap
+ * moves every row below it, so the list shifts under the cursor at the exact
+ * moment the user is aiming at something in it.
+ */
+.row[data-drop-edge]::after {
+  content: "";
+  position: absolute;
+  left: var(--space-3);
+  right: var(--space-3);
+  height: 2px;
+  background: var(--text);
+  border-radius: 1px;
+}
+
+.row[data-drop-edge="above"]::after {
+  top: -1px;
+}
+
+.row[data-drop-edge="below"]::after {
+  bottom: -1px;
 }
