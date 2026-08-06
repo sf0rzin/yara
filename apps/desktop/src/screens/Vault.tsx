@@ -57,6 +57,7 @@ export function Vault({ onLock }: VaultProps): JSX.Element {
   const [counts, setCounts] = useState<VaultCounts | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  const [editingItem, setEditingItem] = useState<ItemSummary | null>(null);
   const [importing, setImporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [approvals, setApprovals] = useState<ApprovalPrompt[]>([]);
@@ -458,9 +459,27 @@ export function Vault({ onLock }: VaultProps): JSX.Element {
             style={{ left: contextMenu.x, top: contextMenu.y }}
             onPointerDown={(event) => event.stopPropagation()}
           >
+            {/* Edit takes the focus, not delete. The menu opens under the
+                cursor and Enter is a reflex; the destructive row should not be
+                the one already selected when it arrives. */}
             <button
               type="button"
               ref={menuItemRef}
+              className="popover__item"
+              role="menuitem"
+              onClick={() => {
+                setEditingItem(contextMenu.item);
+                setContextMenu(null);
+              }}
+            >
+              <Icon name="pencil" size={13} />
+              <span>Edit…</span>
+            </button>
+
+            <div className="popover__separator" />
+
+            <button
+              type="button"
               className="popover__item"
               role="menuitem"
               onClick={() => void removeContextItem()}
@@ -480,6 +499,19 @@ export function Vault({ onLock }: VaultProps): JSX.Element {
         <ImportDialog
           onClose={() => setImporting(false)}
           onImported={() => void refresh()}
+        />
+      )}
+
+      {editingItem && (
+        <NewItemDialog
+          key={editingItem.id}
+          editing={editingItem}
+          onClose={() => setEditingItem(null)}
+          onCreated={(id) => {
+            setEditingItem(null);
+            setSelectedId(id);
+            void refresh();
+          }}
         />
       )}
 

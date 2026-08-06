@@ -2047,3 +2047,58 @@
     width: 220px;
   }
 }
+
+/* Notes keep the line breaks they were typed with — a note is written as
+   lines, and reflowing it into a paragraph loses what the author meant. */
+.detail__notes {
+  flex: 1;
+  min-width: 0;
+  color: var(--text);
+  font-size: var(--text-sm);
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* ---------------------------------------------------------- custom fields */
+
+.fields {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+/*
+ * Name and value on one line, at a 2:3 split. The name is the shorter of the
+ * two in practice — "API key", "PIN" — and giving it equal width would leave
+ * the value, which is what you are actually checking, truncated first.
+ */
+.fields__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.fields__label {
+  flex: 2;
+  min-width: 0;
+}
+
+.fields__value {
+  flex: 3;
+  min-width: 0;
+}
+
+/* A pressed eye means the value is hidden, so the control shows the state it
+   is in rather than the action it would take. */
+.fields__row .icon-button[aria-pressed="true"] {
+  background: var(--control-bg-selected);
+  color: var(--text);
+}
+
+.input--area {
+  height: auto;
+  padding: var(--space-2) var(--space-3);
+  line-height: 1.5;
+  resize: vertical;
+}

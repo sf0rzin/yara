@@ -54,6 +54,30 @@ export interface TotpPreview {
   sampleCode: string;
 }
 
+/** A custom field being written. */
+export interface NewField {
+  label: string;
+  value: string;
+  secret: boolean;
+}
+
+/**
+ * A custom field being read.
+ *
+ * `value` is null for a secret — reading one takes an explicit `revealField`,
+ * the same as the password. A null here means "ask", never "empty".
+ */
+export interface FieldView {
+  label: string;
+  value: string | null;
+  secret: boolean;
+}
+
+export interface ItemExtras {
+  hasNotes: boolean;
+  fields: FieldView[];
+}
+
 export interface NewItem {
   name: string;
   kind?: ItemKind;
@@ -64,7 +88,24 @@ export interface NewItem {
   totp_uri?: string | null;
   /** Attach the enrollment most recently read from a QR code. */
   use_scanned_totp?: boolean;
+  fields?: NewField[];
   tags?: string[];
+}
+
+/**
+ * An edit. What arrives replaces what is stored, so a cleared box clears the
+ * value — except for `password`, where `null` means "leave it alone" and `""`
+ * means "remove it". The form never receives the current password, so those
+ * two intentions cannot be told apart by value and have to be said outright.
+ */
+export interface ItemEdit {
+  name: string;
+  kind: ItemKind;
+  username: string | null;
+  password: string | null;
+  url: string | null;
+  notes: string | null;
+  fields: NewField[];
 }
 
 export const scanQrFromPath = (path: string) =>
@@ -167,10 +208,22 @@ export const vaultCounts = () => invoke<VaultCounts>("vault_counts");
 
 export const addItem = (item: NewItem) => invoke<string>("add_item", { item });
 
+export const updateItem = (id: string, edit: ItemEdit) =>
+  invoke<void>("update_item", { id, edit });
+
+export const itemExtras = (id: string) =>
+  invoke<ItemExtras>("item_extras", { id });
+
 export const deleteItem = (id: string) => invoke<void>("delete_item", { id });
 
 export const revealPassword = (id: string) =>
   invoke<string>("reveal_password", { id });
+
+export const revealField = (id: string, label: string) =>
+  invoke<string>("reveal_field", { id, label });
+
+export const revealNotes = (id: string) =>
+  invoke<string>("reveal_notes", { id });
 
 export const totpCode = (id: string) => invoke<TotpCode>("totp_code", { id });
 

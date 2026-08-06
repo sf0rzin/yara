@@ -104,6 +104,40 @@ impl ItemKind {
     }
 }
 
+/// An extra field on an item, under a name of the user's choosing.
+///
+/// "Password" is not the only name a secret goes by. An API key, a PIN, a
+/// recovery code and a second account password are all things people keep
+/// beside a login, and forcing them into the notes field means they cannot be
+/// copied cleanly or masked on screen.
+///
+/// The value is a [`SecretString`] whether or not `secret` is set — that costs
+/// nothing and means a field promoted to secret later was never sitting in
+/// plain memory. What `secret` decides is whether the value is masked on
+/// screen, kept out of search, and withheld from listings.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Field {
+    pub label: String,
+    pub value: SecretString,
+    #[serde(default)]
+    pub secret: bool,
+}
+
+impl Field {
+    pub fn new(label: impl Into<String>, value: impl Into<SecretString>) -> Self {
+        Self {
+            label: label.into(),
+            value: value.into(),
+            secret: false,
+        }
+    }
+
+    pub fn secret(mut self) -> Self {
+        self.secret = true;
+        self
+    }
+}
+
 /// One stored credential.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Item {
@@ -122,6 +156,9 @@ pub struct Item {
     pub notes: Option<SecretString>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub totp: Option<TotpConfig>,
+    /// Defaulted so vaults written before fields existed still load.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fields: Vec<Field>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tags: Vec<String>,
     /// What this login charges you, if it charges you.
@@ -210,6 +247,7 @@ impl Item {
             url: None,
             notes: None,
             totp: None,
+            fields: Vec::new(),
             tags: Vec::new(),
             subscription: None,
             created_at: now,
@@ -242,6 +280,11 @@ impl Item {
         self
     }
 
+    pub fn with_field(mut self, field: Field) -> Self {
+        self.fields.push(field);
+        self
+    }
+
     /// True if `query` matches any non-secret field.
     ///
     /// Secret fields are never searched: a match would tell the caller something
@@ -264,6 +307,15 @@ impl Item {
                 .tags
                 .iter()
                 .any(|tag| tag.to_lowercase().contains(&query))
+            // A field's label is always searchable — that is how you find the
+            // item you filed an API key under. Its value is searchable only
+            // when it is not a secret, for the same reason the password above
+            // is absent from this list: a vault where typing a password finds
+            // the item holding it is an oracle for anyone at the keyboard.
+            || self.fields.iter().any(|field| {
+                field.label.to_lowercase().contains(&query)
+                    || (!field.secret && field.value.expose().to_lowercase().contains(&query))
+            })
     }
 }
 
@@ -1081,6 +1133,64 @@ mod tests {
 
         // The password must not be reachable through search.
         assert_eq!(vault.search("zebra").len(), 0);
+    }
+
+    #[test]
+    fn a_secret_field_is_findable_by_its_label_but_never_by_its_value() {
+        let item = Item::new("Stripe")
+            .with_field(Field::new("Merchant ID", "acct_1M2n3O"))
+            .with_field(Field::new("Restricted key", "rk_live_zebra").secret());
+
+        // Labels are how you find the item you filed something under.
+        assert!(item.matches("restricted"));
+        assert!(item.matches("merchant"));
+
+        // A plain field's value is fair game, the same as a username.
+        assert!(item.matches("acct_1M2n3O"));
+
+        // A secret's is not. Typing a secret and having the vault light up the
+        // item holding it turns search into an oracle for whoever is at the
+        // keyboard, which is the same reason `password` is not searched.
+        assert!(!item.matches("rk_live_zebra"));
+        assert!(!item.matches("zebra"));
+    }
+
+    #[test]
+    fn fields_survive_the_round_trip() {
+        let mut vault = UnlockedVault::create_with_params("master", fast()).unwrap();
+        vault.add(
+            Item::new("Stripe")
+                .with_field(Field::new("Merchant ID", "acct_1M2n3O"))
+                .with_field(Field::new("Restricted key", "rk_live_zebra").secret()),
+        );
+
+        let file = vault.seal().unwrap();
+        let reopened = UnlockedVault::open(&file, "master").unwrap();
+        let fields = &reopened.items()[0].fields;
+
+        assert_eq!(fields.len(), 2);
+        assert_eq!(fields[0].label, "Merchant ID");
+        assert!(!fields[0].secret);
+        assert_eq!(fields[1].value.expose(), "rk_live_zebra");
+        assert!(fields[1].secret);
+    }
+
+    #[test]
+    fn a_vault_written_before_fields_existed_still_opens() {
+        // The guarantee `#[serde(default)]` is there to make. Kept as a test
+        // because the failure mode is a vault that will not open, and nobody
+        // finds that out until it is the only copy.
+        let json = r#"{
+            "id": "8f14e45f-ea1c-4f2a-9f2b-1c3d4e5f6a7b",
+            "name": "GitHub",
+            "username": "anthony",
+            "created_at": 1,
+            "updated_at": 1
+        }"#;
+
+        let item: Item = serde_json::from_str(json).unwrap();
+        assert!(item.fields.is_empty());
+        assert_eq!(item.name, "GitHub");
     }
 
     #[test]
