@@ -378,15 +378,20 @@ interface Registration {
   handler: (event: unknown) => void;
 }
 
+/** Matches `APPROVAL_EVENT` in `src-tauri/src/broker.rs`. */
+const APPROVAL_EVENT = "broker://approval";
+
 let nextEventId = 1;
 const listeners = new Map<number, Registration>();
 
 function registerListener(args: Record<string, unknown>): number {
   const id = nextEventId++;
+  const event = String(args.event);
   listeners.set(id, {
-    event: String(args.event),
+    event,
     handler: args.handler as (event: unknown) => void,
   });
+  if (event === APPROVAL_EVENT) flushPendingSample();
   return id;
 }
 
@@ -401,17 +406,28 @@ function unregisterListener(args: Record<string, unknown>): void {
   listeners.delete(Number(args.eventId));
 }
 
-function emit(event: string, payload: unknown): void {
+/** Returns how many listeners took delivery, which is how a sample knows to stop waiting. */
+function emit(event: string, payload: unknown): number {
+  let delivered = 0;
   for (const registration of listeners.values()) {
     if (registration.event === event) {
       registration.handler({ event, id: 0, payload });
+      delivered += 1;
     }
   }
+  return delivered;
 }
 
-const SAMPLE_PROMPTS: Record<string, unknown> = {
+/**
+ * The samples carry no id of their own.
+ *
+ * The broker mints a fresh uuid per request, and the dialog is keyed on it. A
+ * fixture that reused one id made React treat a queued second request as the
+ * same dialog and keep the first one's state — so the new prompt arrived
+ * already reading "Denying…" with every button disabled.
+ */
+const SAMPLE_PROMPTS: Record<string, Record<string, unknown>> = {
   run: {
-    id: "p-run",
     program: "claude.exe",
     programPath: "C:\\Users\\anthony\\AppData\\Local\\Programs\\claude\\claude.exe",
     pid: 21804,
@@ -424,7 +440,6 @@ const SAMPLE_PROMPTS: Record<string, unknown> = {
     discloses: false,
   },
   reveal: {
-    id: "p-reveal",
     program: "unknown.exe",
     programPath: null,
     pid: 9931,
@@ -439,7 +454,6 @@ const SAMPLE_PROMPTS: Record<string, unknown> = {
   // A run that is a reveal in disguise, so the heavier wording can be seen
   // without a real broker to talk to.
   shell: {
-    id: "p-shell",
     program: "claude.exe",
     programPath: "C:\\Users\\anthony\\AppData\\Local\\Programs\\claude\\claude.exe",
     pid: 21804,
@@ -452,6 +466,37 @@ const SAMPLE_PROMPTS: Record<string, unknown> = {
     discloses: true,
   },
 };
+
+type SampleKind = keyof typeof SAMPLE_PROMPTS;
+
+let nextPromptId = 1;
+
+function sample(kind: SampleKind): Record<string, unknown> {
+  return { ...SAMPLE_PROMPTS[kind], id: `p-${kind}-${nextPromptId++}` };
+}
+
+/**
+ * A sample asked for by query string, waiting for somebody to hear it.
+ *
+ * The vault starts locked and only the unlocked screen subscribes to approval
+ * events, so firing on a timer meant firing into an empty room: on any normal
+ * load the sample was emitted, delivered to nobody, and silently lost.
+ */
+let pendingSample: SampleKind | null = null;
+
+function flushPendingSample(): void {
+  const kind = pendingSample;
+  if (kind === null) return;
+
+  // Deferred, and cleared only once a listener has actually taken delivery.
+  // React's strict mode subscribes, tears that subscription down and
+  // subscribes again, so the registration that triggered this may be gone by
+  // the time the timer runs.
+  setTimeout(() => {
+    if (pendingSample !== kind) return;
+    if (emit(APPROVAL_EVENT, sample(kind)) > 0) pendingSample = null;
+  }, 50);
+}
 
 export function installDevMock(): void {
   Object.defineProperty(window, "__TAURI_INTERNALS__", {
@@ -476,25 +521,52 @@ export function installDevMock(): void {
     configurable: true,
   });
 
-  // In the browser console: __yaraApproval("run") or __yaraApproval("reveal")
-  Object.defineProperty(window, "__yaraApproval", {
-    value: (kind: "run" | "reveal" = "run") =>
-      emit("broker://approval", SAMPLE_PROMPTS[kind]),
+  /*
+   * The second global the event API reaches for.
+   *
+   * `@tauri-apps/api` calls `__TAURI_EVENT_PLUGIN_INTERNALS__.unregisterListener`
+   * on the line *before* it invokes `plugin:event|unlisten`. With only
+   * `__TAURI_INTERNALS__` defined that line threw, so the invoke never ran and
+   * the mock's own unregister was unreachable — every unlisten was a silent
+   * no-op and listeners accumulated. React's strict mode subscribes twice on
+   * mount, so the very first render left two, and from then on a single
+   * approval request arrived as two queued prompts. It reads exactly like a
+   * broker bug and is not one.
+   */
+  Object.defineProperty(window, "__TAURI_EVENT_PLUGIN_INTERNALS__", {
+    value: {
+      unregisterListener: (_event: string, eventId: number) =>
+        listeners.delete(Number(eventId)),
+    },
     configurable: true,
   });
 
+  // In the browser console: __yaraApproval("run" | "reveal" | "shell")
+  Object.defineProperty(window, "__yaraApproval", {
+    value: (kind: SampleKind = "run") => emit(APPROVAL_EVENT, sample(kind)),
+    configurable: true,
+  });
+
+  // Ctrl+Shift+A, R and S. "shell" is the run that is really a reveal, and it
+  // is the variant worth looking at most often.
+  const shortcuts: Record<string, SampleKind> = {
+    a: "run",
+    r: "reveal",
+    s: "shell",
+  };
+
   window.addEventListener("keydown", (event) => {
-    if (event.ctrlKey && event.shiftKey && event.key.toLowerCase() === "a") {
-      emit("broker://approval", SAMPLE_PROMPTS.run);
-    } else if (event.ctrlKey && event.shiftKey && event.key.toLowerCase() === "r") {
-      emit("broker://approval", SAMPLE_PROMPTS.reveal);
-    }
+    if (!event.ctrlKey || !event.shiftKey) return;
+    const kind = shortcuts[event.key.toLowerCase()];
+    if (kind) emit(APPROVAL_EVENT, sample(kind));
   });
 
   // A query string makes the safety-critical dialog directly reviewable in a
   // browser screenshot without exposing a trigger in the shipped interface.
-  const sample = new URLSearchParams(window.location.search).get("approval");
-  if (sample === "run" || sample === "reveal" || sample === "shell") {
-    setTimeout(() => emit("broker://approval", SAMPLE_PROMPTS[sample]), 2_000);
+  // Held rather than fired: see `pendingSample`.
+  const requested = new URLSearchParams(window.location.search).get("approval");
+  if (requested !== null && requested in SAMPLE_PROMPTS) {
+    pendingSample = requested;
+    flushPendingSample();
   }
 }
