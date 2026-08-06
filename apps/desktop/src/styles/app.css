@@ -2167,3 +2167,10 @@
   padding: var(--space-2) var(--space-3) var(--space-1);
   margin: 0;
 }
+
+/* The row being carried. Dimmed rather than hidden: removing it would close
+   the gap it occupies and shift every row below, which moves the target the
+   user is aiming at. */
+.row[data-lifted] {
+  opacity: 0.4;
+}

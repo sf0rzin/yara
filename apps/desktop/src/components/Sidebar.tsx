@@ -21,13 +21,11 @@ interface SidebarProps {
   onCreateFolder: (name: string) => void;
   onRenameFolder: (from: string, to: string) => void;
   onDeleteFolder: (name: string) => void;
-  onReorderFolders: (names: string[]) => void;
-  onDropItem: (itemId: string, folder: string | null) => void;
+  /** The folder a drag is currently over. `null` inside means "No folder". */
+  dropTarget: { name: string | null } | null;
+  /** Begins dragging a folder, for reordering. */
+  onFolderDragBegin: (name: string, event: React.PointerEvent) => void;
 }
-
-/** What a drag is carrying. Read on drop to tell an item from a folder. */
-const ITEM_DRAG = "application/x-yara-item";
-const FOLDER_DRAG = "application/x-yara-folder";
 
 function isSameView(a: View, b: View): boolean {
   return (
@@ -47,12 +45,10 @@ export function Sidebar({
   onCreateFolder,
   onRenameFolder,
   onDeleteFolder,
-  onReorderFolders,
-  onDropItem,
+  dropTarget,
+  onFolderDragBegin,
 }: SidebarProps): JSX.Element {
   const [menuOpen, setMenuOpen] = useState(false);
-  /** The folder a drag is currently over, so exactly one row can light up. */
-  const [dropTarget, setDropTarget] = useState<string | null>(null);
   const [renaming, setRenaming] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   // Collections are ways of looking at the vault. Subscriptions sits here
@@ -162,46 +158,14 @@ export function Sidebar({
                   type="button"
                   className="nav-item"
                   data-active={active || undefined}
-                  data-drop={dropTarget === folder || undefined}
+                  data-drop={dropTarget?.name === folder || undefined}
                   aria-current={active ? "page" : undefined}
-                  draggable
+                  // What the drag hit-tests for. The value is the folder; an
+                  // empty one means "no folder", below.
+                  data-folder-drop={folder}
                   onClick={() => onSelect({ kind: "folder", name: folder })}
                   onDoubleClick={() => setRenaming(folder)}
-                  onDragStart={(event) => {
-                    event.dataTransfer.setData(FOLDER_DRAG, folder);
-                    event.dataTransfer.effectAllowed = "move";
-                  }}
-                  onDragOver={(event) => {
-                    // Only claim the drop if the drag is carrying something
-                    // this row can accept, or the cursor lies about it.
-                    const types = event.dataTransfer.types;
-                    if (!types.includes(ITEM_DRAG) && !types.includes(FOLDER_DRAG)) return;
-                    event.preventDefault();
-                    event.dataTransfer.dropEffect = "move";
-                    setDropTarget(folder);
-                  }}
-                  onDragLeave={() => setDropTarget((at) => (at === folder ? null : at))}
-                  onDrop={(event) => {
-                    event.preventDefault();
-                    setDropTarget(null);
-
-                    const item = event.dataTransfer.getData(ITEM_DRAG);
-                    if (item) {
-                      onDropItem(item, folder);
-                      return;
-                    }
-
-                    const moved = event.dataTransfer.getData(FOLDER_DRAG);
-                    if (moved && moved !== folder) {
-                      const without = folders.filter((f) => f !== moved);
-                      const at = without.indexOf(folder);
-                      onReorderFolders([
-                        ...without.slice(0, at),
-                        moved,
-                        ...without.slice(at),
-                      ]);
-                    }
-                  }}
+                  onPointerDown={(event) => onFolderDragBegin(folder, event)}
                 >
                   <Icon name="folder" size={16} />
                   <span className="nav-item__label">{folder}</span>
@@ -232,20 +196,12 @@ export function Sidebar({
             <button
               type="button"
               className="nav-item nav-item--loose"
-              data-drop={dropTarget === "" || undefined}
+              data-drop={(dropTarget && dropTarget.name === null) || undefined}
+              // Empty rather than absent: the attribute has to be present for
+              // the hit test to find this row, and its emptiness is what says
+              // "no folder".
+              data-folder-drop=""
               onClick={() => onSelect({ kind: "all" })}
-              onDragOver={(event) => {
-                if (!event.dataTransfer.types.includes(ITEM_DRAG)) return;
-                event.preventDefault();
-                setDropTarget("");
-              }}
-              onDragLeave={() => setDropTarget((at) => (at === "" ? null : at))}
-              onDrop={(event) => {
-                event.preventDefault();
-                setDropTarget(null);
-                const item = event.dataTransfer.getData(ITEM_DRAG);
-                if (item) onDropItem(item, null);
-              }}
             >
               <Icon name="allItems" size={16} />
               <span className="nav-item__label">No folder</span>

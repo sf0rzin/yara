@@ -3,21 +3,17 @@ import type { ItemSummary } from "../api";
 import { Tile } from "./Tile";
 import { TotpBadge } from "./TotpBadge";
 
-/** Matches the sidebar's reader. Both halves have to agree on the name. */
-const ITEM_DRAG = "application/x-yara-item";
-
 interface ItemRowProps {
   item: ItemSummary;
   selected: boolean;
   showTotpCode?: boolean;
   /** Where a drop would land this row: above it, below it, or nowhere. */
   dropEdge?: "above" | "below";
+  /** Dimmed while it is the one being carried. */
+  lifted?: boolean;
   onSelect: (id: string) => void;
   onContextMenu: (item: ItemSummary, x: number, y: number) => void;
-  onDragStart?: (id: string) => void;
-  onDragOverRow?: (id: string, edge: "above" | "below") => void;
-  onDropRow?: (id: string) => void;
-  onDragEnd?: () => void;
+  onDragBegin?: (id: string, event: React.PointerEvent) => void;
 }
 
 export function ItemRow({
@@ -25,12 +21,10 @@ export function ItemRow({
   selected,
   showTotpCode = false,
   dropEdge,
+  lifted,
   onSelect,
   onContextMenu,
-  onDragStart,
-  onDragOverRow,
-  onDropRow,
-  onDragEnd,
+  onDragBegin,
 }: ItemRowProps): JSX.Element {
   const host = hostOf(item.url);
   const subtitle = [item.username, host && host !== item.username ? host : null]
@@ -44,29 +38,12 @@ export function ItemRow({
         className="row"
         data-selected={selected || undefined}
         data-drop-edge={dropEdge}
-        draggable
+        data-lifted={lifted || undefined}
+        // How the drag finds this row: hit-tested by position rather than by
+        // an event the webview would have to let through.
+        data-item-id={item.id}
         onClick={() => onSelect(item.id)}
-        onDragStart={(event) => {
-          event.dataTransfer.setData(ITEM_DRAG, item.id);
-          event.dataTransfer.effectAllowed = "move";
-          onDragStart?.(item.id);
-        }}
-        onDragOver={(event) => {
-          if (!event.dataTransfer.types.includes(ITEM_DRAG)) return;
-          event.preventDefault();
-          event.dataTransfer.dropEffect = "move";
-          // Which half of the row the cursor is in decides whether the drop
-          // lands above or below it, so a drag can reach either end of a run
-          // without having to aim at the gap between two rows.
-          const box = event.currentTarget.getBoundingClientRect();
-          const edge = event.clientY < box.top + box.height / 2 ? "above" : "below";
-          onDragOverRow?.(item.id, edge);
-        }}
-        onDrop={(event) => {
-          event.preventDefault();
-          onDropRow?.(item.id);
-        }}
-        onDragEnd={() => onDragEnd?.()}
+        onPointerDown={(event) => onDragBegin?.(item.id, event)}
         onContextMenu={(event) => {
           event.preventDefault();
           // Shift+F10 and the Menu key raise this with no pointer behind them,
