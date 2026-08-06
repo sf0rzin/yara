@@ -1,4 +1,4 @@
-import { useState, type JSX } from "react";
+import { useEffect, useState, type JSX } from "react";
 import {
   errorMessage,
   previewImport,
@@ -18,8 +18,50 @@ import { Icon } from "./Icon";
  * is as sensitive as every account in it, it is sitting in Downloads, and
  * unlike a password a leaked seed cannot be rotated without re-enrolling the
  * account it belongs to.
+ *
+ * A dialog, because importing is something you do once and reading codes is
+ * something you do daily. This used to sit permanently above the list on the
+ * Authenticator screen, so every visit to read a six-digit number began with a
+ * paragraph about a file the user imported months ago.
  */
-export function ImportPanel({ onImported }: { onImported: () => void }): JSX.Element {
+export function ImportDialog({
+  onClose,
+  onImported,
+}: {
+  onClose: () => void;
+  onImported: () => void;
+}): JSX.Element {
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  return (
+    <div className="overlay" onMouseDown={onClose}>
+      <div
+        className="dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Import codes"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <header className="dialog__head">
+          <h2 className="dialog__title">Import codes</h2>
+          <button type="button" className="icon-button" onClick={onClose} aria-label="Close">
+            <Icon name="close" size={14} />
+          </button>
+        </header>
+
+        <ImportPanel onImported={onImported} />
+      </div>
+    </div>
+  );
+}
+
+function ImportPanel({ onImported }: { onImported: () => void }): JSX.Element {
   const [path, setPath] = useState<string | null>(null);
   const [preview, setPreview] = useState<ImportPreview | null>(null);
   const [added, setAdded] = useState<number | null>(null);

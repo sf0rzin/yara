@@ -65,8 +65,12 @@ export function SyncView(): JSX.Element {
         </p>
       )}
 
-      <IconSetting />
-
+      {/*
+        Sync first, and not because it is bigger. This screen exists because a
+        vault has to follow you between machines; site icons is a preference
+        about pictures. Putting the preference above it made the reason for
+        the screen the second thing on it.
+      */}
       {status?.enrolled ? (
         <Enrolled
           status={status}
@@ -96,6 +100,8 @@ export function SyncView(): JSX.Element {
           }
         />
       )}
+
+      <IconSetting />
     </section>
   );
 }
@@ -212,12 +218,9 @@ function KitOnce({
 
       <p className="kit">{kit.kit}</p>
 
-      <dl className="approval__facts">
-        <div>
-          <dt>Account</dt>
-          <dd className="selectable">{kit.accountId}</dd>
-        </div>
-      </dl>
+      <div className="group">
+        <Fact label="Account" value={kit.accountId} />
+      </div>
 
       <p className="notice notice--loud">
         <Icon name="alert" size={13} />
@@ -266,24 +269,24 @@ function Enrolled({
 
   return (
     <>
-      <dl className="approval__facts">
-        <div>
-          <dt>Server</dt>
-          <dd className="selectable">{status.baseUrl}</dd>
+      {/*
+        An inset group, which is what this app uses for a list of facts about
+        one thing — see the detail pane. It used to borrow `approval__facts`
+        from the agent dialog, so the same "label, value" idea had two
+        different shapes depending on which screen you were on.
+      */}
+      <section>
+        <p className="section-label">Sync</p>
+        <div className="group">
+          <Fact label="Server" value={status.baseUrl} />
+          <Fact label="Account" value={status.accountId} />
+          <Fact label="This machine" value={status.deviceId} />
+          <Fact
+            label="Last synced"
+            value={status.lastSyncedAt ? whenever(status.lastSyncedAt) : "Never"}
+          />
         </div>
-        <div>
-          <dt>Account</dt>
-          <dd className="selectable">{status.accountId}</dd>
-        </div>
-        <div>
-          <dt>This machine</dt>
-          <dd className="selectable">{status.deviceId}</dd>
-        </div>
-        <div>
-          <dt>Last synced</dt>
-          <dd>{status.lastSyncedAt ? whenever(status.lastSyncedAt) : "Never"}</dd>
-        </div>
-      </dl>
+      </section>
 
       {report && (
         <p className="notice">
@@ -322,6 +325,16 @@ function Enrolled({
         </p>
       )}
     </>
+  );
+}
+
+/** One row of an inset group. Absent values say so rather than showing blank. */
+function Fact({ label, value }: { label: string; value: string | null }): JSX.Element {
+  return (
+    <div className="detail__row">
+      <span className="detail__label">{label}</span>
+      <span className="detail__value selectable">{value ?? "Not recorded"}</span>
+    </div>
   );
 }
 
@@ -364,6 +377,7 @@ function IconSetting(): JSX.Element {
 
   return (
     <section>
+      <p className="section-label">Settings</p>
       <div className="group">
         <label className="setting__row">
           <span className="setting__label">Site icons</span>

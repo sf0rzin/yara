@@ -467,7 +467,14 @@ impl UnlockedVault {
         let items = &self.data.items;
         VaultCounts {
             total: items.len(),
-            logins: items.iter().filter(|i| i.kind == ItemKind::Login).count(),
+            // A login is something you log in to, which means it has a
+            // password. A bare two-factor seed has the Login kind only because
+            // ItemKind has nowhere else to put it, and counting it here would
+            // promise a row that the Logins list does not show.
+            logins: items
+                .iter()
+                .filter(|i| i.kind == ItemKind::Login && i.password.is_some())
+                .count(),
             cards: items.iter().filter(|i| i.kind == ItemKind::Card).count(),
             notes: items.iter().filter(|i| i.kind == ItemKind::Note).count(),
             // Not a kind — any item can carry a second factor.
@@ -1074,6 +1081,29 @@ mod tests {
 
         // The password must not be reachable through search.
         assert_eq!(vault.search("zebra").len(), 0);
+    }
+
+    #[test]
+    fn a_bare_two_factor_seed_is_not_counted_as_a_login() {
+        // What arrives from an authenticator export: a name and a code, with
+        // nothing to log in to. It takes ItemKind::Login because there is no
+        // other variant, and it must not show up under Logins for that.
+        let mut vault = UnlockedVault::create_with_params("master", fast()).unwrap();
+        let totp = TotpConfig::new("GEZDGNBVGY3TQOJQ");
+
+        vault.add(Item::new("Bank 2FA").with_totp(totp.clone()));
+        vault.add(Item::new("GitHub").with_password("hunter2"));
+        // Both at once is still a login: it is the password that decides.
+        vault.add(
+            Item::new("Fastmail")
+                .with_password("hunter2")
+                .with_totp(totp),
+        );
+
+        let counts = vault.counts();
+        assert_eq!(counts.total, 3);
+        assert_eq!(counts.logins, 2, "the bare seed is not a login");
+        assert_eq!(counts.authenticator, 2, "but it does carry a code");
     }
 
     #[test]
