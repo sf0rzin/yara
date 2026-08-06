@@ -38,13 +38,15 @@ export function Sidebar({
   // Collections are ways of looking at the vault. Subscriptions sits here
   // rather than under Types because a subscription is an attachment on a
   // login, not a kind of item — a charge with no account behind it is trivia.
+  //
+  // Agent access is here for the same reason. It is a way of looking at the
+  // vault — which credentials programs can reach — and it used to carry a
+  // heading of its own, which meant a group label introducing exactly one row.
+  // A heading that groups one thing is not grouping.
   const collections: NavEntry[] = [
     { view: { kind: "all" }, label: "All items", icon: "allItems" },
     { view: { kind: "recent" }, label: "Recent", icon: "recent" },
     { view: { kind: "subscriptions" }, label: "Subscriptions", icon: "calendar" },
-  ];
-
-  const agents: NavEntry[] = [
     { view: { kind: "agents" }, label: "Agent access", icon: "sparkle" },
   ];
 
@@ -94,15 +96,11 @@ export function Sidebar({
     <aside className="sidebar">
       <div className="sidebar__brand">
         <span className="sidebar__name" aria-label="yara">yara</span>
-        <span className="sidebar__tagline">Local vault</span>
       </div>
 
       <nav className="sidebar__nav">
         <p className="section-label">Collections</p>
         <ul>{collections.map(renderEntry)}</ul>
-
-        <p className="section-label section-label--spaced">Agents</p>
-        <ul>{agents.map(renderEntry)}</ul>
 
         <p className="section-label section-label--spaced">Types</p>
         <ul>{types.map(renderEntry)}</ul>

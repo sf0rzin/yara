@@ -225,9 +225,12 @@ function KitOnce({
         recovered. Nobody can reissue it.
       </p>
 
+      {/* A checkbox rather than a switch: this acknowledges something once, it
+          does not hold a setting. */}
       <label className="sync__confirm">
         <input
           type="checkbox"
+          className="checkbox"
           checked={confirmed}
           onChange={(event) => setConfirmed(event.target.checked)}
         />
@@ -360,23 +363,27 @@ function IconSetting(): JSX.Element {
   if (on === null) return <></>;
 
   return (
-    <label className="sync__confirm">
-      <input
-        type="checkbox"
-        checked={on}
-        onChange={(event) => {
-          setOn(event.target.checked);
-          void setIconsEnabled(event.target.checked);
-        }}
-      />
-      <span>
-        Show site icons.
-        <span className="input-hint">
-          Fetched through {"yara.rindexx.cc"} rather than from each site, so no
-          site learns you hold an account with it. That server sees which
-          domains are asked about. Turning this off deletes what was cached.
-        </span>
-      </span>
-    </label>
+    <section>
+      <div className="group">
+        <label className="setting__row">
+          <span className="setting__label">Site icons</span>
+          <input
+            type="checkbox"
+            className="switch"
+            checked={on}
+            onChange={(event) => {
+              setOn(event.target.checked);
+              void setIconsEnabled(event.target.checked);
+            }}
+          />
+        </label>
+      </div>
+
+      <p className="setting__caption">
+        Fetched through {"yara.rindexx.cc"} rather than from each site, so no
+        site learns you hold an account with it. That server sees which domains
+        are asked about. Turning this off deletes what was cached.
+      </p>
+    </section>
   );
 }

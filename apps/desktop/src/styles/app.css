@@ -26,11 +26,20 @@
   overflow: hidden;
 }
 
+/*
+ * The wordmark sits on the title bar's line.
+ *
+ * It used to start at the top of the sidebar with its own padding, which put
+ * it across the 38px system strip: the word straddled that boundary and landed
+ * roughly 14px below the window controls opposite it, so nothing on the top
+ * row lined up with anything else. Matching the strip's height and centring in
+ * it is what every Mac sidebar does, and it costs nothing.
+ */
 .sidebar__brand {
   display: flex;
-  flex-direction: column;
-  gap: 1px;
-  padding: var(--space-5) var(--space-5) var(--space-4);
+  align-items: center;
+  height: var(--titlebar-height);
+  padding: 0 var(--space-5);
 }
 
 .sidebar__name {
@@ -39,14 +48,9 @@
   letter-spacing: var(--tracking-title);
 }
 
-.sidebar__tagline {
-  color: var(--text-muted);
-  font-size: var(--text-xs);
-}
-
 .sidebar__nav {
   flex: 1;
-  padding: 0 var(--space-2);
+  padding: var(--space-3) var(--space-2) 0;
   overflow-y: auto;
 }
 
@@ -1616,6 +1620,145 @@
   font-size: var(--text-sm);
   line-height: 1.5;
   cursor: pointer;
+}
+
+/*
+ * A setting, in the shape the rest of the app already uses for facts: a label
+ * in an inset group, and the reasoning as a caption under it.
+ *
+ * It was a checkbox with the explanation crammed into the same run of text as
+ * the label, so "Show site icons." and the sentence about what leaves the
+ * machine read as one paragraph. The thing you flip and the cost of flipping
+ * it are two different thoughts and now sit on two different lines.
+ */
+.setting__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  min-height: 46px;
+  padding: var(--space-2) var(--space-4);
+  cursor: pointer;
+}
+
+.setting__label {
+  flex: 1;
+  color: var(--text);
+  font-size: var(--text-sm);
+}
+
+/* Sits under the group, not inside it — the same relationship a caption has to
+   a table. Indented to the group's text, so it reads as belonging to it. */
+.setting__caption {
+  padding: var(--space-2) var(--space-4) 0;
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  line-height: 1.5;
+}
+
+/*
+ * The switch.
+ *
+ * It replaces a native checkbox, which is not a style preference: an unstyled
+ * checkbox paints itself with the operating system's accent colour when
+ * checked, and this interface has no accent colour by rule. On Windows that
+ * meant the one blue object in the entire app sat in the privacy settings.
+ *
+ * Still a real input underneath, so the label still toggles it, the keyboard
+ * still reaches it, and screen readers still call it a checkbox.
+ */
+.switch {
+  appearance: none;
+  position: relative;
+  flex: none;
+  width: 34px;
+  height: 20px;
+  margin: 0;
+  background: var(--control-bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  cursor: pointer;
+  transition:
+    background var(--duration) var(--ease),
+    border-color var(--duration) var(--ease);
+}
+
+.switch::before {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  background: var(--text-muted);
+  border-radius: 50%;
+  transition:
+    transform var(--duration) var(--ease),
+    background var(--duration) var(--ease);
+}
+
+/* On is an inversion, which is the same move the primary button makes. With no
+   colour available, filling the track is the only unambiguous "yes". */
+.switch:checked {
+  background: var(--inverse-bg);
+  border-color: transparent;
+}
+
+.switch:checked::before {
+  background: var(--inverse-text);
+  transform: translateX(14px);
+}
+
+.switch:hover:not(:checked) {
+  background: var(--control-bg-hover);
+}
+
+/*
+ * The acknowledgement checkbox, for the same reason the switch exists: left
+ * native, it paints itself in the operating system's accent colour.
+ *
+ * A checkbox and not a switch, because the two say different things. A switch
+ * holds a setting you can come back and change; this one records that you did
+ * something once, and the sentence beside it is in the past tense.
+ */
+.checkbox {
+  appearance: none;
+  position: relative;
+  flex: none;
+  width: 16px;
+  height: 16px;
+  /* Nudged onto the first line of a sentence that wraps: the box is 16px and
+     the line it sits against is taller than that. */
+  margin: 2px 0 0;
+  background: var(--control-bg);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-xs);
+  cursor: pointer;
+  transition:
+    background var(--duration) var(--ease),
+    border-color var(--duration) var(--ease);
+}
+
+.checkbox:hover:not(:checked) {
+  background: var(--control-bg-hover);
+}
+
+.checkbox:checked {
+  background: var(--inverse-bg);
+  border-color: transparent;
+}
+
+/* The tick is drawn from two borders rather than set as a glyph, which would
+   inherit the font's metrics and sit off-centre in a 16px box. */
+.checkbox:checked::before {
+  content: "";
+  position: absolute;
+  top: 1px;
+  left: 4.5px;
+  width: 4px;
+  height: 8px;
+  border: solid var(--inverse-text);
+  border-width: 0 1.6px 1.6px 0;
+  transform: rotate(45deg);
 }
 
 /*
