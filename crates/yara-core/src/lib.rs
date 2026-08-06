@@ -40,7 +40,7 @@ pub use secret::SecretString;
 pub use totp::{TotpAlgorithm, TotpConfig};
 pub use vault::unix_now;
 pub use vault::{
-    Cadence, Item, ItemKind, KdfHeader, Subscription, SyncState, UnlockedVault, VaultCounts,
+    Cadence, Field, Item, ItemKind, KdfHeader, Subscription, SyncState, UnlockedVault, VaultCounts,
     VaultData, VaultFile, FORMAT_VERSION,
 };
 

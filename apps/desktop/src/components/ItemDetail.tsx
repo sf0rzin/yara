@@ -3,8 +3,12 @@ import {
   errorMessage,
   formatCharge,
   formatMoney,
+  itemExtras,
   itemSubscription,
+  revealField,
+  revealNotes,
   revealPassword,
+  type ItemExtras,
   type ItemSummary,
   type SubscriptionView,
 } from "../api";
@@ -33,22 +37,50 @@ export function ItemDetail({ item }: ItemDetailProps): JSX.Element {
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [billing, setBilling] = useState<SubscriptionView | null>(null);
+  const [extras, setExtras] = useState<ItemExtras | null>(null);
+  /** Revealed secret fields, keyed by label. */
+  const [shown, setShown] = useState<Record<string, string>>({});
+  const [notes, setNotes] = useState<string | null>(null);
 
   // Switching items must not carry the previous one's revealed password, its
   // half-pressed delete, or a notice about something you are no longer looking
-  // at. Keyed on the id so it fires on selection rather than on every render.
+  // at.
+  //
+  // Keyed on the id *and* on when the item last changed. On the id alone this
+  // never re-ran after an edit — the id is the one thing an edit cannot alter
+  // — so a field added a moment ago was saved, stored, and invisible until the
+  // selection moved away and back. `updated_at` is bumped by every write,
+  // which makes it exactly the signal for "this is not what you fetched".
   useEffect(() => {
     setRevealed(null);
     setNotice(null);
     setError(null);
     setBilling(null);
+    setExtras(null);
+    setShown({});
+    setNotes(null);
     // Fetched per item rather than carried on the summary: most items have no
     // subscription, and a field that is null for nine rows in ten does not
     // belong in the list payload.
     void itemSubscription(item.id)
       .then(setBilling)
       .catch(() => setBilling(null));
-  }, [item.id]);
+    void itemExtras(item.id)
+      .then(setExtras)
+      .catch(() => setExtras(null));
+  }, [item.id, item.updatedAt]);
+
+  // Revealed field values expire the same way the password does, and for the
+  // same reason: whoever asked has read it by now, and what stays on screen is
+  // read by whoever walks past next.
+  useEffect(() => {
+    if (Object.keys(shown).length === 0 && notes === null) return;
+    const timer = setTimeout(() => {
+      setShown({});
+      setNotes(null);
+    }, 30_000);
+    return () => clearTimeout(timer);
+  }, [shown, notes]);
 
   // A revealed password does not stay revealed. Leaving one on screen is how a
   // shoulder becomes a leak, and the person who revealed it has already read it.
@@ -90,6 +122,48 @@ export function ItemDetail({ item }: ItemDetailProps): JSX.Element {
   async function copyPlain(label: string, value: string) {
     await navigator.clipboard.writeText(value);
     setNotice(`${label} copied.`);
+  }
+
+  async function toggleField(label: string) {
+    if (shown[label] !== undefined) {
+      setShown(({ [label]: _dropped, ...rest }) => rest);
+      return;
+    }
+    try {
+      const value = await revealField(item.id, label);
+      setShown((current) => ({ ...current, [label]: value }));
+    } catch (caught) {
+      setError(errorMessage(caught));
+    }
+  }
+
+  async function copyField(label: string, secret: boolean) {
+    try {
+      // Fetched fresh rather than read off the screen, so copying works whether
+      // or not the value is currently revealed.
+      const value = await revealField(item.id, label);
+      if (secret) {
+        await copySecret(value);
+        setNotice(`${label} copied. Clipboard clears shortly.`);
+      } else {
+        await navigator.clipboard.writeText(value);
+        setNotice(`${label} copied.`);
+      }
+    } catch (caught) {
+      setError(errorMessage(caught));
+    }
+  }
+
+  async function toggleNotes() {
+    if (notes !== null) {
+      setNotes(null);
+      return;
+    }
+    try {
+      setNotes(await revealNotes(item.id));
+    } catch (caught) {
+      setError(errorMessage(caught));
+    }
   }
 
   const host = hostOf(item.url);
@@ -163,6 +237,93 @@ export function ItemDetail({ item }: ItemDetailProps): JSX.Element {
                 <span className="detail__value">
                   <TotpBadge itemId={item.id} prominent />
                 </span>
+              </div>
+            )}
+          </Section>
+        )}
+
+        {/*
+          Custom fields sit under the credentials rather than among them. What
+          the app knows how to reason about — a username, a password, a code —
+          is one thing; what the user decided to keep beside it is another, and
+          mixing them would make the labelled section stop meaning anything.
+        */}
+        {extras && extras.fields.length > 0 && (
+          <Section label="Fields">
+            {extras.fields.map((field) => (
+              <Row
+                key={field.label}
+                label={field.label}
+                value={
+                  field.secret
+                    ? (shown[field.label] ?? "••••••••••••")
+                    : (field.value ?? "")
+                }
+                mono={field.secret}
+                title={
+                  field.secret && shown[field.label] === undefined
+                    ? "Hidden until you ask"
+                    : undefined
+                }
+              >
+                {field.secret && (
+                  <button
+                    type="button"
+                    className="icon-button"
+                    aria-label={
+                      shown[field.label] !== undefined
+                        ? `Hide ${field.label}`
+                        : `Reveal ${field.label}`
+                    }
+                    onClick={() => void toggleField(field.label)}
+                  >
+                    <Icon
+                      name={shown[field.label] !== undefined ? "eyeOff" : "eye"}
+                      size={14}
+                    />
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className="icon-button"
+                  aria-label={`Copy ${field.label}`}
+                  onClick={() => void copyField(field.label, field.secret)}
+                >
+                  <Icon name="copy" size={14} />
+                </button>
+              </Row>
+            ))}
+          </Section>
+        )}
+
+        {/*
+          Notes are behind a press for the same reason the password is. This app
+          states that the frontend never receives a secret as part of normal
+          data flow, and a note is where people put recovery codes.
+        */}
+        {extras?.hasNotes && (
+          <Section label="Notes">
+            {notes === null ? (
+              <button
+                type="button"
+                className="detail__row detail__row--summary"
+                onClick={() => void toggleNotes()}
+              >
+                <span className="detail__label">Notes</span>
+                <span className="detail__value">Hidden until you ask</span>
+                <Icon className="detail__disclosure" name="eye" size={13} />
+              </button>
+            ) : (
+              <div className="detail__row detail__row--tall">
+                <p className="detail__notes selectable">{notes}</p>
+                <button
+                  type="button"
+                  className="icon-button"
+                  aria-label="Hide notes"
+                  onClick={() => void toggleNotes()}
+                >
+                  <Icon name="eyeOff" size={14} />
+                </button>
               </div>
             )}
           </Section>

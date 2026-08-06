@@ -17,7 +17,7 @@ use state::AppState;
 use tauri::{Manager, State};
 use uuid::Uuid;
 use yara_core::{
-    Cadence, Item, ItemKind, Strength, Subscription, TotpConfig, UnlockedVault, VaultCounts,
+    Cadence, Field, Item, ItemKind, Strength, Subscription, TotpConfig, UnlockedVault, VaultCounts,
     VaultFile,
 };
 
@@ -95,6 +95,59 @@ impl TryFrom<&TotpConfig> for TotpPreview {
     }
 }
 
+/// A custom field as the frontend sees it.
+///
+/// `value` is present only when the field is not a secret. A secret's value
+/// takes an explicit reveal, the same as the password does — otherwise
+/// selecting an item would push every secret it holds into the webview, which
+/// is precisely what [`ItemSummary`] exists to avoid.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FieldView {
+    pub label: String,
+    pub value: Option<String>,
+    pub secret: bool,
+}
+
+/// The parts of an item that are too big or too sensitive for a listing.
+///
+/// Fetched per item rather than carried on every summary: most items have
+/// neither, and a field that is empty for nine rows in ten does not belong in
+/// a list payload.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ItemExtras {
+    pub has_notes: bool,
+    pub fields: Vec<FieldView>,
+}
+
+/// An edit. Every field is optional in the wire sense but total in meaning:
+/// what arrives replaces what is there, so a cleared box clears the value.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ItemEdit {
+    pub name: String,
+    pub kind: ItemKind,
+    pub username: Option<String>,
+    /// `None` leaves the stored password alone; `Some("")` clears it. The
+    /// difference matters because the edit form never receives the current
+    /// password, so "unchanged" and "emptied" cannot be told apart by value.
+    pub password: Option<String>,
+    pub url: Option<String>,
+    pub notes: Option<String>,
+    #[serde(default)]
+    pub fields: Vec<NewField>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NewField {
+    pub label: String,
+    pub value: String,
+    #[serde(default)]
+    pub secret: bool,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct NewItem {
     pub name: String,
@@ -109,6 +162,8 @@ pub struct NewItem {
     /// Attach the enrollment most recently read from a QR code instead.
     #[serde(default)]
     pub use_scanned_totp: bool,
+    #[serde(default)]
+    pub fields: Vec<NewField>,
     #[serde(default)]
     pub tags: Vec<String>,
 }
@@ -287,11 +342,112 @@ fn add_item(state: State<'_, Arc<AppState>>, item: NewItem) -> CommandResult<Uui
     entry.url = item.url;
     entry.notes = item.notes.map(Into::into);
     entry.totp = totp;
+    entry.fields = item.fields.into_iter().map(Field::from).collect();
     entry.tags = item.tags;
 
     let id = state.with_vault_mut(|vault| Ok(vault.add(entry)))?;
     state.save()?;
     Ok(id)
+}
+
+impl From<NewField> for Field {
+    fn from(field: NewField) -> Self {
+        Field {
+            label: field.label,
+            value: field.value.into(),
+            secret: field.secret,
+        }
+    }
+}
+
+/// Everything an item holds that a listing deliberately leaves out.
+#[tauri::command]
+fn item_extras(state: State<'_, Arc<AppState>>, id: Uuid) -> CommandResult<ItemExtras> {
+    state.with_vault(|vault| {
+        let item = vault
+            .get(id)
+            .ok_or_else(|| format!("item {id} not found"))?;
+
+        Ok(ItemExtras {
+            // Whether there are notes, not what they say. Reading them is a
+            // separate, deliberate call.
+            has_notes: item.notes.as_ref().is_some_and(|n| !n.is_empty()),
+            fields: item
+                .fields
+                .iter()
+                .map(|field| FieldView {
+                    label: field.label.clone(),
+                    value: (!field.secret).then(|| field.value.expose().to_string()),
+                    secret: field.secret,
+                })
+                .collect(),
+        })
+    })
+}
+
+#[tauri::command]
+fn reveal_field(state: State<'_, Arc<AppState>>, id: Uuid, label: String) -> CommandResult<String> {
+    state.with_vault(|vault| {
+        let item = vault
+            .get(id)
+            .ok_or_else(|| format!("item {id} not found"))?;
+        item.fields
+            .iter()
+            .find(|field| field.label == label)
+            .map(|field| field.value.expose().to_string())
+            .ok_or_else(|| format!("this item has no field called {label}"))
+    })
+}
+
+#[tauri::command]
+fn reveal_notes(state: State<'_, Arc<AppState>>, id: Uuid) -> CommandResult<String> {
+    state.with_vault(|vault| {
+        let item = vault
+            .get(id)
+            .ok_or_else(|| format!("item {id} not found"))?;
+        item.notes
+            .as_ref()
+            .map(|notes| notes.expose().to_string())
+            .ok_or_else(|| "this item has no notes".to_string())
+    })
+}
+
+/// Applies an edit.
+///
+/// The password is the one value the form cannot round-trip, because it is
+/// never sent to the frontend in the first place. `None` therefore means
+/// "leave it", and an empty string means "clear it" — the two are different
+/// intentions and guessing between them would either lose a password or
+/// refuse to remove one.
+#[tauri::command]
+fn update_item(state: State<'_, Arc<AppState>>, id: Uuid, edit: ItemEdit) -> CommandResult<()> {
+    state.with_vault_mut(|vault| {
+        vault
+            .update(id, |item| {
+                item.name = edit.name;
+                item.kind = edit.kind;
+                item.username = blank_to_none(edit.username);
+                item.url = blank_to_none(edit.url);
+                item.notes = blank_to_none(edit.notes).map(Into::into);
+                item.fields = edit
+                    .fields
+                    .into_iter()
+                    .filter(|field| !field.label.trim().is_empty())
+                    .map(Field::from)
+                    .collect();
+
+                if let Some(password) = edit.password {
+                    item.password = (!password.is_empty()).then(|| password.into());
+                }
+            })
+            .map_err(to_message)
+    })?;
+    state.save()
+}
+
+/// An empty box means no value, not a value that is the empty string.
+fn blank_to_none(value: Option<String>) -> Option<String> {
+    value.filter(|text| !text.trim().is_empty())
 }
 
 #[tauri::command]
@@ -936,6 +1092,10 @@ pub fn run() {
             recent_items,
             vault_counts,
             add_item,
+            update_item,
+            item_extras,
+            reveal_field,
+            reveal_notes,
             delete_item,
             scan_qr_from_path,
             scan_qr_from_clipboard,

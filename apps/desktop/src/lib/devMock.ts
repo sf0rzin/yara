@@ -6,6 +6,12 @@
  * a real vault, and no real cryptography runs.
  */
 
+interface MockField {
+  label: string;
+  value: string;
+  secret: boolean;
+}
+
 interface MockItem {
   id: string;
   name: string;
@@ -13,7 +19,9 @@ interface MockItem {
   username: string | null;
   password: string | null;
   url: string | null;
+  notes: string | null;
   totpSeed: number | null;
+  fields: MockField[];
   tags: string[];
   updatedAt: number;
 }
@@ -27,6 +35,8 @@ const items: MockItem[] = [
     password: "7Gk!pQ2vXm#9Lz@4Rw",
     url: "https://github.com",
     totpSeed: 11,
+    notes: null,
+    fields: [],
     tags: ["work"],
     updatedAt: 1_753_000_000,
   },
@@ -38,6 +48,8 @@ const items: MockItem[] = [
     password: "hunter2",
     url: "https://figma.com",
     totpSeed: null,
+    notes: null,
+    fields: [],
     tags: ["design"],
     updatedAt: 1_752_900_000,
   },
@@ -49,6 +61,8 @@ const items: MockItem[] = [
     password: "Tz3$vLp8Qn!wEr5Ka",
     url: "https://console.aws.amazon.com",
     totpSeed: 29,
+    notes: null,
+    fields: [],
     tags: ["infra"],
     updatedAt: 1_752_800_000,
   },
@@ -60,6 +74,8 @@ const items: MockItem[] = [
     password: "hunter2",
     url: "https://linear.app",
     totpSeed: null,
+    notes: null,
+    fields: [],
     tags: [],
     updatedAt: 1_752_700_000,
   },
@@ -71,6 +87,13 @@ const items: MockItem[] = [
     password: "Bq7#mXt2Vd!5Zc9Ln",
     url: "https://dashboard.stripe.com",
     totpSeed: 47,
+    notes: "Live keys rotate every 90 days. The restricted key below is the\nonly one safe to paste into a script.",
+    // One of each, so the detail pane has both shapes to render and the rule
+    // about which values a listing may carry is exercised.
+    fields: [
+      { label: "Merchant ID", value: "acct_1M2n3O4p5Q", secret: false },
+      { label: "Restricted key", value: "rk_live_51M2n3O4p5Q6r7S", secret: true },
+    ],
     tags: ["finance"],
     updatedAt: 1_752_600_000,
   },
@@ -82,6 +105,8 @@ const items: MockItem[] = [
     password: null,
     url: null,
     totpSeed: null,
+    notes: null,
+    fields: [],
     tags: [],
     updatedAt: 1_752_500_000,
   },
@@ -93,6 +118,8 @@ const items: MockItem[] = [
     password: null,
     url: null,
     totpSeed: null,
+    notes: null,
+    fields: [],
     tags: [],
     updatedAt: 1_752_400_000,
   },
@@ -108,6 +135,8 @@ const items: MockItem[] = [
     password: null,
     url: null,
     totpSeed: 53,
+    notes: null,
+    fields: [],
     tags: [],
     updatedAt: 1_752_300_000,
   },
@@ -222,9 +251,20 @@ const summary = (item: MockItem) => ({
 function matches(item: MockItem, query: string): boolean {
   const q = query.trim().toLowerCase();
   if (!q) return true;
-  return [item.name, item.username, item.url]
+  const plain = [item.name, item.username, item.url]
     .filter((field): field is string => Boolean(field))
     .some((field) => field.toLowerCase().includes(q));
+
+  // Mirrors `Item::matches`: a field's label is always searchable, its value
+  // only when it is not a secret. Never the password.
+  return (
+    plain ||
+    item.fields.some(
+      (field) =>
+        field.label.toLowerCase().includes(q) ||
+        (!field.secret && field.value.toLowerCase().includes(q)),
+    )
+  );
 }
 
 function strengthOf(password: string): "weak" | "fair" | "strong" {
@@ -362,8 +402,80 @@ const handlers: Record<string, (args: Record<string, unknown>) => unknown> = {
 
   estimate_strength: (args) => strengthOf(String(args.password ?? "")),
 
-  add_item: () => "new",
-  delete_item: () => undefined,
+  // These used to be stubs — `add_item` returned the string "new" and
+  // `delete_item` did nothing — so nothing written in a dev session survived
+  // the next render and editing could not be exercised at all.
+  add_item: (args) => {
+    const item = args.item as Record<string, unknown>;
+    const id = String(items.length + 1);
+    items.push({
+      id,
+      name: String(item.name ?? "Untitled"),
+      kind: (item.kind as MockItem["kind"]) ?? "login",
+      username: (item.username as string) ?? null,
+      password: (item.password as string) ?? null,
+      url: (item.url as string) ?? null,
+      notes: (item.notes as string) ?? null,
+      totpSeed: item.use_scanned_totp || item.totp_uri ? 17 : null,
+      fields: ((item.fields as MockField[]) ?? []).map((f) => ({ ...f })),
+      tags: (item.tags as string[]) ?? [],
+      updatedAt: unixNow(),
+    });
+    return id;
+  },
+
+  update_item: (args) => {
+    const item = items.find((i) => i.id === String(args.id));
+    if (!item) throw new Error(`item ${args.id} not found`);
+    const edit = args.edit as Record<string, unknown>;
+
+    item.name = String(edit.name ?? item.name);
+    item.kind = (edit.kind as MockItem["kind"]) ?? item.kind;
+    item.username = (edit.username as string) ?? null;
+    item.url = (edit.url as string) ?? null;
+    item.notes = (edit.notes as string) ?? null;
+    item.fields = ((edit.fields as MockField[]) ?? []).map((f) => ({ ...f }));
+    // Null leaves the password alone; empty string removes it. Mirrors the
+    // same distinction in `update_item` — the form never sees the current
+    // password, so it cannot say "unchanged" by sending the same value.
+    if (edit.password !== null && edit.password !== undefined) {
+      item.password = String(edit.password) || null;
+    }
+    item.updatedAt = unixNow();
+  },
+
+  item_extras: (args) => {
+    const item = items.find((i) => i.id === String(args.id));
+    return {
+      hasNotes: Boolean(item?.notes),
+      fields: (item?.fields ?? []).map((f) => ({
+        label: f.label,
+        // A secret's value is withheld here exactly as the backend withholds
+        // it: null means "ask", never "empty".
+        value: f.secret ? null : f.value,
+        secret: f.secret,
+      })),
+    };
+  },
+
+  reveal_field: (args) => {
+    const item = items.find((i) => i.id === String(args.id));
+    const field = item?.fields.find((f) => f.label === String(args.label));
+    if (!field) throw new Error(`this item has no field called ${args.label}`);
+    return field.value;
+  },
+
+  reveal_notes: (args) => {
+    const item = items.find((i) => i.id === String(args.id));
+    if (!item?.notes) throw new Error("this item has no notes");
+    return item.notes;
+  },
+
+  delete_item: (args) => {
+    const index = items.findIndex((i) => i.id === String(args.id));
+    if (index >= 0) items.splice(index, 1);
+  },
+
   change_master_password: () => undefined,
 
   // No real decoding here — the mock exists to exercise the interface, and
