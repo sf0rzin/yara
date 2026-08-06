@@ -179,14 +179,20 @@ export function Vault({ onLock }: VaultProps): JSX.Element {
   useEffect(() => {
     const onArrow = (event: KeyboardEvent) => {
       if (!showsItems || view.kind === "subscriptions" || items.length === 0) return;
-      const target = event.target as HTMLElement | null;
+      if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+
+      // Narrowed with `instanceof` rather than cast and optional-chained: a
+      // keydown target is an element by convention, not by type, and `matches`
+      // does not exist on anything that is not one. The cast said otherwise and
+      // `?.` only guards null, so a listener bound to the window threw on any
+      // event dispatched at the window itself.
+      const target = event.target;
       if (
-        target?.matches("input, textarea, select") ||
-        target?.isContentEditable
+        target instanceof HTMLElement &&
+        (target.matches("input, textarea, select") || target.isContentEditable)
       ) {
         return;
       }
-      if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
 
       event.preventDefault();
       const current = items.findIndex((item) => item.id === selectedId);
