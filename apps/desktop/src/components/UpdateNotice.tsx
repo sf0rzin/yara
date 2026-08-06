@@ -21,8 +21,10 @@ export function UpdateNotice(): JSX.Element | null {
 
   useEffect(() => {
     let live = true;
-    void checkForUpdate().then((found) => {
-      if (live) setUpdate(found);
+    void checkForUpdate().then((result) => {
+      // Only an offer reaches the interface. A failure is recorded for the
+      // settings screen to show and does not interrupt anybody here.
+      if (live && result.state === "available") setUpdate(result.update);
     });
     return () => {
       live = false;

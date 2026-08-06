@@ -7,11 +7,18 @@
  * whole of what a compromised host gets. Verification happens in Rust, inside
  * the plugin, before anything is executed.
  *
- * The check runs once at launch and is deliberately quiet about failure: an
- * unreachable update server is indistinguishable here from "you are current",
- * because a network problem must not be able to make the app feel broken. The
- * cost is that a permanently broken endpoint goes unnoticed, which is the right
- * trade for a background check and the wrong one for a button the user pressed.
+ * The check runs once at launch and stays quiet: an unreachable update server
+ * must not be able to make the app feel broken.
+ *
+ * Quiet is not the same as silent, and this used to be silent. Every failure
+ * was swallowed into `null`, which is the same value that means "you are
+ * current" — so a check that reached the server, got a valid manifest, and then
+ * failed was indistinguishable from having nothing to offer. That state is not
+ * hypothetical: it happened, and diagnosing it took the origin's access log to
+ * establish that the request was even being made.
+ *
+ * So the outcome is now a value with three cases, the last one is kept for the
+ * settings screen to show, and nothing about it interrupts anybody.
  */
 
 export interface AvailableUpdate {
@@ -28,30 +35,81 @@ export interface AvailableUpdate {
   install: () => Promise<void>;
 }
 
+export type UpdateCheck =
+  | { state: "current" }
+  | { state: "available"; update: AvailableUpdate }
+  /** The check itself did not complete. Says why, for someone reading it. */
+  | { state: "failed"; reason: string }
+  /** Outside Tauri, where there is no plugin to ask. */
+  | { state: "unavailable" };
+
+export interface CheckRecord {
+  at: number;
+  result: UpdateCheck;
+}
+
+/**
+ * The last check, kept at module scope.
+ *
+ * The notice and the settings screen both want this and never mount together,
+ * so passing it between them would mean lifting it to the top of the app to
+ * serve two consumers that never meet.
+ */
+let last: CheckRecord | null = null;
+
+export function lastUpdateCheck(): CheckRecord | null {
+  return last;
+}
+
 /** False in a browser dev session, where there is no plugin to call. */
 function insideTauri(): boolean {
   return "__TAURI_INTERNALS__" in window;
 }
 
-export async function checkForUpdate(): Promise<AvailableUpdate | null> {
-  if (!insideTauri()) return null;
+export async function checkForUpdate(): Promise<UpdateCheck> {
+  const record = (result: UpdateCheck): UpdateCheck => {
+    last = { at: Math.floor(Date.now() / 1000), result };
+    return result;
+  };
+
+  if (!insideTauri()) return record({ state: "unavailable" });
 
   try {
     // Imported lazily so a browser dev session never loads the plugin at all.
     const { check } = await import("@tauri-apps/plugin-updater");
     const update = await check();
-    if (!update) return null;
+    if (!update) return record({ state: "current" });
 
-    return {
-      version: update.version,
-      notes: update.body?.trim() || null,
-      install: async () => {
-        await update.downloadAndInstall();
-        const { relaunch } = await import("@tauri-apps/plugin-process");
-        await relaunch();
+    return record({
+      state: "available",
+      update: {
+        version: update.version,
+        notes: update.body?.trim() || null,
+        install: async () => {
+          await update.downloadAndInstall();
+          const { relaunch } = await import("@tauri-apps/plugin-process");
+          await relaunch();
+        },
       },
-    };
+    });
+  } catch (caught) {
+    return record({ state: "failed", reason: describe(caught) });
+  }
+}
+
+/** The version this build reports, which is the number a check compares against. */
+export async function runningVersion(): Promise<string | null> {
+  if (!insideTauri()) return null;
+  try {
+    const { getVersion } = await import("@tauri-apps/api/app");
+    return await getVersion();
   } catch {
     return null;
   }
+}
+
+function describe(caught: unknown): string {
+  if (caught instanceof Error) return caught.message;
+  if (typeof caught === "string") return caught;
+  return "the check failed without saying why";
 }

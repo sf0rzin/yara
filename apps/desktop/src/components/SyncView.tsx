@@ -12,6 +12,12 @@ import {
   type SyncStatus,
 } from "../api";
 import { Icon } from "./Icon";
+import {
+  checkForUpdate,
+  lastUpdateCheck,
+  runningVersion,
+  type CheckRecord,
+} from "../lib/updates";
 
 /**
  * Enrolling a machine, and syncing it.
@@ -102,8 +108,80 @@ export function SyncView(): JSX.Element {
       )}
 
       <IconSetting />
+      <UpdateSetting />
     </section>
   );
+}
+
+/**
+ * What version this is, and what the last update check actually did.
+ *
+ * Here because this screen already accounts for what the app does over the
+ * network, and because the alternative was a check whose only failure mode was
+ * looking exactly like success. "Check now" is a button somebody pressed, so
+ * unlike the one at launch it says what happened — that distinction is the
+ * rule this file already follows for a failed install.
+ */
+function UpdateSetting(): JSX.Element {
+  const [version, setVersion] = useState<string | null>(null);
+  const [record, setRecord] = useState<CheckRecord | null>(lastUpdateCheck());
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    void runningVersion().then(setVersion);
+  }, []);
+
+  const recheck = async () => {
+    setBusy(true);
+    await checkForUpdate();
+    setRecord(lastUpdateCheck());
+    setBusy(false);
+  };
+
+  return (
+    <section>
+      <p className="section-label">Updates</p>
+      <div className="group">
+        <div className="detail__row">
+          <span className="detail__label">This build</span>
+          <span className="detail__value selectable">{version ?? "Unknown"}</span>
+        </div>
+        <div className="detail__row">
+          <span className="detail__label">Last checked</span>
+          <span className="detail__value">{describeCheck(record)}</span>
+        </div>
+      </div>
+
+      <div className="sync__actions">
+        <button
+          type="button"
+          className="button button--outline"
+          disabled={busy}
+          onClick={() => void recheck()}
+        >
+          {busy ? "Checking…" : "Check now"}
+        </button>
+      </div>
+    </section>
+  );
+}
+
+function describeCheck(record: CheckRecord | null): string {
+  if (record === null) return "Not yet";
+
+  const when = whenever(record.at);
+  switch (record.result.state) {
+    case "current":
+      return `${when} — up to date`;
+    case "available":
+      return `${when} — ${record.result.update.version} is available`;
+    case "unavailable":
+      return `${when} — no updater in this build`;
+    // The case this whole section exists for. Reads as a sentence rather than
+    // a code, because the person reading it is the one who has to act on it.
+    case "failed":
+      return `${when} — the check failed: ${record.result.reason}`;
+  }
 }
 
 function Enrol({
