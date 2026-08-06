@@ -31,6 +31,7 @@ import { SubscriptionsView } from "../components/SubscriptionsView";
 import { SyncView } from "../components/SyncView";
 import { UpdateNotice } from "../components/UpdateNotice";
 import { useAutoLock } from "../lib/useAutoLock";
+import { useItemDrag, type RowTarget } from "../lib/useItemDrag";
 import { isItemList, viewSubtitle, viewTitle, type View } from "../views";
 
 /** Until the vault says otherwise. Matches the core default. */
@@ -73,10 +74,7 @@ export function Vault({ onLock }: VaultProps): JSX.Element {
   const [showLoading, setShowLoading] = useState(false);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [folderNames, setFolderNames] = useState<string[]>([]);
-  const [dragging, setDragging] = useState<string | null>(null);
-  const [dragOver, setDragOver] = useState<{ id: string; edge: "above" | "below" } | null>(
-    null,
-  );
+
 
   const searchRef = useRef<HTMLInputElement>(null);
   const requestRef = useRef(0);
@@ -150,6 +148,33 @@ export function Vault({ onLock }: VaultProps): JSX.Element {
   useEffect(() => {
     void refreshFolders();
   }, [refreshFolders]);
+
+  /*
+   * Deliberately not memoised. The hook stores these in a ref it rewrites
+   * every render, so a fresh closure each time costs nothing — and memoising
+   * on an empty dependency list would pin `refresh` to the first render,
+   * which would reload the wrong view after filing something from a folder.
+   */
+  const drag = useItemDrag({
+    onReorder: dropOnRow,
+    onFile: (itemId, folder) => {
+      void setItemFolder(itemId, folder)
+        .then(refresh)
+        .catch((caught) => setError(errorMessage(caught)));
+    },
+    onMoveFolder: (name, before) => {
+      const without = folderNames.filter((f) => f !== name);
+      const at = without.indexOf(before);
+      const next = [...without.slice(0, at), name, ...without.slice(at)];
+      // Applied locally first: a folder that snaps back while the write lands
+      // reads as the drag having failed.
+      setFolderNames(next);
+      void reorderFolders(next).catch((caught) => {
+        setError(errorMessage(caught));
+        void refreshFolders();
+      });
+    },
+  });
 
   useEffect(() => {
     if (!loading) {
@@ -291,13 +316,8 @@ export function Vault({ onLock }: VaultProps): JSX.Element {
    * looking at means the result is what they saw, even when the view is
    * filtered to a folder.
    */
-  function dropOnRow(targetId: string) {
-    const source = dragging;
-    setDragging(null);
-    const edge = dragOver?.edge ?? "above";
-    setDragOver(null);
-
-    if (!source || source === targetId) return;
+  function dropOnRow(source: string, { id: targetId, edge }: RowTarget) {
+    if (source === targetId) return;
 
     const without = items.filter((item) => item.id !== source).map((item) => item.id);
     const at = without.indexOf(targetId);
@@ -429,20 +449,8 @@ export function Vault({ onLock }: VaultProps): JSX.Element {
             })
             .catch((caught) => setError(errorMessage(caught)));
         }}
-        onReorderFolders={(names) => {
-          // Applied locally first, because a drag that snaps back while the
-          // write lands reads as a failure.
-          setFolderNames(names);
-          void reorderFolders(names).catch((caught) => {
-            setError(errorMessage(caught));
-            void refreshFolders();
-          });
-        }}
-        onDropItem={(itemId, folder) => {
-          void setItemFolder(itemId, folder)
-            .then(refresh)
-            .catch((caught) => setError(errorMessage(caught)));
-        }}
+        dropTarget={drag.state.overFolder}
+        onFolderDragBegin={drag.beginFolder}
       />
 
       {showsItems ? (
@@ -543,16 +551,21 @@ export function Vault({ onLock }: VaultProps): JSX.Element {
                       item={item}
                       selected={item.id === selectedId}
                       showTotpCode={view.kind === "authenticator"}
-                      dropEdge={dragOver?.id === item.id ? dragOver.edge : undefined}
-                      onSelect={setSelectedId}
-                      onContextMenu={openContextMenu}
-                      onDragStart={setDragging}
-                      onDragOverRow={(id, edge) => setDragOver({ id, edge })}
-                      onDropRow={dropOnRow}
-                      onDragEnd={() => {
-                        setDragging(null);
-                        setDragOver(null);
+                      dropEdge={
+                        drag.state.overRow?.id === item.id
+                          ? drag.state.overRow.edge
+                          : undefined
+                      }
+                      lifted={drag.state.itemId === item.id}
+                      onSelect={(id) => {
+                        // A pointerup after moving still produces a click.
+                        // Selecting the row you just filed elsewhere is not
+                        // what was asked for.
+                        if (drag.swallowClick()) return;
+                        setSelectedId(id);
                       }}
+                      onContextMenu={openContextMenu}
+                      onDragBegin={drag.begin}
                     />
                   ))}
                 </ul>
