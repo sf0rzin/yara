@@ -329,6 +329,29 @@ const handlers: Record<string, (args: Record<string, unknown>) => unknown> = {
       .slice(0, Number(args.limit ?? 5))
       .map(summary),
 
+  // The two calls the updates section makes. Without them a dev session
+  // reported "the check failed", which is honest about the mock and useless
+  // for looking at the screen — the state worth seeing is a real answer.
+  //
+  // `?update=available` offers one, so the notice can be looked at without
+  // waiting for a release; `?update=broken` fails, so the sentence that says
+  // why can be looked at without breaking anything.
+  "plugin:app|version": () => "0.3.0",
+  "plugin:updater|check": () => {
+    const asked = new URLSearchParams(window.location.search).get("update");
+    if (asked === "broken") throw new Error("could not reach the update server");
+    if (asked !== "available") return null;
+    return {
+      available: true,
+      currentVersion: "0.3.0",
+      version: "0.3.1",
+      date: null,
+      body: "One fix, and a smaller sidebar.",
+      rid: 1,
+      rawJson: {},
+    };
+  },
+
   folders: () => mockFolders,
 
   create_folder: (args) => {
