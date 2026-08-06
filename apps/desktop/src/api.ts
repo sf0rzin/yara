@@ -17,6 +17,7 @@ export interface ItemSummary {
   kind: ItemKind;
   username: string | null;
   url: string | null;
+  folder: string | null;
   tags: string[];
   hasPassword: boolean;
   hasTotp: boolean;
@@ -180,6 +181,7 @@ export interface ListFilter {
   query?: string;
   kind?: ItemKind;
   withTotp?: boolean;
+  folder?: string | null;
 }
 
 export const vaultExists = () => invoke<boolean>("vault_exists");
@@ -199,12 +201,34 @@ export const listItems = (filter: ListFilter = {}) =>
     query: filter.query ?? "",
     kind: filter.kind ?? null,
     withTotp: filter.withTotp ?? null,
+    folder: filter.folder ?? null,
   });
 
 export const recentItems = (limit = 5) =>
   invoke<ItemSummary[]>("recent_items", { limit });
 
 export const vaultCounts = () => invoke<VaultCounts>("vault_counts");
+
+export const folders = () => invoke<string[]>("folders");
+
+export const createFolder = (name: string) =>
+  invoke<void>("create_folder", { name });
+
+export const renameFolder = (from: string, to: string) =>
+  invoke<void>("rename_folder", { from, to });
+
+/** Removes the folder. Its items stay in the vault, without one. */
+export const deleteFolder = (name: string) =>
+  invoke<number>("delete_folder", { name });
+
+export const reorderFolders = (names: string[]) =>
+  invoke<void>("reorder_folders", { names });
+
+export const setItemFolder = (id: string, folder: string | null) =>
+  invoke<void>("set_item_folder", { id, folder });
+
+export const reorderItems = (ids: string[]) =>
+  invoke<void>("reorder_items", { ids });
 
 export const addItem = (item: NewItem) => invoke<string>("add_item", { item });
 

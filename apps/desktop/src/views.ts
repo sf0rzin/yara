@@ -17,7 +17,8 @@ export type View =
   | { kind: "agents" }
   | { kind: "sync" }
   | { kind: "authenticator" }
-  | { kind: "type"; itemKind: ItemKind };
+  | { kind: "type"; itemKind: ItemKind }
+  | { kind: "folder"; name: string };
 
 const KIND_TITLES: Record<ItemKind, string> = {
   login: "Logins",
@@ -41,6 +42,8 @@ export function viewTitle(view: View): string {
       return "Authenticator";
     case "type":
       return KIND_TITLES[view.itemKind];
+    case "folder":
+      return view.name;
   }
 }
 
@@ -57,6 +60,11 @@ export function viewSubtitle(view: View, counts: VaultCounts | null): string {
   }
   if (view.kind === "recent") {
     return "Most recently updated";
+  }
+  // Counted from what is on screen rather than from VaultCounts, which has no
+  // per-folder tally and would need one kept in step for no gain.
+  if (view.kind === "folder") {
+    return "Drag to reorder";
   }
 
   const total =
