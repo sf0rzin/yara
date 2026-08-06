@@ -2160,3 +2160,10 @@
 .row[data-drop-edge="below"]::after {
   bottom: -1px;
 }
+
+/* The context menu carries a folder list now, so its label needs the same
+   inset the popover's own label has rather than the flush one it inherits. */
+.context-menu .section-label {
+  padding: var(--space-2) var(--space-3) var(--space-1);
+  margin: 0;
+}

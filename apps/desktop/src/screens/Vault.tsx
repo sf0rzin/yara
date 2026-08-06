@@ -326,12 +326,37 @@ export function Vault({ onLock }: VaultProps): JSX.Element {
   function openContextMenu(item: ItemSummary, x: number, y: number) {
     menuOpenerRef.current = document.activeElement as HTMLElement | null;
     setSelectedId(item.id);
+
+    // Measured rather than assumed. The menu used to be two rows and the
+    // clamp was the 52px that took; it now carries a row per folder, and a
+    // fixed number would push the bottom of it off the screen the moment a
+    // third folder existed.
+    const rows = 2 + folderNames.length + 1;
+    const height = 8 + rows * 30 + 2 * 9 + 27;
+
     setContextMenu({
       item,
       x: Math.max(8, Math.min(x, window.innerWidth - 228)),
-      y: Math.max(8, Math.min(y, window.innerHeight - 52)),
+      y: Math.max(8, Math.min(y, window.innerHeight - height - 8)),
       confirming: false,
     });
+  }
+
+  /**
+   * Files the item the menu was opened on.
+   *
+   * Closes first. The menu shows the folder the item is in, so leaving it open
+   * would mean watching the tick move — which reads as a control you are still
+   * operating rather than one that has done its job.
+   */
+  function moveContextItem(folder: string | null) {
+    const item = contextMenu?.item;
+    setContextMenu(null);
+    if (!item || item.folder === folder) return;
+
+    void setItemFolder(item.id, folder)
+      .then(refresh)
+      .catch((caught) => setError(errorMessage(caught)));
   }
 
   async function removeContextItem() {
@@ -591,6 +616,50 @@ export function Vault({ onLock }: VaultProps): JSX.Element {
               <Icon name="pencil" size={13} />
               <span>Edit…</span>
             </button>
+
+            <div className="popover__separator" />
+
+            {/*
+              Filing without dragging. A drag needs both ends on screen at
+              once, and a list scrolled past the folder it is going to leaves
+              no way to aim — which is most of the time once the vault grows.
+
+              The tick marks where the item is now, so the menu reads as the
+              item's state rather than as a list of destinations.
+            */}
+            <p className="section-label">Move to</p>
+            <div className="popover__options">
+              {folderNames.map((folder) => (
+                <button
+                  key={folder}
+                  type="button"
+                  className="popover__item"
+                  role="menuitemradio"
+                  aria-checked={contextMenu.item.folder === folder}
+                  data-chosen={contextMenu.item.folder === folder || undefined}
+                  onClick={() => moveContextItem(folder)}
+                >
+                  <span className="popover__check" aria-hidden="true">
+                    {contextMenu.item.folder === folder && <Icon name="check" size={11} />}
+                  </span>
+                  <span className="popover__label">{folder}</span>
+                </button>
+              ))}
+
+              <button
+                type="button"
+                className="popover__item"
+                role="menuitemradio"
+                aria-checked={contextMenu.item.folder === null}
+                data-chosen={contextMenu.item.folder === null || undefined}
+                onClick={() => moveContextItem(null)}
+              >
+                <span className="popover__check" aria-hidden="true">
+                  {contextMenu.item.folder === null && <Icon name="check" size={11} />}
+                </span>
+                <span className="popover__label">No folder</span>
+              </button>
+            </div>
 
             <div className="popover__separator" />
 
