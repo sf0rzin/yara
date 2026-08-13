@@ -1024,7 +1024,7 @@ mod tests {
         assert!(vault.sync_state().is_none(), "a fresh vault does not sync");
 
         vault.set_sync_state(Some(SyncState {
-            base_url: "https://yara.rindexx.cc".into(),
+            base_url: "https://yara.lat".into(),
             account_id: "acct-1".into(),
             device_id: "dev-1".into(),
             device_seed: "c2VlZA==".into(),
@@ -1044,7 +1044,7 @@ mod tests {
     fn the_device_seed_is_not_readable_in_the_file() {
         let mut vault = UnlockedVault::create_with_params("pw", fast()).unwrap();
         vault.set_sync_state(Some(SyncState {
-            base_url: "https://yara.rindexx.cc".into(),
+            base_url: "https://yara.lat".into(),
             account_id: "acct-1".into(),
             device_id: "dev-1".into(),
             device_seed: "c2VjcmV0LXNlZWQtaGVyZQ==".into(),

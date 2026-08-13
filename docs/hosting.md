@@ -1,8 +1,10 @@
 # Hosting
 
-`yara.rindexx.cc` serves the update manifest the desktop app polls, the sync
-service that lets a vault follow you between machines, and a static site. Scope
-is a handful of invited people, and the design leans on that.
+`yara.lat` serves the update manifest the desktop app polls and the sync
+service that lets a vault follow you between machines. Nothing else — the root
+answers 404, because there is no landing page in this repository and a domain
+that serves three paths has three things to get wrong. Scope is a handful of
+invited people, and the design leans on that.
 
 The organising principle is that no hop is trusted. Update artifacts are signed
 with a key no server here has ever seen. The sync service stores ciphertext it
@@ -19,22 +21,28 @@ out of a production database.
 ## Topology
 
 ```
-client → Cloudflare → beta:443 → DNAT → edge:443 → 10.10.1.21:80
-         (TLS #1)     (dedicated)       (Caddy,    (Caddy, origin)
-                                         TLS #2)
+client → Cloudflare → cloudflared → caddy:8080 → sync:8787
+         (TLS)        (outbound     (container)   (container)
+                       tunnel)
 ```
 
 | | |
 | --- | --- |
-| **beta** | Hetzner dedicated, Falkenstein. `142.132.199.184`, Proxmox VE 9 |
-| **edge** | VM 104, `10.10.1.2`. Routes 80/443 by hostname; holds every cert |
-| **ayla** | VM 101, `10.10.1.20`. Fastify + Postgres, a peer service |
-| **anglis** | VM 103, `10.10.1.22`. Another peer service |
-| **yara** | VM 102, `10.10.1.21`. This project's origin |
+| **sforzin** | Dedicated, Amsterdam. `131.153.158.241`, Ubuntu 24.04, shared with other projects |
+| **cloudflared** | Dials out to Cloudflare. Nothing dials in |
+| **caddy** | Routes by path, serves the two static trees |
+| **sync** | The API and the icon proxy, on the `app` network only |
 
-The origin runs on VM 102: Debian 13, 2 vCPU, 4 GB RAM, 40 GB, on `vmbr1`, the
-private NAT bridge. It has no public address and no forwarded port. Reach it
-with `ssh yara`, which jumps through beta.
+Everything runs as one compose project, `yara`, on a host that carries several
+unrelated projects. The rule that makes that work is one compose project and
+one tunnel per project, publishing no port — see
+`Workspace/docs/servers/sforzin.md`. Reach the host with
+`ssh -i keys/ssh/nora-host/nora-host ubuntu@131.153.158.241`, or `ssh
+nora-direct`.
+
+There is no inbound port anywhere in that chain. The host listens on 22 and
+nothing else that belongs to this project; traffic arrives down a connection
+cloudflared opened outwards.
 
 Why this is small: a conventional login service runs the password KDF itself
 and needs `64 MiB × concurrent logins` of headroom. Here the expensive
@@ -42,56 +50,93 @@ derivation happens on the client, and the server verifies signatures. Sync
 payloads are encrypted items measured in kilobytes; a few dozen users with a
 few hundred items each is a database of a few megabytes.
 
-### Why it goes through a shared edge
+### The topology this replaced
 
-Only one machine can hold `142.132.199.184:443`, and there are three services
-behind it. Giving yara its own public IPv4 would cost about €1.70/month and buy
-isolation; sharing the proxy that has to exist anyway costs nothing. The second
-was chosen deliberately, and the signed-request protocol below is what makes it
-safe.
+An earlier version of this document described a Hetzner dedicated host running
+Proxmox, with the origin on a private bridge behind a shared edge proxy. That
+infrastructure is gone — the host answers on no port — and it is worth being
+explicit that it was never serving anyone: every update check every released
+client ever made failed silently against it.
 
-Two things about that edge are load-bearing rather than incidental:
+One consequence outlives it. Releases up to v0.3.2 have
+`https://yara.rindexx.cc/updates/latest.json` compiled into the binary, and
+that hostname is not served here. Those installs cannot be updated remotely;
+the endpoint is not something a server can move. Anyone on 0.3.2 or earlier has
+to install the next release by hand, after which the endpoint is `yara.lat` and
+the updater works normally.
 
-**The origin declares its site as `http://yara.rindexx.cc`.** Drop the scheme
-and Caddy turns on automatic HTTPS, answers 308 on port 80, and the edge hands
-that redirect back to a client who follows it into the same 308 — a loop that
-reads as a working proxy right up until someone follows it. Peers that do want
-their own TLS get reached over `https://` with an explicit `tls_server_name`,
-since the SNI would otherwise be an IP address no certificate matches.
+### Why it goes through a tunnel
 
-**The origin trusts exactly one address for `X-Forwarded-For`.** If the edge
-moves, `trusted_proxies` moves with it or `{client_ip}` silently becomes either
-the proxy's address or something any caller can forge.
+The host has no free 443 and should not grow one. Every project on it reaches
+the outside the same way: its own `cloudflared`, dialling out, with an internal
+Caddy behind it routing by hostname. Two projects with different domains
+therefore never contend for a port, and neither one's ingress dies with the
+other.
+
+Three things about that arrangement are load-bearing rather than incidental:
+
+**The origin declares its site as `http://yara.lat:8080`.** Drop the scheme and
+Caddy turns on automatic HTTPS, answers 308, and cloudflared hands that
+redirect back to a client who follows it into the same 308 — a loop that reads
+as a working proxy right up until someone follows it.
+
+**Caddy trusts exactly one subnet, and that subnet is pinned in compose.** Let
+Docker allocate it and `trusted_proxies` either stops matching, in which case
+every audit record carries the tunnel's address instead of the client's, or
+starts covering a range some later project also lands in.
+
+**The unmatched-host block is not decoration.** Caddy answers a request that
+matches no route with an empty 200 and its own `Server` header. The host
+matcher does keep such a request away from the sync service — that was tested,
+not assumed — but the bare 200 is a lie and a free banner, so an explicit
+catch-all returns 404 instead.
 
 ### What each hop can see
 
 Cloudflare terminates TLS, so it sees plaintext HTTP: paths, headers, timings,
 and bodies. It cannot read vault items — those are ciphertext at the
 application layer — and it cannot act as a user, because requests are signed
-with a key that never crosses the wire. Ayla sees the same and no more.
+with a key that never crosses the wire.
 
 The honest residue is metadata: how many items an account holds, roughly how
 large each is, when each changed, and which addresses connected when. That
 belongs in the user-facing threat model, not only here.
 
-Client addresses survive both hops. Cloudflare sends `CF-Connecting-IP`, ayla's
-global `trusted_proxies` block believes it and only it, and ayla forwards the
-resolved value as a single `X-Forwarded-For` entry that the origin accepts from
-`10.10.1.20/32` alone. Break either half and `{client_ip}` becomes forgeable by
-any caller — it is the one audit field that has to be true.
+Client addresses survive the hop. Cloudflare sets `CF-Connecting-IP`,
+cloudflared passes it through untouched, and Caddy reads it as `{client_ip}`
+because the tunnel's subnet is in `trusted_proxies`. Trusting a header like
+that is only safe because the listener is unpublished: there is no path to it
+that skips the tunnel. Break that and `{client_ip}` becomes forgeable by any
+caller — it is the one audit field that has to be true.
 
 ## DNS
 
 ```
-A  yara.rindexx.cc → 142.132.199.184   proxied
+CNAME  yara.lat → <tunnel-id>.cfargotunnel.com   proxied
 ```
 
-Proxied is not optional: grey-clouding this record points it at a host whose
-firewall will not answer a non-Cloudflare address. `deploy/dns.ps1` creates it
-idempotently and reads its token from the environment rather than an argument.
+The zone lives on Cloudflare and the registrar is Namecheap, whose nameservers
+have to be set to `elma.ns.cloudflare.com` and `micah.ns.cloudflare.com` —
+the pair this account uses for every zone. Order matters when standing this up:
+create the zone first, then move the nameservers. Point a registrar at
+Cloudflare for a zone that does not exist yet and the domain simply stops
+resolving.
 
-There is no `AAAA`. IPv6 forwarding to guests is off on beta and ayla has no
-public v6 either; adding it later is a separate piece of work.
+Proxied is not a choice here. A `cfargotunnel.com` target only resolves inside
+Cloudflare, so grey-clouding the record leaves it aimed at a name the public
+internet cannot look up. There is no origin address being hidden either way:
+the host has no inbound port to find.
+
+The apex is a CNAME, which is only legal because Cloudflare flattens it at the
+edge and answers with addresses of its own.
+
+There is no `AAAA` and none is needed — Cloudflare answers on both families
+regardless of what the tunnel speaks.
+
+There is no script for this. The old `deploy/dns.ps1` maintained an A record
+against a host whose address could change; a tunnel's DNS target is derived
+from the tunnel id and never moves, so the record is written once when the
+tunnel is created and the script was deleted rather than left to rot.
 
 **A new hostname is public the moment it has a certificate.** Let's Encrypt
 publishes every issuance to Certificate Transparency, and scanners read those
@@ -103,26 +148,32 @@ unknown, and rate limiting matters from day one rather than at launch.
 
 | Path | Serves |
 | --- | --- |
-| `/` | static site |
+| `/` | 404 |
 | `/updates/latest.json` | Tauri update manifest |
 | `/downloads/*` | installers, if self-hosted |
-| `/api/v1/*` | sync service on `127.0.0.1:8787` |
+| `/api/v1/*` | sync service, `sync:8787` on the `app` network |
+
+On the host:
 
 ```
-/srv/yara/site/            landing page
+/opt/yara/                 the git clone; deploy/ is read straight out of it
+/srv/yara/data/            sync.db and the icon cache, owned by uid 10001
 /srv/yara/updates/         latest.json
 /srv/yara/downloads/       installers and .sig files, if self-hosting them
-/var/lib/yara-sync/        sync.db
+/srv/yara/logs/            caddy's access log
+/srv/yara/secrets/         tunnel.env, mode 0600, root
 ```
 
-`deploy/Caddyfile` is the origin's config. It does not speak ACME and names its
-host rather than binding `:80` generally, so it will not answer for anything
-else that reaches the bridge.
+`deploy/Caddyfile` is the origin's config, bind-mounted read-only into the
+container. It does not speak ACME, and the two site blocks between them mean
+every request either matches `yara.lat` or gets a 404.
 
-One operational footgun, learned the hard way: do not run `caddy validate` as
-root when the config declares a file log. It creates the log file as
-`root:root 0600` and the service, which runs as `caddy`, then fails to start
-with a permission error that points at the directory rather than the file.
+The state directory is a bind mount rather than a named volume so that a
+backup, an operator, and `yara-sync purge` all find the database at the path
+this table names. It is owned by uid 10001 because the container declares that
+uid rather than looking a name up — a name would resolve to whatever the base
+image happened to allocate, and the ownership of a bind mount has to survive a
+base image change.
 
 ## Auto-update
 
@@ -146,7 +197,7 @@ restarts the process, which locks it. The button says so.
 `~/.tauri/yara-updater.key`, ACL-restricted to the owner, and **must never be
 placed on this infrastructure**. That separation is the entire security
 argument for the update channel: the machine that serves updates cannot sign
-one. An attacker holding root on beta can withhold or corrupt an update; it
+one. An attacker holding root on sforzin can withhold or corrupt an update; it
 cannot get code onto a user's machine, because the client verifies the minisign
 signature against the public key compiled into it before executing anything.
 
@@ -362,13 +413,13 @@ fetches the `latest.json` asset from the newest release, parses it, and renames
 it into place — same filesystem, so a client polling mid-write reads either the
 old manifest or the new one and never half of either.
 
-Pull rather than push, deliberately. The origin has no public port, so pushing
-from CI would have to jump through beta, which means putting a key that opens
-the Proxmox host into GitHub Actions secrets in order to publish a 300-byte
-JSON file. That is a large grant for a small errand, and it points the wrong
-way: a compromised workflow would reach the infrastructure rather than just the
-release. Pulling costs a few minutes of latency before a release becomes
-visible and buys the absence of that credential entirely.
+Pull rather than push, deliberately. The host has no inbound port but 22, so
+pushing from CI would mean putting an SSH key for a machine that also runs
+somebody else's production into GitHub Actions secrets in order to publish a
+300-byte JSON file. That is a large grant for a small errand, and it points the
+wrong way: a compromised workflow would reach the infrastructure rather than
+just the release. Pulling costs a few minutes of latency before a release
+becomes visible and buys the absence of that credential entirely.
 
 Nothing the mirror fetches is trusted. A hostile manifest cannot produce a
 hostile update, because the installer it names still has to carry a signature
@@ -399,19 +450,30 @@ SSRF vector by construction. Two things hold it:
 - The domain is validated identically in the client and the server. It becomes
   both a URL to fetch and a filename to write, so a slash or a dot-dot would be
   a path traversal and a scheme or a port would aim the fetch elsewhere.
-- The unit denies the private address ranges at the kernel. String validation
-  cannot catch `10-10-1-20.nip.io` — that is a real name that resolves inside
-  the bridge — and an application-level resolve-then-connect check is racy
+- A packet filter denies the private address ranges outright. String validation
+  cannot catch `10-3-0-11.nip.io` — that is a real name that resolves to a
+  private address — and an application-level resolve-then-connect check is racy
   against DNS rebinding by construction.
 
-**The deny list stands alone, with no `IPAddressAllow` beside it.** An allow
-entry wins over a deny entry, so the paired form matches everything on the
-allow side and never consults the deny list. That was found by testing the
-running service, not by reading: the paired form let it reach 10.10.1.2, and
-the deny-only form refuses the same request.
+That filter used to be systemd's `IPAddressDeny`. There is no container
+equivalent, so `deploy/egress-guard.sh` rebuilds it in iptables against the
+`app` subnet, which is pinned in compose for exactly this reason.
 
-`127.0.0.0/8` is deliberately absent from the list, which is what lets Caddy
-reach the service.
+**It hooks `INPUT` as well as `DOCKER-USER`.** This is the part that is easy to
+get wrong. `DOCKER-USER` filters traffic being forwarded onward; traffic
+addressed to one of the host's own addresses is delivered locally and never
+reaches the FORWARD chain at all. With only the `DOCKER-USER` hook, a container
+that resolves a name to the host's public address still reaches sshd on it.
+
+**The deny list stands alone, with no allow list beside it.** In the systemd
+form an `IPAddressAllow` entry wins over a deny entry, so the paired form
+matched everything on the allow side and never consulted the deny list — found
+by testing the running service rather than by reading. The iptables form keeps
+the same shape for the same reason: one `RETURN` for the subnet Caddy needs,
+then denials, then fall-through.
+
+Re-run the guard after `docker compose up`. Docker rebuilds its own chains when
+it creates networks, and that can drop the hooks.
 
 ## Obligations
 
@@ -427,7 +489,8 @@ and GDPR both apply at this scale; neither is onerous when the honest answer to
 - **Public signup.** Different problem entirely — abuse handling, email, and a
   storage curve that stops being a rounding error.
 - **Attachments or file storage.** Disk and bandwidth start to matter.
-- **A second web service on beta.** 80/443 are ayla's; that is the point at
-  which the €1.70 IPv4 stops being avoidable.
+- **Anything that needs an inbound port.** A tunnel carries HTTP well and
+  arbitrary TCP awkwardly. That is the point at which this host stops being the
+  right shape, not the point at which it needs to be bigger.
 
 Traffic growth alone will not do it. This workload does not compute on secrets.
