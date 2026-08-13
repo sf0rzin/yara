@@ -1,0 +1,26 @@
+# Reapplies the egress filter after Docker has built its chains.
+#
+#   sudo install -m 0644 yara-egress.service /etc/systemd/system/
+#   sudo systemctl enable --now yara-egress.service
+#
+# Ordering is the whole point. Docker rewrites DOCKER-USER when it starts and
+# when it creates networks, so a filter installed before it comes up is a
+# filter that is not there when the containers are. `After=docker.service`
+# covers the boot case; the compose wrapper covers the rest, because bringing
+# the stack up recreates networks and can drop the hooks again.
+#
+# RemainAfterExit so `systemctl status` reports the rules as present rather
+# than as a job that finished, which is what an operator is actually asking.
+
+[Unit]
+Description=Deny the yara sync container everything that is not the public internet
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/yara-egress-guard
+
+[Install]
+WantedBy=multi-user.target
