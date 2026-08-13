@@ -537,14 +537,7 @@ export function Vault({ onLock }: VaultProps): JSX.Element {
               ) : loading ? (
                 showLoading ? <ListSkeleton /> : <div className="list-wait" aria-hidden="true" />
               ) : items.length === 0 ? (
-                <EmptyState
-                  centred
-                  icon="key"
-                  title={emptyTitle(view)}
-                  body="Add the first item to make this view useful."
-                  action="New item"
-                  onAction={() => setCreating(true)}
-                />
+                <p className="empty">{emptyMessage(view)}</p>
               ) : (
                 <ul className="rows">
                   {items.map((item) => (
@@ -816,10 +809,10 @@ function EmptyState({
   );
 }
 
-function emptyTitle(view: View): string {
-  if (view.kind === "all") return "Your vault is empty";
-  if (view.kind === "authenticator") return "No authenticator codes yet";
-  if (view.kind === "recent") return "No recent items yet";
-  if (view.kind === "type") return `No ${viewTitle(view).toLowerCase()} yet`;
-  return "Nothing here yet";
+function emptyMessage(view: View): string {
+  if (view.kind === "all") return "No items yet. Use New item above when you're ready.";
+  if (view.kind === "recent") return "No recently updated items yet.";
+  if (view.kind === "type") return `No ${viewTitle(view).toLowerCase()} here yet.`;
+  if (view.kind === "folder") return "Nothing has been added to this folder yet.";
+  return "Nothing here yet.";
 }
