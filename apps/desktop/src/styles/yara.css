@@ -43,11 +43,9 @@
   --control-size: 28px;
   --row-height: 34px;
   --shadow-popover: 0 16px 40px rgba(0, 0, 0, 0.42);
-  --shadow-window: 0 26px 70px rgba(0, 0, 0, 0.26);
 }
 
 body {
-  padding: 16px;
   background: #0b0b0a;
   font-size: 12px;
 }
@@ -56,14 +54,24 @@ body {
   position: relative;
 }
 
+/*
+ * Edge to edge, deliberately.
+ *
+ * This used to inset itself 16px inside a rounded, shadowed card, which is how
+ * a Mac app floats over the desktop. That effect needs a transparent window to
+ * float over, and this one is opaque — `decorations: false` removes the frame
+ * but not the surface behind it. So the inset did not read as a floating
+ * window; it read as a black border painted around the app.
+ *
+ * Making the window transparent would be the other way to fix it, and is a
+ * larger change than it looks on Windows: shadow, hit-testing and resize
+ * borders all become the app's problem.
+ */
 .yara-stage {
   position: relative;
   height: 100%;
   overflow: hidden;
   background: #1b1b19;
-  border: 1px solid #2a2926;
-  border-radius: 17px;
-  box-shadow: var(--shadow-window);
   isolation: isolate;
 }
 
@@ -89,11 +97,18 @@ body {
   height: 30px;
 }
 
-/* Window chrome stays above the app, but only the first 32px are draggable. */
+/*
+ * Window chrome stays above the app, but only the first 32px are draggable.
+ *
+ * Pinned to the window edge. These were inset by 16px to line up with the
+ * floating card the stage used to be; with the stage filling the window, the
+ * same offsets pushed the close button 16px in from the corner and cost the
+ * top-right of the window its drag region.
+ */
 .titlebar {
-  top: 16px;
-  left: 16px;
-  right: 16px;
+  top: 0;
+  left: 0;
+  right: 0;
   height: 32px;
   z-index: 100;
 }
