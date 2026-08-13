@@ -46,6 +46,7 @@
 }
 
 body {
+  padding: 0;
   background: #0b0b0a;
   font-size: 12px;
 }
@@ -162,8 +163,8 @@ body {
   display: flex;
   align-items: flex-end;
   justify-content: space-between;
-  height: 62px;
-  padding: 0 7px 9px;
+  height: 76px;
+  padding: 0 7px 10px;
 }
 
 .sidebar__lockup {
@@ -1193,16 +1194,6 @@ body {
 }
 
 @media (max-width: 1180px) {
-  body {
-    padding: 12px;
-  }
-
-  .titlebar {
-    top: 12px;
-    left: 12px;
-    right: 12px;
-  }
-
   .sidebar {
     padding: 0 8px 8px;
   }
@@ -1297,16 +1288,6 @@ body {
 }
 
 @media (max-width: 760px) {
-  body {
-    padding: 8px;
-  }
-
-  .titlebar {
-    top: 8px;
-    left: 8px;
-    right: 8px;
-  }
-
   :root {
     --sidebar-width: 176px;
   }
@@ -1378,19 +1359,9 @@ body {
 }
 
 @media (max-height: 650px) {
-  body {
-    padding: 8px;
-  }
-
-  .titlebar {
-    top: 8px;
-    left: 8px;
-    right: 8px;
-  }
-
   .sidebar__brand {
-    height: 52px;
-    padding-bottom: 6px;
+    height: 64px;
+    padding-bottom: 7px;
   }
 
   .nav-item,
