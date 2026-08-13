@@ -191,7 +191,7 @@ function Enrol({
   busy: boolean;
   onEnrol: (baseUrl: string, invite: string, password: string, label?: string) => void;
 }): JSX.Element {
-  const [baseUrl, setBaseUrl] = useState("https://yara.rindexx.cc");
+  const [baseUrl, setBaseUrl] = useState("https://yara.lat");
   const [invite, setInvite] = useState("");
   const [password, setPassword] = useState("");
   const [label, setLabel] = useState("");
@@ -472,7 +472,7 @@ function IconSetting(): JSX.Element {
       </div>
 
       <p className="setting__caption">
-        Fetched through {"yara.rindexx.cc"} rather than from each site, so no
+        Fetched through {"yara.lat"} rather than from each site, so no
         site learns you hold an account with it. That server sees which domains
         are asked about. Turning this off deletes what was cached.
       </p>

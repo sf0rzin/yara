@@ -115,3 +115,18 @@ http://yara.lat:8080 {
 		format json
 	}
 }
+
+# Anything arriving under another hostname.
+#
+# The host matcher above already keeps such a request away from the sync
+# service — verified, not assumed — but what Caddy does with a request that
+# matches no route is answer an empty 200 carrying its own Server header. That
+# is a lie and a free banner, in that order.
+#
+# This block should be unreachable: nothing but cloudflared can open this
+# listener, and the tunnel routes exactly one hostname. It exists so that the
+# claim at the top of this file is true rather than nearly true.
+:8080 {
+	header -Server
+	respond 404
+}

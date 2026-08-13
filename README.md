@@ -105,7 +105,7 @@ Tauri rebuild. The mock is dev-only and cannot reach a release build.
 - [x] Agent broker: protocol, grants, audit log, named pipe transport
 - [x] Approval prompt, permissions screen, and the `yara` command line client
 - [x] MCP server, so any MCP-capable agent can use the vault directly
-- [x] Signed auto-update, served from `yara.rindexx.cc`
+- [x] Signed auto-update, served from `yara.lat`
 - [x] Sync service: signed requests, ciphertext the server cannot read
 - [x] Sync in the desktop app: enrol, recovery kit, reconcile
 - [ ] Web app

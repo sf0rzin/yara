@@ -3,33 +3,25 @@
 #
 # Without tombstones a delete on one machine is silently undone by the next
 # sync from another. With them and no purge, the database only grows.
+#
+#   sudo install -m 0644 yara-purge.{service,timer} /etc/systemd/system/
+#   sudo systemctl enable --now yara-purge.timer
+#
+# This used to be a hardened unit running the binary directly. It now reaches
+# into the running container instead, because that is where the binary and the
+# database live — and the sandbox went with them: the container drops every
+# capability, runs read-only, and is denied private-network egress by
+# deploy/egress-guard.sh. Re-stating a systemd sandbox around `docker` would
+# describe the client, not the work.
+#
+# `exec` rather than `run`, so the purge opens the same SQLite file as the
+# service rather than racing a second writer against it.
 
 [Unit]
 Description=Drop expired yara sync tombstones
-After=yara-sync.service
+After=docker.service
+Requires=docker.service
 
 [Service]
 Type=oneshot
-User=yara-sync
-Group=yara-sync
-ExecStart=/usr/local/bin/yara-sync purge
-Environment=YARA_SYNC_DB=/var/lib/yara-sync/sync.db
-
-ProtectSystem=strict
-ProtectHome=yes
-ReadWritePaths=/var/lib/yara-sync
-PrivateTmp=yes
-PrivateDevices=yes
-NoNewPrivileges=yes
-ProtectKernelTunables=yes
-ProtectKernelModules=yes
-ProtectControlGroups=yes
-RestrictNamespaces=yes
-RestrictRealtime=yes
-LockPersonality=yes
-MemoryDenyWriteExecute=yes
-SystemCallArchitectures=native
-SystemCallFilter=@system-service
-# Touches only a local file; it has no reason to reach the network at all.
-RestrictAddressFamilies=AF_UNIX
-IPAddressDeny=any
+ExecStart=/usr/bin/docker compose -f /opt/yara/deploy/docker-compose.yml exec -T sync /usr/local/bin/yara-sync purge

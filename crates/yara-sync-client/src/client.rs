@@ -348,7 +348,7 @@ mod tests {
 
     fn client() -> Client {
         Client::new(
-            "https://yara.rindexx.cc/",
+            "https://yara.lat/",
             "acct-1",
             "dev-1",
             AccountKeypair::generate(),
@@ -358,7 +358,7 @@ mod tests {
 
     #[test]
     fn a_trailing_slash_does_not_become_a_double_one() {
-        assert_eq!(client().base, "https://yara.rindexx.cc");
+        assert_eq!(client().base, "https://yara.lat");
     }
 
     #[test]

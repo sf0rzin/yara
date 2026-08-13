@@ -184,7 +184,7 @@ let mockSync: {
   lastSyncedAt: number | null;
 } = {
   enrolled: true,
-  baseUrl: "https://yara.rindexx.cc",
+  baseUrl: "https://yara.lat",
   accountId: "9f2c41a8-0e77-4c19-b3de-5a1f8c66d204",
   deviceId: "d41d8cd9-8f00-3204-a980-0998ecf8427e",
   lastSyncedAt: unixNow() - 1_800,
@@ -472,7 +472,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => unknown> = {
   sync_enrol: (args) => {
     mockSync = {
       enrolled: true,
-      baseUrl: String(args.baseUrl ?? "https://yara.rindexx.cc"),
+      baseUrl: String(args.baseUrl ?? "https://yara.lat"),
       accountId: "9f2c41a8-0e77-4c19-b3de-5a1f8c66d204",
       deviceId: "d41d8cd9-8f00-3204-a980-0998ecf8427e",
       lastSyncedAt: unixNow(),

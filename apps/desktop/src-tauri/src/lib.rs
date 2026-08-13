@@ -689,7 +689,7 @@ fn resolve_approval(
 // ---- icons -------------------------------------------------------------
 
 /// Where icons are fetched from when this vault has no sync server of its own.
-const DEFAULT_ICON_ORIGIN: &str = "https://yara.rindexx.cc";
+const DEFAULT_ICON_ORIGIN: &str = "https://yara.lat";
 
 /// The icon for a domain, as a data URL, or `None` if there is not one.
 ///
