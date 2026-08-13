@@ -1,5 +1,6 @@
 import { useEffect, useState, type JSX } from "react";
 import { totpCode, type TotpCode } from "../api";
+import { copySecret } from "../lib/clipboard";
 
 const RADIUS = 7;
 const CIRCUMFERENCE = 2 * Math.PI * RADIUS;
@@ -10,6 +11,8 @@ interface TotpBadgeProps {
   prominent?: boolean;
   /** Generic lists only need to say that 2FA exists, without polling a secret. */
   showCode?: boolean;
+  /** Makes the live code an explicit copy control. */
+  copyable?: boolean;
 }
 
 /**
@@ -24,6 +27,7 @@ export function TotpBadge({
   itemId,
   prominent,
   showCode = true,
+  copyable = false,
 }: TotpBadgeProps): JSX.Element | null {
   const [code, setCode] = useState<TotpCode | null>(null);
 
@@ -68,13 +72,8 @@ export function TotpBadge({
   // typing one that will be stale by the time they finish.
   const expiring = code.secondsRemaining <= 5;
 
-  return (
-    <div
-      className="totp"
-      data-prominent={prominent || undefined}
-      data-expiring={expiring || undefined}
-      title={`Expires in ${code.secondsRemaining}s`}
-    >
+  const content = (
+    <>
       <span className="totp__code">
         {code.code.slice(0, 3)}
         <span className="totp__gap" />
@@ -97,6 +96,32 @@ export function TotpBadge({
         One-time code {code.code.split("").join(" ")}, expires in{" "}
         {code.secondsRemaining} seconds
       </span>
+    </>
+  );
+
+  if (copyable) {
+    return (
+      <button
+        type="button"
+        className="totp totp--copyable"
+        data-prominent={prominent || undefined}
+        data-expiring={expiring || undefined}
+        aria-label={`Copy one-time code, ${code.secondsRemaining} seconds remaining`}
+        onClick={() => void copySecret(code.code)}
+      >
+        {content}
+      </button>
+    );
+  }
+
+  return (
+    <div
+      className="totp"
+      data-prominent={prominent || undefined}
+      data-expiring={expiring || undefined}
+      title={`Expires in ${code.secondsRemaining}s`}
+    >
+      {content}
     </div>
   );
 }

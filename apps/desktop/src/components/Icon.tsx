@@ -15,6 +15,13 @@ const paths = {
       <path d="M10.5 10.5 14 14" />
     </>
   ),
+  arrowRight: <path d="M2.5 8h11M9.5 4l4 4-4 4" />,
+  chevronsUpDown: (
+    <>
+      <path d="m5.25 6 2.75-2.75L10.75 6" />
+      <path d="m5.25 10 2.75 2.75L10.75 10" />
+    </>
+  ),
   allItems: <path d="M8 1.75 14.25 8 8 14.25 1.75 8Z" />,
   download: (
     <>

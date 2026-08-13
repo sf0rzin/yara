@@ -306,7 +306,7 @@ function strengthOf(password: string): "weak" | "fair" | "strong" {
 }
 
 const handlers: Record<string, (args: Record<string, unknown>) => unknown> = {
-  vault_exists: () => true,
+  vault_exists: () => !new URLSearchParams(window.location.search).has("setup"),
   is_unlocked: () => unlocked,
   create_vault: () => {
     unlocked = true;

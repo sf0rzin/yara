@@ -21,6 +21,7 @@ import {
 import type { ApprovalPrompt } from "../api";
 import { AgentAccess } from "../components/AgentAccess";
 import { ApprovalDialog } from "../components/ApprovalDialog";
+import { AuthenticatorGrid } from "../components/AuthenticatorGrid";
 import { Icon, type IconName } from "../components/Icon";
 import { ImportDialog } from "../components/ImportPanel";
 import { ItemDetail } from "../components/ItemDetail";
@@ -74,6 +75,7 @@ export function Vault({ onLock }: VaultProps): JSX.Element {
   const [showLoading, setShowLoading] = useState(false);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [folderNames, setFolderNames] = useState<string[]>([]);
+  const [compactDetailOpen, setCompactDetailOpen] = useState(false);
 
 
   const searchRef = useRef<HTMLInputElement>(null);
@@ -213,8 +215,19 @@ export function Vault({ onLock }: VaultProps): JSX.Element {
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (!(event.ctrlKey || event.metaKey)) return;
       const key = event.key.toLowerCase();
+      const target = event.target;
+      const isTyping =
+        target instanceof HTMLElement &&
+        (target.matches("input, textarea, select") || target.isContentEditable);
+
+      if (key === "/" && !isTyping && !event.ctrlKey && !event.metaKey) {
+        event.preventDefault();
+        searchRef.current?.focus();
+        return;
+      }
+
+      if (!(event.ctrlKey || event.metaKey)) return;
       if (key === "k") {
         event.preventDefault();
         searchRef.current?.focus();
@@ -257,6 +270,14 @@ export function Vault({ onLock }: VaultProps): JSX.Element {
     window.addEventListener("keydown", onArrow);
     return () => window.removeEventListener("keydown", onArrow);
   }, [items, selectedId, showsItems, view.kind]);
+
+  useEffect(() => {
+    const closeCompactDetail = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setCompactDetailOpen(false);
+    };
+    window.addEventListener("keydown", closeCompactDetail);
+    return () => window.removeEventListener("keydown", closeCompactDetail);
+  }, []);
 
   const selected = useMemo(
     () =>
@@ -407,11 +428,18 @@ export function Vault({ onLock }: VaultProps): JSX.Element {
       : viewSubtitle(view, counts);
 
   return (
-    <div className="app" data-wide={!showsItems || undefined}>
+    <div
+      className="app"
+      data-wide={!showsItems || undefined}
+      data-detail-open={compactDetailOpen || undefined}
+    >
       <Sidebar
         view={view}
+        query={query}
+        searchRef={searchRef}
         lockRemainingMs={lockRemaining}
         autoLockSeconds={autoLock}
+        onQueryChange={setQuery}
         onChangeAutoLock={(seconds) => {
           setAutoLock(seconds);
           void setAutoLockSeconds(seconds);
@@ -420,6 +448,7 @@ export function Vault({ onLock }: VaultProps): JSX.Element {
           setView(next);
           setQuery("");
           setSelectedId(null);
+          setCompactDetailOpen(false);
         }}
         onLock={lock}
         folders={folderNames}
@@ -453,7 +482,18 @@ export function Vault({ onLock }: VaultProps): JSX.Element {
         onFolderDragBegin={drag.beginFolder}
       />
 
-      {showsItems ? (
+      {view.kind === "authenticator" ? (
+        <AuthenticatorGrid
+          items={items}
+          query={query}
+          loading={loading}
+          error={error}
+          onQueryChange={setQuery}
+          onNew={() => setCreating(true)}
+          onImport={() => setImporting(true)}
+          onContextMenu={openContextMenu}
+        />
+      ) : showsItems ? (
         <>
           <div className="list-column">
             <header className="column__toolbar">
@@ -463,28 +503,14 @@ export function Vault({ onLock }: VaultProps): JSX.Element {
                 </h1>
                 <p className="column__sub" aria-live="polite">{listMeta}</p>
               </div>
-              {/* Import belongs to the screen it applies to, and only that
-                  screen. It is an action on the collection, so it sits beside
-                  the other one rather than on top of the list. */}
-              {view.kind === "authenticator" && (
-                <button
-                  type="button"
-                  className="icon-button icon-button--bordered"
-                  aria-label="Import codes"
-                  title="Import codes"
-                  onClick={() => setImporting(true)}
-                >
-                  <Icon name="download" size={14} />
-                </button>
-              )}
-
               <button
                 type="button"
-                className="icon-button icon-button--bordered"
+                className="button button--primary vault-new-button"
                 aria-label="New item"
                 onClick={() => setCreating(true)}
               >
                 <Icon name="plus" size={14} />
+                <span>New item</span>
               </button>
             </header>
 
@@ -492,7 +518,6 @@ export function Vault({ onLock }: VaultProps): JSX.Element {
               <div className="field">
                 <Icon name="search" size={13} />
                 <input
-                  ref={searchRef}
                   className="field__input"
                   value={query}
                   placeholder="Search your vault"
@@ -550,7 +575,6 @@ export function Vault({ onLock }: VaultProps): JSX.Element {
                       key={item.id}
                       item={item}
                       selected={item.id === selectedId}
-                      showTotpCode={view.kind === "authenticator"}
                       dropEdge={
                         drag.state.overRow?.id === item.id
                           ? drag.state.overRow.edge
@@ -563,6 +587,7 @@ export function Vault({ onLock }: VaultProps): JSX.Element {
                         // what was asked for.
                         if (drag.swallowClick()) return;
                         setSelectedId(id);
+                        setCompactDetailOpen(true);
                       }}
                       onContextMenu={openContextMenu}
                       onDragBegin={drag.begin}
@@ -574,6 +599,14 @@ export function Vault({ onLock }: VaultProps): JSX.Element {
           </div>
 
           <div className="detail-column">
+            <button
+              type="button"
+              className="compact-detail-back"
+              onClick={() => setCompactDetailOpen(false)}
+            >
+              <Icon name="chevronRight" size={13} />
+              <span>Back to items</span>
+            </button>
             {selected ? (
               <ItemDetail item={selected} />
             ) : (
@@ -595,7 +628,13 @@ export function Vault({ onLock }: VaultProps): JSX.Element {
             </div>
           </header>
           <div className="wide-column__body">
-            {view.kind === "agents" ? <AgentAccess /> : <SyncView />}
+            {view.kind === "agents" ? (
+              <AgentAccess />
+            ) : view.kind === "activity" ? (
+              <AgentAccess historyOnly />
+            ) : (
+              <SyncView />
+            )}
           </div>
         </div>
       )}

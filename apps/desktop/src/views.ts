@@ -15,6 +15,7 @@ export type View =
   | { kind: "recent" }
   | { kind: "subscriptions" }
   | { kind: "agents" }
+  | { kind: "activity" }
   | { kind: "sync" }
   | { kind: "authenticator" }
   | { kind: "type"; itemKind: ItemKind }
@@ -36,6 +37,8 @@ export function viewTitle(view: View): string {
       return "Subscriptions";
     case "agents":
       return "Agent access";
+    case "activity":
+      return "Activity";
     case "sync":
       return "Sync";
     case "authenticator":
@@ -51,6 +54,9 @@ export function viewTitle(view: View): string {
 export function viewSubtitle(view: View, counts: VaultCounts | null): string {
   if (view.kind === "agents") {
     return "What programs have been allowed to use";
+  }
+  if (view.kind === "activity") {
+    return "";
   }
   if (view.kind === "sync") {
     return "Keeping this vault on more than one machine";
@@ -86,5 +92,5 @@ export function viewSubtitle(view: View, counts: VaultCounts | null): string {
 
 /** Views that show a list of items rather than a screen of their own. */
 export function isItemList(view: View): boolean {
-  return view.kind !== "agents" && view.kind !== "sync";
+  return view.kind !== "agents" && view.kind !== "activity" && view.kind !== "sync";
 }

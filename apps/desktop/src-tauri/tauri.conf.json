@@ -15,8 +15,8 @@
         "title": "yara",
         "width": 1100,
         "height": 720,
-        "minWidth": 880,
-        "minHeight": 600,
+        "minWidth": 720,
+        "minHeight": 520,
         "resizable": true,
         "decorations": false
       }

@@ -1,6 +1,7 @@
 import { useEffect, useState, type JSX } from "react";
 import { vaultExists } from "./api";
 import { TitleBar } from "./components/TitleBar";
+import { YaraLogo } from "./components/YaraLogo";
 import { Unlock } from "./screens/Unlock";
 import { Vault } from "./screens/Vault";
 
@@ -25,44 +26,36 @@ export default function App(): JSX.Element {
     return () => clearTimeout(timer);
   }, [screen]);
 
-  // The title bar is outside the switch: the frame is off, so without it a
-  // vault stuck on the loading frame would be a window nobody can move or
-  // close.
   return (
     <>
       <TitleBar />
-      {content(screen, setScreen, showLoading)}
+      <div className="yara-stage" data-screen={screen}>
+        {screen === "unlocked" && (
+          <Vault onLock={() => setScreen("locked")} />
+        )}
+
+        {(screen === "locked" || screen === "setup") && (
+          <Unlock
+            mode={screen === "setup" ? "setup" : "unlock"}
+            onAuthenticated={() => setScreen("unlocked")}
+          />
+        )}
+
+        {screen === "loading" && (
+          <main className="loading-gate">
+            {showLoading && (
+              <div
+                className="loading-gate__brand"
+                role="status"
+                aria-label="Opening Yara"
+              >
+                <YaraLogo className="loading-gate__logo" decorative />
+                <span>yara</span>
+              </div>
+            )}
+          </main>
+        )}
+      </div>
     </>
   );
-}
-
-function content(
-  screen: Screen,
-  setScreen: (screen: Screen) => void,
-  showLoading: boolean,
-): JSX.Element {
-  switch (screen) {
-    case "loading":
-      return (
-        <main className="gate">
-          {showLoading && (
-            <div className="gate__card gate__card--loading" role="status">
-              <span className="gate__mark" aria-hidden="true" />
-              <p className="gate__sub">Opening local vault…</p>
-            </div>
-          )}
-        </main>
-      );
-
-    case "unlocked":
-      return <Vault onLock={() => setScreen("locked")} />;
-
-    default:
-      return (
-        <Unlock
-          mode={screen === "setup" ? "setup" : "unlock"}
-          onOpen={() => setScreen("unlocked")}
-        />
-      );
-  }
 }

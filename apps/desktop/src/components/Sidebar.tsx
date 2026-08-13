@@ -1,8 +1,9 @@
-import { useState, type JSX } from "react";
+import { useState, type JSX, type RefObject } from "react";
 import { formatCountdown } from "../lib/useAutoLock";
+import type { View } from "../views";
 import { AutoLockMenu } from "./AutoLockMenu";
 import { Icon, type IconName } from "./Icon";
-import type { View } from "../views";
+import { YaraLogo } from "./YaraLogo";
 
 interface NavEntry {
   view: View;
@@ -12,20 +13,35 @@ interface NavEntry {
 
 interface SidebarProps {
   view: View;
+  query: string;
+  searchRef: RefObject<HTMLInputElement | null>;
   lockRemainingMs: number;
   autoLockSeconds: number | null;
   folders: string[];
+  onQueryChange: (query: string) => void;
   onSelect: (view: View) => void;
   onChangeAutoLock: (seconds: number | null) => void;
   onLock: () => void;
   onCreateFolder: (name: string) => void;
   onRenameFolder: (from: string, to: string) => void;
   onDeleteFolder: (name: string) => void;
-  /** The folder a drag is currently over. `null` inside means "No folder". */
   dropTarget: { name: string | null } | null;
-  /** Begins dragging a folder, for reordering. */
   onFolderDragBegin: (name: string, event: React.PointerEvent) => void;
 }
+
+const PRIMARY: NavEntry[] = [
+  { view: { kind: "all" }, label: "All items", icon: "allItems" },
+  { view: { kind: "authenticator" }, label: "Authenticator", icon: "authenticator" },
+  { view: { kind: "agents" }, label: "AI access", icon: "sparkle" },
+  { view: { kind: "activity" }, label: "Activity", icon: "recent" },
+];
+
+const COLLECTIONS: NavEntry[] = [
+  { view: { kind: "type", itemKind: "login" }, label: "Logins", icon: "login" },
+  { view: { kind: "type", itemKind: "card" }, label: "Cards", icon: "card" },
+  { view: { kind: "type", itemKind: "note" }, label: "Secure notes", icon: "note" },
+  { view: { kind: "subscriptions" }, label: "Subscriptions", icon: "calendar" },
+];
 
 function isSameView(a: View, b: View): boolean {
   return (
@@ -36,9 +52,12 @@ function isSameView(a: View, b: View): boolean {
 
 export function Sidebar({
   view,
+  query,
+  searchRef,
   lockRemainingMs,
   autoLockSeconds,
   folders,
+  onQueryChange,
   onSelect,
   onChangeAutoLock,
   onLock,
@@ -51,43 +70,6 @@ export function Sidebar({
   const [menuOpen, setMenuOpen] = useState(false);
   const [renaming, setRenaming] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
-  // Collections are ways of looking at the vault. Subscriptions sits here
-  // rather than under Types because a subscription is an attachment on a
-  // login, not a kind of item — a charge with no account behind it is trivia.
-  //
-  // Agent access is here for the same reason. It is a way of looking at the
-  // vault — which credentials programs can reach — and it used to carry a
-  // heading of its own, which meant a group label introducing exactly one row.
-  // A heading that groups one thing is not grouping.
-  const collections: NavEntry[] = [
-    { view: { kind: "all" }, label: "All items", icon: "allItems" },
-    { view: { kind: "recent" }, label: "Recent", icon: "recent" },
-    { view: { kind: "subscriptions" }, label: "Subscriptions", icon: "calendar" },
-    { view: { kind: "agents" }, label: "Agent access", icon: "sparkle" },
-  ];
-
-  const types: NavEntry[] = [
-    {
-      view: { kind: "type", itemKind: "login" },
-      label: "Logins",
-      icon: "login",
-    },
-    {
-      view: { kind: "type", itemKind: "card" },
-      label: "Cards",
-      icon: "card",
-    },
-    {
-      view: { kind: "type", itemKind: "note" },
-      label: "Notes",
-      icon: "note",
-    },
-    {
-      view: { kind: "authenticator" },
-      label: "Authenticator",
-      icon: "authenticator",
-    },
-  ];
 
   const renderEntry = (entry: NavEntry) => {
     const active = isSameView(view, entry.view);
@@ -101,7 +83,7 @@ export function Sidebar({
           title={entry.label}
           onClick={() => onSelect(entry.view)}
         >
-          <Icon name={entry.icon} size={16} />
+          <Icon name={entry.icon} size={15} />
           <span className="nav-item__label">{entry.label}</span>
         </button>
       </li>
@@ -110,104 +92,119 @@ export function Sidebar({
 
   return (
     <aside className="sidebar">
-      <div className="sidebar__brand">
-        <span className="sidebar__name" aria-label="yara">yara</span>
-      </div>
+      <header className="sidebar__brand">
+        <span className="sidebar__lockup">
+          <YaraLogo className="sidebar__logo" decorative />
+          <span className="sidebar__name">yara</span>
+        </span>
+        <span className="sidebar__vault-switch" aria-hidden="true">
+          <Icon name="chevronsUpDown" size={13} />
+        </span>
+      </header>
 
-      <nav className="sidebar__nav">
-        <p className="section-label">Collections</p>
-        <ul>{collections.map(renderEntry)}</ul>
-
-        <p className="section-label section-label--spaced">Types</p>
-        <ul>{types.map(renderEntry)}</ul>
-
-        <div className="folders__head">
-          <p className="section-label section-label--spaced">Folders</p>
+      <label className="sidebar__search">
+        <Icon name="search" size={15} />
+        <input
+          ref={searchRef}
+          type="search"
+          value={query}
+          placeholder="Search"
+          aria-label="Search vault"
+          onChange={(event) => onQueryChange(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Escape") {
+              onQueryChange("");
+              event.currentTarget.blur();
+            }
+          }}
+        />
+        {query ? (
           <button
             type="button"
-            className="icon-button icon-button--tiny"
-            aria-label="New folder"
-            title="New folder"
-            onClick={() => setAdding(true)}
+            className="sidebar__search-clear"
+            aria-label="Clear search"
+            onClick={() => onQueryChange("")}
           >
-            <Icon name="plus" size={12} />
+            <Icon name="close" size={11} />
           </button>
-        </div>
+        ) : (
+          <kbd>/</kbd>
+        )}
+      </label>
 
-        <ul>
-          {folders.map((folder) => {
-            const active = view.kind === "folder" && view.name === folder;
-            if (renaming === folder) {
-              return (
-                <li key={folder}>
+      <nav className="sidebar__nav" aria-label="Vault navigation">
+        <ul>{PRIMARY.map(renderEntry)}</ul>
+
+        <p className="section-label section-label--spaced">Collections</p>
+        <ul>{COLLECTIONS.map(renderEntry)}</ul>
+
+        <>
+            <div className="folders__head">
+              <p className="section-label section-label--spaced">Folders</p>
+              <button
+                type="button"
+                className="icon-button icon-button--tiny"
+                aria-label="New folder"
+                title="New folder"
+                onClick={() => setAdding(true)}
+              >
+                <Icon name="plus" size={12} />
+              </button>
+            </div>
+
+            <ul>
+              {folders.map((folder) => {
+                const active = view.kind === "folder" && view.name === folder;
+                if (renaming === folder) {
+                  return (
+                    <li key={folder}>
+                      <FolderInput
+                        initial={folder}
+                        onCommit={(name) => {
+                          setRenaming(null);
+                          if (name && name !== folder) onRenameFolder(folder, name);
+                        }}
+                        onCancel={() => setRenaming(null)}
+                      />
+                    </li>
+                  );
+                }
+
+                return (
+                  <li key={folder}>
+                    <button
+                      type="button"
+                      className="nav-item"
+                      title={folder}
+                      data-active={active || undefined}
+                      data-drop={dropTarget?.name === folder || undefined}
+                      aria-current={active ? "page" : undefined}
+                      data-folder-drop={folder}
+                      onClick={() => onSelect({ kind: "folder", name: folder })}
+                      onDoubleClick={() => setRenaming(folder)}
+                      onPointerDown={(event) => onFolderDragBegin(folder, event)}
+                    >
+                      <Icon name="folder" size={15} />
+                      <span className="nav-item__label">{folder}</span>
+                    </button>
+                  </li>
+                );
+              })}
+
+              {adding && (
+                <li>
                   <FolderInput
-                    initial={folder}
+                    initial=""
                     onCommit={(name) => {
-                      setRenaming(null);
-                      if (name && name !== folder) onRenameFolder(folder, name);
+                      setAdding(false);
+                      if (name) onCreateFolder(name);
                     }}
-                    onCancel={() => setRenaming(null)}
+                    onCancel={() => setAdding(false)}
                   />
                 </li>
-              );
-            }
-
-            return (
-              <li key={folder}>
-                <button
-                  type="button"
-                  className="nav-item"
-                  data-active={active || undefined}
-                  data-drop={dropTarget?.name === folder || undefined}
-                  aria-current={active ? "page" : undefined}
-                  // What the drag hit-tests for. The value is the folder; an
-                  // empty one means "no folder", below.
-                  data-folder-drop={folder}
-                  onClick={() => onSelect({ kind: "folder", name: folder })}
-                  onDoubleClick={() => setRenaming(folder)}
-                  onPointerDown={(event) => onFolderDragBegin(folder, event)}
-                >
-                  <Icon name="folder" size={16} />
-                  <span className="nav-item__label">{folder}</span>
-                </button>
-              </li>
-            );
-          })}
-
-          {adding && (
-            <li>
-              <FolderInput
-                initial=""
-                onCommit={(name) => {
-                  setAdding(false);
-                  if (name) onCreateFolder(name);
-                }}
-                onCancel={() => setAdding(false)}
-              />
-            </li>
-          )}
-
-          {/*
-            Dropping here takes an item out of its folder. Without it the only
-            way back out would be the edit dialog, and a thing you can drag in
-            should be draggable out.
-          */}
-          <li>
-            <button
-              type="button"
-              className="nav-item nav-item--loose"
-              data-drop={(dropTarget && dropTarget.name === null) || undefined}
-              // Empty rather than absent: the attribute has to be present for
-              // the hit test to find this row, and its emptiness is what says
-              // "no folder".
-              data-folder-drop=""
-              onClick={() => onSelect({ kind: "all" })}
-            >
-              <Icon name="allItems" size={16} />
-              <span className="nav-item__label">No folder</span>
-            </button>
-          </li>
-        </ul>
+              )}
+            </ul>
+        </>
 
         {view.kind === "folder" && (
           <button
@@ -220,12 +217,7 @@ export function Sidebar({
         )}
       </nav>
 
-      {/*
-        States what is true now — unlocked — and what happens next, rather than
-        naming the vault twice. The countdown is the only moving thing in the
-        sidebar, so it earns its place by being the one fact that changes.
-      */}
-      <div className="sidebar__footer-anchor">
+      <footer className="sidebar__footer-anchor">
         {menuOpen && (
           <AutoLockMenu
             current={autoLockSeconds}
@@ -246,16 +238,16 @@ export function Sidebar({
           className="sidebar__utility"
           data-active={view.kind === "sync" || undefined}
           aria-current={view.kind === "sync" ? "page" : undefined}
-          title="Sync & settings"
           onClick={() => onSelect({ kind: "sync" })}
         >
-          <Icon name="sync" size={15} />
-          <span>Sync &amp; settings</span>
+          <Icon name="sync" size={14} />
+          <span>Settings</span>
         </button>
 
         <button
           type="button"
           className="sidebar__footer"
+          aria-label="Lock vault"
           aria-haspopup="menu"
           aria-expanded={menuOpen}
           onClick={() => setMenuOpen((open) => !open)}
@@ -264,26 +256,20 @@ export function Sidebar({
             <Icon name="lock" size={14} />
           </span>
           <span className="sidebar__footer-text">
-            <span className="sidebar__footer-title">Unlocked</span>
+            <span className="sidebar__footer-title">Vault unlocked</span>
             <span className="sidebar__footer-sub">
               {autoLockSeconds === null
                 ? "Until you lock it"
                 : `Locks in ${formatCountdown(lockRemainingMs)}`}
             </span>
           </span>
+          <Icon name="chevronRight" size={13} />
         </button>
-      </div>
+      </footer>
     </aside>
   );
 }
 
-/**
- * The inline box for naming a folder.
- *
- * Commits on Enter or on losing focus, cancels on Escape. A dialog for one
- * short string would be three interactions where one will do, and naming a
- * folder is not a decision that wants confirming.
- */
 function FolderInput({
   initial,
   onCommit,
