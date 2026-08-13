@@ -16,9 +16,16 @@
 #     Caddy turns on automatic HTTPS and answers 308 on 8080, which cloudflared
 #     hands back to a client who follows it into the same 308 — a loop that
 #     reads as a working proxy right up until someone follows it.
-#   - Naming the host rather than binding `:8080` generally means this origin
-#     will not answer for a hostname nobody configured.
-
+#   - Naming the host keeps a request for anything else out of the sync
+#     service, but Caddy's own answer to an unmatched request is a bare 200,
+#     so the catch-all block at the bottom is what makes it a 404.
+#   - The admin API is off, so `caddy reload` has nothing to talk to. Apply a
+#     change to this file with
+#
+#       sudo docker compose -f /opt/yara/deploy/docker-compose.yml restart caddy
+#
+# Run `caddy fmt` before committing a change here; the formatter wants no blank
+# line between this header and the block below it.
 {
 	# Real client addresses, restored across the one hop that exists.
 	#
