@@ -114,6 +114,27 @@ body {
   z-index: 100;
 }
 
+/*
+ * The sidebar's top strip stops being a drag handle once there is a vault.
+ *
+ * The brand and the vault switch sit in the top 32px by design, and the drag
+ * layer covers that band from x=0. It wins the hit test no matter what the
+ * sidebar's z-index says — `.sidebar` opens its own stacking context at
+ * z-index 2, so nothing inside it can climb over a titlebar at 100, and
+ * `pointer-events` on the layer above is what decides the click anyway.
+ * Measured before this: the top 9.5px of the vault switch returned
+ * `titlebar__drag` from elementFromPoint and dragged the window.
+ *
+ * Raising the whole sidebar instead would put it over `.overlay`, which
+ * declares no z-index of its own — every dialog would open behind it.
+ *
+ * Scoped with `:has()` so the unlock screen, which has no sidebar and no
+ * controls up there, keeps the full width to drag by.
+ */
+.titlebar:has(~ .yara-stage[data-screen="unlocked"]) .titlebar__drag {
+  margin-left: var(--sidebar-width);
+}
+
 .titlebar__controls {
   gap: 1px;
   padding: 3px 7px 0 0;
