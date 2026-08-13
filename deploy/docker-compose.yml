@@ -1,0 +1,102 @@
+# The `yara` compose project, on sforzin.
+#
+#   sudo docker compose -p yara -f /opt/yara/deploy/docker-compose.yml up -d
+#
+# One compose project, one tunnel, no published ports — the convention that
+# lets this host carry several unrelated projects. See
+# Workspace/docs/servers/sforzin.md for why, and docs/hosting.md for what each
+# hop can see.
+
+name: yara
+
+services:
+  # The sync API and the icon proxy. Reachable from Caddy and from nothing
+  # else: no ports are published, and `app` is the only network it joins.
+  sync:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    image: yara-sync:local
+    restart: unless-stopped
+    networks:
+      - app
+    volumes:
+      # The database and the icon cache. A bind mount rather than a named
+      # volume so that `yara-sync purge`, backups and an operator looking for
+      # the file all find it at the path the documentation names.
+      - /srv/yara/data:/var/lib/yara-sync
+    # It holds other people's ciphertext and fetches from the public internet.
+    # Neither job needs a writable root, a new privilege, or a capability.
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+
+  # Routes by path and serves the two static trees. Terminates nothing:
+  # Cloudflare holds the certificate and cloudflared carries the plaintext the
+  # last few inches.
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      - sync
+    networks:
+      - edge
+      - app
+    volumes:
+      - /opt/yara/deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - /srv/yara/updates:/srv/yara/updates:ro
+      - /srv/yara/downloads:/srv/yara/downloads:ro
+      - /srv/yara/logs:/var/log/caddy
+      - caddy-data:/data
+      - caddy-config:/config
+    security_opt:
+      - no-new-privileges:true
+
+  # The only thing on this host that talks to the outside world on purpose.
+  # It dials out; nothing dials in.
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    depends_on:
+      - caddy
+    networks:
+      - edge
+    # The connector token. Kept in a file on the host rather than inline here,
+    # because this file is in git and that token is enough to attach a new
+    # connector to the tunnel.
+    env_file:
+      - /srv/yara/secrets/tunnel.env
+    command: tunnel --no-autoupdate --metrics 0.0.0.0:2000 run
+    security_opt:
+      - no-new-privileges:true
+
+networks:
+  # cloudflared reaches Caddy and nothing else.
+  #
+  # The subnet is pinned because Caddy's `trusted_proxies` names it. Let Docker
+  # pick and the trust either stops matching — every audit record then carries
+  # the tunnel's address instead of the client's — or starts covering a range
+  # that some future project also lands in.
+  edge:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/24
+
+  # Caddy reaches sync. Not `internal: true`, because the icon proxy has to
+  # fetch favicons from the public internet; what stands in for that is the
+  # egress filter in deploy/egress-guard.sh, which is the container-side
+  # replacement for the systemd IPAddressDeny this service used to run behind.
+  app:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.1.0/24
+
+volumes:
+  caddy-data:
+  caddy-config:
