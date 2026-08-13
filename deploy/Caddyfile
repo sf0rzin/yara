@@ -1,39 +1,47 @@
-# yara.rindexx.cc — the origin, on VM 102 (10.10.1.21).
+# yara.lat — the origin, inside the `yara` compose project on sforzin.
 #
-# Install to /etc/caddy/Caddyfile on that VM. See docs/hosting.md for the
-# topology and why none of the hops are trusted.
+# The chain is
 #
-#   caddy validate --config /etc/caddy/Caddyfile
-#   systemctl reload caddy
+#   client → Cloudflare (TLS) → cloudflared (outbound tunnel) → here :8080
 #
-# This does not terminate TLS and does not speak ACME. The chain is
+# There is no inbound port anywhere in that line. cloudflared dials *out* to
+# Cloudflare and traffic descends the connection it opened, which is what lets
+# this host run several projects without any of them owning 443.
 #
-#   client → Cloudflare → beta:443 (DNAT) → edge:443 (Caddy, TLS) → here :80
+# Consequences worth stating, because they are what this file is shaped by:
 #
-# so certificates are the edge's problem and the last hop is plaintext across a
-# private bridge on the same physical host. The `http://` scheme on the site
-# address is what disables automatic HTTPS; naming the host rather than `:80`
-# also stops this origin from answering for anything else.
-#
-# Declaring the site as `http://` is not cosmetic. Without it Caddy turns on
-# automatic HTTPS, answers 308 on port 80, and the edge faithfully hands that
-# redirect back to a client who follows it straight into the same 308 — a loop
-# that looks like a working proxy until you follow it.
+#   - No TLS here and no ACME. Cloudflare holds the certificate; the last hop
+#     is plaintext HTTP across a container network on one machine.
+#   - The site address is `http://` and carries a port. Drop the scheme and
+#     Caddy turns on automatic HTTPS and answers 308 on 8080, which cloudflared
+#     hands back to a client who follows it into the same 308 — a loop that
+#     reads as a working proxy right up until someone follows it.
+#   - Naming the host rather than binding `:8080` generally means this origin
+#     will not answer for a hostname nobody configured.
 
 {
-	# Real client addresses, restored one hop at a time.
+	# Real client addresses, restored across the one hop that exists.
 	#
-	# The edge is the only thing that may speak for a client here. It in turn
-	# only believes Cloudflare — see the mirror of this block in its Caddyfile.
-	# Get either half wrong and any caller can forge {client_ip}, which is the
-	# one field in the audit log that has to be true.
+	# Cloudflare sets CF-Connecting-IP and cloudflared passes it through
+	# untouched. Trusting it is only safe because the sole thing that can reach
+	# this listener is the cloudflared container on this network — the port is
+	# not published, so there is no path from outside that skips the tunnel.
+	#
+	# The subnet is pinned in docker-compose.yml for exactly this reason. Let
+	# Docker allocate it and this line silently starts trusting whatever else
+	# lands in the range, or stops matching and {client_ip} becomes the
+	# tunnel's own address in every audit record.
 	servers {
-		trusted_proxies static 10.10.1.2/32
-		client_ip_headers X-Forwarded-For
+		trusted_proxies static 172.28.0.0/24
+		client_ip_headers CF-Connecting-IP
 	}
+
+	# Nothing here is a public-facing brand, and the version banner is free
+	# reconnaissance.
+	admin off
 }
 
-http://yara.rindexx.cc {
+http://yara.lat:8080 {
 	encode zstd gzip
 
 	header {
@@ -46,8 +54,8 @@ http://yara.rindexx.cc {
 	#
 	# A short max-age rather than none: clients poll on launch, so a stale
 	# minute is invisible, but an uncached manifest turns every start of every
-	# install into an origin hit. Publish by atomic rename — a client that
-	# reads a half-written file reports a failed update check.
+	# install into an origin hit. The mirror publishes by atomic rename — a
+	# client that reads a half-written file reports a failed update check.
 	handle_path /updates/* {
 		root * /srv/yara/updates
 		header Content-Type "application/json"
@@ -55,8 +63,8 @@ http://yara.rindexx.cc {
 
 		# 204 rather than 404 when there is no manifest yet. The updater reads
 		# an empty response as "you are current", which is true, and it keeps a
-		# fresh install from logging a failed update check before the first
-		# release exists.
+		# fresh deployment from logging a failed update check before the mirror
+		# has run once.
 		@exists file
 		handle @exists {
 			file_server
@@ -66,11 +74,11 @@ http://yara.rindexx.cc {
 		}
 	}
 
-	# Installers, if they are self-hosted rather than served from GitHub
+	# Installers, if they are ever self-hosted rather than served from GitHub
 	# Releases. Release artifacts never change under a given name, so they are
 	# immutable; the .sig files must be reachable alongside them.
 	#
-	# Read the bandwidth note in docs/hosting.md before enabling this.
+	# Empty today. Read the bandwidth note in docs/hosting.md before filling it.
 	handle_path /downloads/* {
 		root * /srv/yara/downloads
 		header Cache-Control "public, max-age=604800, immutable"
@@ -79,24 +87,24 @@ http://yara.rindexx.cc {
 
 	# Sync service, and the icon proxy alongside it.
 	#
-	# Account ids travel in the request body and session tokens in the
-	# Authorization header, never in the path, so this log records who
-	# connected and when but not what they hold. Rate limiting is the
-	# service's job: stock Caddy has none, and adding it means maintaining
-	# a custom xcaddy build.
+	# Account ids travel in the request body and signatures in headers, never
+	# in the path, so the log below records who connected and when but not what
+	# they hold. Rate limiting is the service's job: stock Caddy has none, and
+	# adding one means maintaining a custom xcaddy build.
 	handle /api/* {
 		request_body {
 			max_size 4MB
 		}
-		reverse_proxy 127.0.0.1:8787 {
+		reverse_proxy sync:8787 {
 			header_up X-Real-IP {client_ip}
 		}
 	}
 
+	# Nothing at the root, deliberately. There is no landing page in this
+	# repository, and a domain that serves only the three paths above has
+	# exactly three things to get wrong.
 	handle {
-		root * /srv/yara/site
-		try_files {path} {path}/ /index.html
-		file_server
+		respond 404
 	}
 
 	log {

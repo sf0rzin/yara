@@ -1,0 +1,11 @@
+# The build context is the repository root, because Cargo needs every
+# workspace manifest to resolve the lockfile. These are the parts it does not
+# need — and node_modules alone is the difference between a context measured in
+# megabytes and one measured in hundreds.
+.git
+.github
+target
+node_modules
+apps/desktop/dist
+apps/desktop/src-tauri/target
+docs
