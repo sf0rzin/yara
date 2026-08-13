@@ -671,18 +671,28 @@ body {
 
 .auth-view__actions {
   display: flex;
+  flex-shrink: 0;
   align-items: center;
   gap: 7px;
+}
+
+.auth-view__actions .icon-button {
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
 }
 
 .auth-view__tools {
   display: flex;
   align-items: center;
-  padding: 14px 18px 10px;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 18px 12px;
 }
 
 .auth-view__search {
-  width: min(310px, 100%);
+  width: min(360px, 100%);
+  flex: 1;
 }
 
 .auth-grid {
@@ -804,8 +814,8 @@ body {
   display: grid;
   flex: 1;
   place-items: center;
-  align-content: center;
-  gap: 9px;
+  margin: 0;
+  padding: 24px;
   color: #706e68;
 }
 

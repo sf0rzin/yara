@@ -32,20 +32,6 @@ export function AuthenticatorGrid({
           <h1>Authenticator</h1>
           <span>{items.length} {items.length === 1 ? "code" : "codes"}</span>
         </div>
-        <div className="auth-view__actions">
-          <button
-            type="button"
-            className="icon-button icon-button--bordered"
-            aria-label="Import codes"
-            onClick={onImport}
-          >
-            <Icon name="download" size={14} />
-          </button>
-          <button type="button" className="button button--primary" onClick={onNew}>
-            <Icon name="plus" size={14} />
-            <span>New code</span>
-          </button>
-        </div>
       </header>
 
       <div className="auth-view__tools">
@@ -59,6 +45,21 @@ export function AuthenticatorGrid({
             onChange={(event) => onQueryChange(event.target.value)}
           />
         </label>
+        <div className="auth-view__actions">
+          <button
+            type="button"
+            className="icon-button icon-button--bordered"
+            aria-label="Import codes"
+            title="Import codes"
+            onClick={onImport}
+          >
+            <Icon name="download" size={14} />
+          </button>
+          <button type="button" className="button button--primary" onClick={onNew}>
+            <Icon name="plus" size={14} />
+            <span>New code</span>
+          </button>
+        </div>
       </div>
 
       {error && (
@@ -75,10 +76,9 @@ export function AuthenticatorGrid({
           ))}
         </div>
       ) : items.length === 0 ? (
-        <div className="auth-empty">
-          <Icon name="authenticator" size={20} />
-          <p>{query ? "No codes match this search." : "No authenticator codes yet."}</p>
-        </div>
+        <p className="empty auth-empty">
+          {query ? "No codes match this search." : "No authenticator codes yet."}
+        </p>
       ) : (
         <div className="auth-grid">
           {items.map((item) => (
