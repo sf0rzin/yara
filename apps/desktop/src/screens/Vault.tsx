@@ -538,6 +538,7 @@ export function Vault({ onLock }: VaultProps): JSX.Element {
                 showLoading ? <ListSkeleton /> : <div className="list-wait" aria-hidden="true" />
               ) : items.length === 0 ? (
                 <EmptyState
+                  centred
                   icon="key"
                   title={emptyTitle(view)}
                   body="Add the first item to make this view useful."
