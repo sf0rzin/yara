@@ -102,12 +102,6 @@ export function AgentAccess({ historyOnly = false }: { historyOnly?: boolean } =
           </div>
         )}
       </section>}
-
-      {!historyOnly && <p className="panel__note">
-        yara can only vouch for what it was asked. A program that already runs
-        as you can read this app's memory while the vault is unlocked, and no
-        password manager running in your own session can prevent that.
-      </p>}
     </div>
   );
 }
