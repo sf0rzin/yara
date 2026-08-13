@@ -1,4 +1,4 @@
-import { useState, type JSX, type RefObject } from "react";
+import { useState, type JSX } from "react";
 import { formatCountdown } from "../lib/useAutoLock";
 import type { View } from "../views";
 import { AutoLockMenu } from "./AutoLockMenu";
@@ -13,12 +13,9 @@ interface NavEntry {
 
 interface SidebarProps {
   view: View;
-  query: string;
-  searchRef: RefObject<HTMLInputElement | null>;
   lockRemainingMs: number;
   autoLockSeconds: number | null;
   folders: string[];
-  onQueryChange: (query: string) => void;
   onSelect: (view: View) => void;
   onChangeAutoLock: (seconds: number | null) => void;
   onLock: () => void;
@@ -52,12 +49,9 @@ function isSameView(a: View, b: View): boolean {
 
 export function Sidebar({
   view,
-  query,
-  searchRef,
   lockRemainingMs,
   autoLockSeconds,
   folders,
-  onQueryChange,
   onSelect,
   onChangeAutoLock,
   onLock,
@@ -101,36 +95,6 @@ export function Sidebar({
           <Icon name="chevronsUpDown" size={13} />
         </span>
       </header>
-
-      <label className="sidebar__search">
-        <Icon name="search" size={15} />
-        <input
-          ref={searchRef}
-          type="search"
-          value={query}
-          placeholder="Search"
-          aria-label="Search vault"
-          onChange={(event) => onQueryChange(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === "Escape") {
-              onQueryChange("");
-              event.currentTarget.blur();
-            }
-          }}
-        />
-        {query ? (
-          <button
-            type="button"
-            className="sidebar__search-clear"
-            aria-label="Clear search"
-            onClick={() => onQueryChange("")}
-          >
-            <Icon name="close" size={11} />
-          </button>
-        ) : (
-          <kbd>/</kbd>
-        )}
-      </label>
 
       <nav className="sidebar__nav" aria-label="Vault navigation">
         <ul>{PRIMARY.map(renderEntry)}</ul>

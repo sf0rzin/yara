@@ -22,6 +22,7 @@ import type { ApprovalPrompt } from "../api";
 import { AgentAccess } from "../components/AgentAccess";
 import { ApprovalDialog } from "../components/ApprovalDialog";
 import { AuthenticatorGrid } from "../components/AuthenticatorGrid";
+import { CommandPalette } from "../components/CommandPalette";
 import { Icon, type IconName } from "../components/Icon";
 import { ImportDialog } from "../components/ImportPanel";
 import { ItemDetail } from "../components/ItemDetail";
@@ -61,8 +62,15 @@ interface ContextMenuState {
  */
 export function Vault({ onLock }: VaultProps): JSX.Element {
   const [view, setView] = useState<View>({ kind: "all" });
-  const [query, setQuery] = useState("");
   const [items, setItems] = useState<ItemSummary[]>([]);
+  const [palette, setPalette] = useState(false);
+  /*
+   * Scoped to the Authenticator grid, which is the one screen that still
+   * filters in place. Codes are read at a glance and copied in seconds, so
+   * narrowing the grid you are looking at beats opening a layer over it — and
+   * unlike the item list, that grid has nowhere else to send you.
+   */
+  const [authQuery, setAuthQuery] = useState("");
   const [counts, setCounts] = useState<VaultCounts | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
@@ -78,7 +86,6 @@ export function Vault({ onLock }: VaultProps): JSX.Element {
   const [compactDetailOpen, setCompactDetailOpen] = useState(false);
 
 
-  const searchRef = useRef<HTMLInputElement>(null);
   const requestRef = useRef(0);
   const menuOpenerRef = useRef<HTMLElement | null>(null);
   const menuItemRef = useRef<HTMLButtonElement>(null);
@@ -114,7 +121,7 @@ export function Vault({ onLock }: VaultProps): JSX.Element {
         view.kind === "recent"
           ? recentItems(30)
           : listItems({
-              query,
+              query: view.kind === "authenticator" ? authQuery : undefined,
               kind: view.kind === "type" ? view.itemKind : undefined,
               withTotp: view.kind === "authenticator" ? true : undefined,
               folder: view.kind === "folder" ? view.name : undefined,
@@ -132,7 +139,7 @@ export function Vault({ onLock }: VaultProps): JSX.Element {
     } finally {
       if (request === requestRef.current) setLoading(false);
     }
-  }, [query, view]);
+  }, [authQuery, view]);
 
   const refreshFolders = useCallback(async () => {
     try {
@@ -223,15 +230,16 @@ export function Vault({ onLock }: VaultProps): JSX.Element {
 
       if (key === "/" && !isTyping && !event.ctrlKey && !event.metaKey) {
         event.preventDefault();
-        searchRef.current?.focus();
+        setPalette(true);
         return;
       }
 
       if (!(event.ctrlKey || event.metaKey)) return;
       if (key === "k") {
+        // Ctrl+K works while typing, unlike "/", which would otherwise be
+        // impossible to put in a password field.
         event.preventDefault();
-        searchRef.current?.focus();
-        searchRef.current?.select();
+        setPalette(true);
       }
       if (key === "l") {
         event.preventDefault();
@@ -420,12 +428,7 @@ export function Vault({ onLock }: VaultProps): JSX.Element {
     }
   }
 
-  const searching = query.trim().length > 0;
-  const listMeta = loading
-    ? "Updating…"
-    : searching
-      ? `${items.length} ${items.length === 1 ? "result" : "results"}`
-      : viewSubtitle(view, counts);
+  const listMeta = loading ? "Updating…" : viewSubtitle(view, counts);
 
   return (
     <div
@@ -435,18 +438,17 @@ export function Vault({ onLock }: VaultProps): JSX.Element {
     >
       <Sidebar
         view={view}
-        query={query}
-        searchRef={searchRef}
         lockRemainingMs={lockRemaining}
         autoLockSeconds={autoLock}
-        onQueryChange={setQuery}
         onChangeAutoLock={(seconds) => {
           setAutoLock(seconds);
           void setAutoLockSeconds(seconds);
         }}
         onSelect={(next) => {
           setView(next);
-          setQuery("");
+          // Leaving the Authenticator drops its filter, so coming back to it
+          // does not silently hide most of the grid.
+          setAuthQuery("");
           setSelectedId(null);
           setCompactDetailOpen(false);
         }}
@@ -485,10 +487,10 @@ export function Vault({ onLock }: VaultProps): JSX.Element {
       {view.kind === "authenticator" ? (
         <AuthenticatorGrid
           items={items}
-          query={query}
+          query={authQuery}
           loading={loading}
           error={error}
-          onQueryChange={setQuery}
+          onQueryChange={setAuthQuery}
           onNew={() => setCreating(true)}
           onImport={() => setImporting(true)}
           onContextMenu={openContextMenu}
@@ -498,50 +500,26 @@ export function Vault({ onLock }: VaultProps): JSX.Element {
           <div className="list-column">
             <header className="column__toolbar">
               <div className="column__heading">
-                <h1 className="column__title">
-                  {searching ? "Search" : viewTitle(view)}
-                </h1>
+                <h1 className="column__title">{viewTitle(view)}</h1>
                 <p className="column__sub" aria-live="polite">{listMeta}</p>
               </div>
+            </header>
+
+            {/*
+              The slot the search field used to hold. A button that fills the
+              top of the list reads as belonging to it, which the old one — a
+              hundred pixels short of the far edge, floating over the detail
+              pane — never did.
+            */}
+            <div className="list-column__action">
               <button
                 type="button"
                 className="button button--primary vault-new-button"
-                aria-label="New item"
                 onClick={() => setCreating(true)}
               >
                 <Icon name="plus" size={14} />
                 <span>New item</span>
               </button>
-            </header>
-
-            <div className="list-column__search">
-              <div className="field">
-                <Icon name="search" size={13} />
-                <input
-                  className="field__input"
-                  value={query}
-                  placeholder="Search your vault"
-                  onChange={(event) => setQuery(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key === "Escape") {
-                      setQuery("");
-                      event.currentTarget.blur();
-                    }
-                  }}
-                />
-                {searching ? (
-                  <button
-                    type="button"
-                    className="icon-button icon-button--tiny"
-                    onClick={() => setQuery("")}
-                    aria-label="Clear search"
-                  >
-                    <Icon name="close" size={11} />
-                  </button>
-                ) : (
-                  <kbd className="kbd">Ctrl K</kbd>
-                )}
-              </div>
             </div>
 
             <div className="list-column__items" aria-busy={loading}>
@@ -560,13 +538,11 @@ export function Vault({ onLock }: VaultProps): JSX.Element {
                 showLoading ? <ListSkeleton /> : <div className="list-wait" aria-hidden="true" />
               ) : items.length === 0 ? (
                 <EmptyState
-                  icon={searching ? "search" : "key"}
-                  title={searching ? `No items match “${query.trim()}”` : emptyTitle(view)}
-                  body={searching
-                    ? "Try another name, account or website."
-                    : "Add the first item to make this view useful."}
-                  action={searching ? "Clear search" : "New item"}
-                  onAction={() => searching ? setQuery("") : setCreating(true)}
+                  icon="key"
+                  title={emptyTitle(view)}
+                  body="Add the first item to make this view useful."
+                  action="New item"
+                  onAction={() => setCreating(true)}
                 />
               ) : (
                 <ul className="rows">
@@ -759,6 +735,21 @@ export function Vault({ onLock }: VaultProps): JSX.Element {
             setCreating(false);
             setSelectedId(id);
             void refresh();
+          }}
+        />
+      )}
+
+      {palette && (
+        <CommandPalette
+          onDismiss={() => setPalette(false)}
+          onSelect={(item) => {
+            // Land where the item actually is. Selecting a login while the
+            // Cards collection is open would otherwise highlight an id the
+            // visible list does not contain, and the detail pane would be the
+            // only thing that moved.
+            setView({ kind: "all" });
+            setSelectedId(item.id);
+            setCompactDetailOpen(true);
           }}
         />
       )}
