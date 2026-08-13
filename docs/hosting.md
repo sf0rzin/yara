@@ -183,13 +183,25 @@ live in `tauri.conf.json`, and `createUpdaterArtifacts` is on so a build emits
 the `.sig` files.
 
 The client side is `src/lib/updates.ts` and `src/components/UpdateNotice.tsx`:
-one check at launch, an offer the user can dismiss, and no modal. The check is
-silent on failure — an unreachable server is indistinguishable from being
-current — but a failed *install*, which the user asked for, says so.
+one check, an offer the user can dismiss, and no modal. The check is silent on
+failure — an unreachable server is indistinguishable from being current — but a
+failed *install*, which the user asked for, says so.
 
-The notice only ever renders behind the unlock screen. Answering an update
-prompt is not something to do before proving you own the vault, and installing
-restarts the process, which locks it. The button says so.
+**The check runs on unlock, not on launch.** `checkForUpdate` fires from
+`UpdateNotice`'s effect, `UpdateNotice` renders inside the item list, and
+`App.tsx` mounts `Vault` only when the screen is `unlocked` — a locked app makes
+no request at all. This paragraph used to say "at launch" and to describe the
+notice as rendering *behind* the unlock screen, as though the vault were mounted
+underneath it. It is not, and the difference is visible from the server: launch
+the app and leave it locked, and `/updates/latest.json` records nothing.
+
+The behaviour is the intended one either way. Answering an update prompt is not
+something to do before proving you own the vault, and installing restarts the
+process, which locks it. The button says so.
+
+It also means the update path cannot be exercised without a real vault and its
+password, which is worth knowing before trying to verify a release from the
+outside.
 
 ### Keys
 
