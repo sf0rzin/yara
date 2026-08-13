@@ -670,18 +670,6 @@
   margin-top: 0;
 }
 
-.empty-state__mark {
-  display: grid;
-  place-items: center;
-  width: 36px;
-  height: 36px;
-  margin-bottom: var(--space-3);
-  background: var(--raised);
-  border: 1px solid var(--border-faint);
-  border-radius: var(--radius-lg);
-  color: var(--text-secondary);
-}
-
 .empty-state__title {
   font-size: var(--text-lg);
   font-weight: 550;

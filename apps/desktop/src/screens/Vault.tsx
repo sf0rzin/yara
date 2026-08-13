@@ -23,7 +23,7 @@ import { AgentAccess } from "../components/AgentAccess";
 import { ApprovalDialog } from "../components/ApprovalDialog";
 import { AuthenticatorGrid } from "../components/AuthenticatorGrid";
 import { CommandPalette } from "../components/CommandPalette";
-import { Icon, type IconName } from "../components/Icon";
+import { Icon } from "../components/Icon";
 import { ImportDialog } from "../components/ImportPanel";
 import { ItemDetail } from "../components/ItemDetail";
 import { ItemRow } from "../components/ItemRow";
@@ -582,7 +582,6 @@ export function Vault({ onLock }: VaultProps): JSX.Element {
             ) : (
               <EmptyState
                 centred
-                icon="allItems"
                 title="Select an item"
                 body="View its credentials here. Use ↑ and ↓ to compare without leaving the keyboard."
               />
@@ -779,14 +778,12 @@ function ListSkeleton(): JSX.Element {
 }
 
 function EmptyState({
-  icon,
   title,
   body,
   action,
   centred,
   onAction,
 }: {
-  icon: IconName;
   title: string;
   body: string;
   action?: string;
@@ -795,9 +792,6 @@ function EmptyState({
 }): JSX.Element {
   return (
     <div className="empty-state" data-centred={centred || undefined}>
-      <span className="empty-state__mark" aria-hidden="true">
-        <Icon name={icon} size={17} />
-      </span>
       <h2 className="empty-state__title">{title}</h2>
       <p className="empty-state__body">{body}</p>
       {action && onAction && (
