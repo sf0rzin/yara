@@ -48,20 +48,6 @@ authentication failure rather than a cheaper attack. There is a test for that.
 Wrong password and tampered file are the same error. Callers cannot tell them
 apart.
 
-## Interface
-
-Monochrome by design. There is no accent colour anywhere in the app: hierarchy
-comes from contrast, spacing and type, and the single inverted element on any
-screen is the primary action. Six surface values, a derived text ramp, Inter,
-quiet borders.
-
-That constraint has consequences worth knowing about. With no red or green to
-reach for, danger and success are carried by wording, iconography and
-full-brightness text against muted copy — a delete needs two clicks rather than
-a red button, and password strength shows as filled segments plus a plain
-sentence. The dimmest text value used for real content holds ~4.8:1 against the
-background, above the 4.5:1 floor.
-
 ## Layout
 
 ```
