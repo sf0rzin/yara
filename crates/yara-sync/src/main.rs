@@ -7,11 +7,13 @@
 //!   YARA_SYNC_ADDR   default 127.0.0.1:8787
 //!   YARA_SYNC_DB     default /var/lib/yara-sync/sync.db
 //!
-//! One subcommand, because invites are the only thing an operator has to do
-//! by hand:
+//! The subcommands are the things an operator has to do by hand, and nothing
+//! else:
 //!
 //!   yara-sync invite            print a fresh single-use code
 //!   yara-sync purge             drop tombstones older than 30 days
+//!   yara-sync revoke            drop one device's key
+//!   yara-sync delete-account    remove an account and everything it holds
 
 use std::path::PathBuf;
 
@@ -28,30 +30,68 @@ const INVITE_HOURS: i64 = 48;
 const USAGE: &str = "\
 yara-sync — encrypted vault sync
 
-    yara-sync            serve on $YARA_SYNC_ADDR (default 127.0.0.1:8787)
-    yara-sync invite     print a fresh single-use enrolment code
-    yara-sync purge      drop tombstones older than 30 days
+    yara-sync                                    serve on $YARA_SYNC_ADDR (default 127.0.0.1:8787)
+    yara-sync invite                             print a fresh single-use enrolment code
+    yara-sync purge                              drop tombstones older than 30 days
+    yara-sync revoke <account-id> <device-id>    drop one device's key
+    yara-sync delete-account <account-id>        remove an account, its devices and its items
 
-    $YARA_SYNC_DB        default /var/lib/yara-sync/sync.db
+    $YARA_SYNC_DB                                default /var/lib/yara-sync/sync.db
 ";
 
+/// What the arguments asked for.
+#[derive(Debug, PartialEq, Eq)]
+enum Command {
+    Serve,
+    Invite,
+    Purge,
+    Revoke { account: String, device: String },
+    DeleteAccount { account: String },
+    Help,
+}
+
+/// Settles the arguments before anything touches the disk.
+///
+/// Opening the database first meant `--help` needed write access to the state
+/// directory, so asking a question failed for anyone who was not the service
+/// user — and now that there is a command which deletes an account, a typo in
+/// its arguments has to be caught before that too.
+fn parse_command(args: &[String]) -> Result<Command, String> {
+    // How many arguments follow the subcommand itself.
+    let operands = args.len().saturating_sub(1);
+
+    match args.first().map(String::as_str) {
+        None => Ok(Command::Serve),
+        Some("-h" | "--help" | "help") => Ok(Command::Help),
+        Some("invite") if operands == 0 => Ok(Command::Invite),
+        Some("purge") if operands == 0 => Ok(Command::Purge),
+        Some("revoke") if operands == 2 => Ok(Command::Revoke {
+            account: args[1].clone(),
+            device: args[2].clone(),
+        }),
+        Some("delete-account") if operands == 1 => Ok(Command::DeleteAccount {
+            account: args[1].clone(),
+        }),
+        Some(name @ ("invite" | "purge" | "revoke" | "delete-account")) => {
+            Err(format!("wrong number of arguments for {name:?}"))
+        }
+        Some(other) => Err(format!("unknown command {other:?}")),
+    }
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Arguments are settled before anything touches the disk. Opening the
-    // database first meant `--help` needed write access to the state
-    // directory, so asking a question failed for anyone who was not the
-    // service user.
-    let command = std::env::args().nth(1);
-    match command.as_deref() {
-        None | Some("invite") | Some("purge") => {}
-        Some("-h" | "--help" | "help") => {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let command = match parse_command(&args) {
+        Ok(Command::Help) => {
             print!("{USAGE}");
             return Ok(());
         }
-        Some(other) => {
-            eprintln!("unknown command {other:?}\n\n{USAGE}");
+        Ok(command) => command,
+        Err(problem) => {
+            eprintln!("{problem}\n\n{USAGE}");
             std::process::exit(2);
         }
-    }
+    };
 
     let db = std::env::var("YARA_SYNC_DB")
         .map(PathBuf::from)
@@ -64,8 +104,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let store = Store::open(&db)?;
     let now = yara_sync::now();
 
-    match command.as_deref() {
-        Some("invite") => {
+    match command {
+        Command::Invite => {
             let code = fresh_code();
             store.create_invite(&code, now, INVITE_HOURS * 3600)?;
             // The only time this value exists in readable form. It is stored
@@ -76,14 +116,41 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             Ok(())
         }
 
-        Some("purge") => {
+        Command::Purge => {
             let dropped = store.purge_tombstones(now - TOMBSTONE_DAYS * 86400)?;
             println!("purged {dropped} tombstones");
             Ok(())
         }
 
-        // Anything else was already rejected before the database was opened.
-        _ => serve(store),
+        // For the machine that was lost rather than retired, when whoever
+        // lost it cannot sign the request themselves. The device's key stops
+        // being accepted the moment this returns.
+        Command::Revoke { account, device } => {
+            if store.remove_device(&account, &device)? {
+                println!("revoked {device}");
+                Ok(())
+            } else {
+                eprintln!("no device {device:?} on account {account:?}");
+                std::process::exit(1);
+            }
+        }
+
+        // docs/hosting.md promises that asking for an account to be deleted
+        // deletes it. This is that promise, and it is not reversible: the
+        // items are ciphertext this server cannot read and cannot reproduce.
+        Command::DeleteAccount { account } => {
+            if store.delete_account(&account)? {
+                println!("deleted {account} and everything it held");
+                Ok(())
+            } else {
+                eprintln!("no account {account:?}");
+                std::process::exit(1);
+            }
+        }
+
+        Command::Serve => serve(store),
+        // Handled before the database was opened.
+        Command::Help => Ok(()),
     }
 }
 
@@ -121,4 +188,62 @@ fn fresh_code() -> String {
     // code needs and still fits on one line.
     let groups: Vec<String> = (0..3).map(|_| pick(&mut rng)).collect();
     groups.join("-")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse(args: &[&str]) -> Result<Command, String> {
+        parse_command(&args.iter().map(|a| a.to_string()).collect::<Vec<_>>())
+    }
+
+    #[test]
+    fn no_arguments_means_serve() {
+        assert_eq!(parse(&[]), Ok(Command::Serve));
+    }
+
+    #[test]
+    fn the_operator_commands_parse() {
+        assert_eq!(parse(&["invite"]), Ok(Command::Invite));
+        assert_eq!(parse(&["purge"]), Ok(Command::Purge));
+        assert_eq!(
+            parse(&["revoke", "acct-1", "dev-2"]),
+            Ok(Command::Revoke {
+                account: "acct-1".into(),
+                device: "dev-2".into()
+            })
+        );
+        assert_eq!(
+            parse(&["delete-account", "acct-1"]),
+            Ok(Command::DeleteAccount {
+                account: "acct-1".into()
+            })
+        );
+    }
+
+    /// Both of these destroy something, so a mistyped invocation has to be a
+    /// refusal rather than a guess at what was meant.
+    #[test]
+    fn a_destructive_command_with_the_wrong_arguments_is_refused() {
+        for args in [
+            vec!["revoke"],
+            vec!["revoke", "acct-1"],
+            vec!["revoke", "acct-1", "dev-2", "dev-3"],
+            vec!["delete-account"],
+            vec!["delete-account", "acct-1", "acct-2"],
+            vec!["purge", "acct-1"],
+        ] {
+            assert!(parse(&args).is_err(), "{args:?} should not parse");
+        }
+    }
+
+    #[test]
+    fn help_and_nonsense_are_told_apart() {
+        for flag in ["-h", "--help", "help"] {
+            assert_eq!(parse(&[flag]), Ok(Command::Help));
+        }
+        assert!(parse(&["serve"]).is_err());
+        assert!(parse(&["--version"]).is_err());
+    }
 }
