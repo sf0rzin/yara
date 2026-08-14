@@ -7,8 +7,9 @@
 A password manager with a built-in authenticator and a safe way to hand
 credentials to AI agents.
 
-> Early development. The cryptographic core is implemented and tested; the
-> desktop UI and the agent broker are in progress.
+> Early development, but past the point where the interesting parts are
+> hypothetical: the core, the desktop app, the agent broker and sync are
+> implemented and tested. See [Status](#status) for what is not.
 
 ## Why
 
@@ -100,6 +101,13 @@ Tauri rebuild. The mock is dev-only and cannot reach a release build.
 caller identification is a Win32 call; porting those is not planned. `yara-core`
 stays free of platform dependencies anyway, and CI builds it on Linux to keep
 that honest — but the application is not coming to macOS or Linux.
+
+## Reporting a vulnerability
+
+Privately, through GitHub — the **Report a vulnerability** button under
+**Security**, not a public issue. [SECURITY.md](SECURITY.md) has the channel,
+what is in scope, and how long an answer takes, written to be met by one person
+rather than to sound reassuring.
 
 ## License
 
