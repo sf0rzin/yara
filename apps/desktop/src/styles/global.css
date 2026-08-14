@@ -62,6 +62,12 @@ svg {
 /*
  * With no accent colour available, focus is shown as a light ring. It is only
  * drawn for keyboard users so pointer interaction stays visually quiet.
+ *
+ * This is the app's only focus indicator, so nothing may write `outline: none`
+ * on a plain `:focus`. Component rules that did — every text field in the
+ * app — beat this one on specificity and left keyboard users with a border
+ * change worth about 1.4:1 where WCAG 1.4.11 asks 3:1. The rule below already
+ * removes the ring for pointer focus, so a component never needs to.
  */
 :focus-visible {
   outline: 2px solid var(--text-secondary);
@@ -98,14 +104,18 @@ input,
   background: transparent;
 }
 
+/*
+ * The thumb is the only thing that says a region scrolls, so it is painted
+ * from its own token rather than from a border weight. See --scrollbar-thumb.
+ */
 ::-webkit-scrollbar-thumb {
-  background: var(--border);
+  background: var(--scrollbar-thumb);
   border: 3px solid transparent;
   background-clip: content-box;
   border-radius: var(--radius-pill);
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--border-strong);
+  background: var(--scrollbar-thumb-hover);
   background-clip: content-box;
 }

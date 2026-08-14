@@ -8,7 +8,6 @@ import "@fontsource-variable/jetbrains-mono";
 
 import "./styles/tokens.css";
 import "./styles/global.css";
-import "./styles/app.css";
 import "./styles/yara.css";
 
 import App from "./App";
