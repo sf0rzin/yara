@@ -78,6 +78,18 @@ pub struct ItemRecord {
     pub ciphertext: Option<String>,
     #[serde(default)]
     pub deleted: bool,
+    /// A sealed proof that a device holding the vault key ordered this
+    /// deletion, bound to the item id. Absent for a live item.
+    ///
+    /// Opaque here, and deliberately so: this server cannot make one, cannot
+    /// read one, and cannot tell a good one from a forgery. That is the point.
+    /// A tombstone is otherwise just `{"deleted": true}` in JSON from a host
+    /// the design treats as hostile, and a client that obeyed it would delete
+    /// every credential on every machine on one bad answer. The client refuses
+    /// a tombstone it cannot verify, so this column exists to carry the proof
+    /// between two clients rather than to be checked in passing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proof: Option<String>,
 }
 
 /// The one place an account row is written, so the two callers cannot drift
@@ -191,6 +203,17 @@ impl Store {
         // representable rather than be guessed at.
         if !Self::has_column(conn, "accounts", "account_public_key")? {
             conn.execute_batch("ALTER TABLE accounts ADD COLUMN account_public_key BLOB")?;
+        }
+
+        // A tombstone used to be nothing but `deleted = 1`, which is a plain
+        // instruction from a host this design treats as hostile — obeyed, it
+        // removes a credential on every machine that pulls it. Clients now
+        // attach a proof sealed under the vault key, and refuse a deletion
+        // without one. This column carries it. Nullable, because every row
+        // written before it existed has none, and because a live item must not
+        // have one.
+        if !Self::has_column(conn, "items", "proof")? {
+            conn.execute_batch("ALTER TABLE items ADD COLUMN proof TEXT")?;
         }
         Ok(())
     }
@@ -485,7 +508,7 @@ impl Store {
     pub fn items_since(&self, account_id: &str, since: i64) -> Result<Vec<ItemRecord>> {
         let conn = self.lock();
         let mut statement = conn.prepare(
-            "SELECT id, revision, ciphertext, deleted
+            "SELECT id, revision, ciphertext, deleted, proof
              FROM items WHERE account_id = ?1 AND revision > ?2
              ORDER BY revision, id",
         )?;
@@ -496,6 +519,7 @@ impl Store {
                 revision: row.get(1)?,
                 ciphertext: row.get(2)?,
                 deleted: row.get::<_, i64>(3)? != 0,
+                proof: row.get(4)?,
             })
         })?;
 
@@ -535,12 +559,13 @@ impl Store {
 
         for item in items {
             tx.execute(
-                "INSERT INTO items (account_id, id, revision, ciphertext, deleted, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                "INSERT INTO items (account_id, id, revision, ciphertext, deleted, proof, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
                  ON CONFLICT(account_id, id) DO UPDATE SET
                    revision   = excluded.revision,
                    ciphertext = excluded.ciphertext,
                    deleted    = excluded.deleted,
+                   proof      = excluded.proof,
                    updated_at = excluded.updated_at",
                 params![
                     account_id,
@@ -554,6 +579,15 @@ impl Store {
                         item.ciphertext.clone()
                     },
                     item.deleted as i64,
+                    // The mirror of that rule. A proof only means anything
+                    // attached to a deletion, and keeping one against a live
+                    // item would hand the next puller a ready-made instruction
+                    // to delete it.
+                    if item.deleted {
+                        item.proof.clone()
+                    } else {
+                        None
+                    },
                     now
                 ],
             )?;
@@ -613,6 +647,19 @@ mod tests {
             revision: 0,
             ciphertext: Some(ciphertext.into()),
             deleted: false,
+            proof: None,
+        }
+    }
+
+    /// A deletion carrying whatever the client sealed. The value is opaque
+    /// here, so the tests use a recognisable string rather than a real proof.
+    fn tombstone(id: &str, proof: Option<&str>) -> ItemRecord {
+        ItemRecord {
+            id: id.into(),
+            revision: 0,
+            ciphertext: None,
+            deleted: true,
+            proof: proof.map(Into::into),
         }
     }
 
@@ -699,6 +746,7 @@ mod tests {
                     revision: 0,
                     ciphertext: Some("secret".into()),
                     deleted: true,
+                    proof: None,
                 }],
                 NOW,
             )
@@ -714,22 +762,109 @@ mod tests {
     fn tombstones_are_purged_once_every_client_has_had_time_to_see_them() {
         let store = store();
         store
+            .push_items(ACCOUNT, 0, &[tombstone("a", None)], NOW)
+            .unwrap();
+
+        assert_eq!(store.purge_tombstones(NOW - 1).unwrap(), 0);
+        assert_eq!(store.purge_tombstones(NOW + 1).unwrap(), 1);
+        assert!(store.items_since(ACCOUNT, 0).unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_deletion_proof_survives_the_round_trip() {
+        // The whole chain rests on this. The client seals a proof, this server
+        // stores bytes it cannot read, and the next client verifies them —
+        // before this column existed the proof was accepted and dropped, so
+        // every tombstone arrived unproven and every client correctly ignored
+        // it, which meant no delete ever propagated at all.
+        let store = store();
+        store
+            .push_items(ACCOUNT, 0, &[tombstone("a", Some("sealed-proof"))], NOW)
+            .unwrap();
+
+        let pulled = store.items_since(ACCOUNT, 0).unwrap();
+        assert_eq!(pulled.len(), 1);
+        assert!(pulled[0].deleted);
+        assert_eq!(pulled[0].proof.as_deref(), Some("sealed-proof"));
+        assert_eq!(
+            pulled[0].ciphertext, None,
+            "a tombstone still keeps no ciphertext"
+        );
+    }
+
+    #[test]
+    fn a_proof_does_not_stay_attached_to_an_item_that_came_back() {
+        // Deleted, then recreated under the same id. Leaving the proof behind
+        // would hand the next puller a ready-made, correctly sealed
+        // instruction to delete an item that is alive again.
+        let store = store();
+        store
+            .push_items(ACCOUNT, 0, &[tombstone("a", Some("sealed-proof"))], NOW)
+            .unwrap();
+        store
+            .push_items(ACCOUNT, 1, &[item("a", "back again")], NOW + 1)
+            .unwrap();
+
+        let pulled = store.items_since(ACCOUNT, 0).unwrap();
+        assert_eq!(pulled.len(), 1);
+        assert!(!pulled[0].deleted);
+        assert_eq!(pulled[0].proof, None);
+    }
+
+    #[test]
+    fn a_proof_offered_for_a_live_item_is_not_kept() {
+        // Nothing legitimate sends this, so the point is that a caller cannot
+        // park a deletion proof on a live row and have it served back later.
+        let store = store();
+        store
             .push_items(
                 ACCOUNT,
                 0,
                 &[ItemRecord {
                     id: "a".into(),
                     revision: 0,
-                    ciphertext: None,
-                    deleted: true,
+                    ciphertext: Some("alive".into()),
+                    deleted: false,
+                    proof: Some("sealed-proof".into()),
                 }],
                 NOW,
             )
             .unwrap();
 
-        assert_eq!(store.purge_tombstones(NOW - 1).unwrap(), 0);
-        assert_eq!(store.purge_tombstones(NOW + 1).unwrap(), 1);
-        assert!(store.items_since(ACCOUNT, 0).unwrap().is_empty());
+        assert_eq!(store.items_since(ACCOUNT, 0).unwrap()[0].proof, None);
+    }
+
+    #[test]
+    fn a_database_written_before_the_proof_column_still_opens() {
+        // The deployed database predates this column, so `prepare` has to add
+        // it to a table that already exists rather than only ever creating the
+        // current shape.
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE items (
+               account_id TEXT NOT NULL,
+               id         TEXT NOT NULL,
+               revision   INTEGER NOT NULL,
+               ciphertext TEXT,
+               deleted    INTEGER NOT NULL DEFAULT 0,
+               updated_at INTEGER NOT NULL,
+               PRIMARY KEY (account_id, id)
+             );",
+        )
+        .unwrap();
+
+        let store = Store::prepare(conn).unwrap();
+        store
+            .create_account(new_account(ACCOUNT, Some(&ACCOUNT_KEY)), NOW)
+            .unwrap();
+        store
+            .push_items(ACCOUNT, 0, &[tombstone("a", Some("sealed-proof"))], NOW)
+            .unwrap();
+
+        assert_eq!(
+            store.items_since(ACCOUNT, 0).unwrap()[0].proof.as_deref(),
+            Some("sealed-proof")
+        );
     }
 
     #[test]
