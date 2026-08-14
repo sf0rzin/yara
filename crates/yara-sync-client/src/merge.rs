@@ -12,12 +12,46 @@
 
 use uuid::Uuid;
 
+/// One item as this machine has it — or the record that it deleted one.
+///
+/// A deletion is a local change like any other, and modelling it as the
+/// absence of an item was the whole bug: sync pushes what it can see, an
+/// absent item looks exactly like one this machine has not been told about
+/// yet, and the next pull hands the deleted credential straight back.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct LocalItem {
     pub id: Uuid,
+    /// When it last changed. For a deletion, when it was deleted.
     pub updated_at: u64,
+    pub deleted: bool,
 }
 
+impl LocalItem {
+    pub fn present(id: Uuid, updated_at: u64) -> Self {
+        Self {
+            id,
+            updated_at,
+            deleted: false,
+        }
+    }
+
+    /// A deletion this machine recorded, from the vault's own tombstone.
+    pub fn deleted(id: Uuid, deleted_at: u64) -> Self {
+        Self {
+            id,
+            updated_at: deleted_at,
+            deleted: true,
+        }
+    }
+}
+
+/// One item as the server offered it.
+///
+/// `deleted` here means a deletion this machine has *already authenticated*.
+/// The flag arrives from the server as ordinary JSON, and the server is
+/// explicitly not trusted, so the caller proves it before it gets this far —
+/// see [`crate::deletes`]. A tombstone nobody can prove never reaches these
+/// rules at all.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RemoteItem {
     pub id: Uuid,
@@ -39,6 +73,12 @@ pub enum Resolution {
 }
 
 /// Decides one item.
+///
+/// One principle underneath all of it: what this machine did since the last
+/// sync wins, and the remote is applied only where this machine has been
+/// quiet. That is why a local edit survives a remote delete *and* a local
+/// delete survives a remote edit, which look like opposite answers and are the
+/// same rule read from either side.
 pub fn reconcile(local: Option<LocalItem>, remote: RemoteItem, last_sync_at: u64) -> Resolution {
     let Some(local) = local else {
         // A delete for something never seen is already satisfied.
@@ -54,24 +94,40 @@ pub fn reconcile(local: Option<LocalItem>, remote: RemoteItem, last_sync_at: u64
     // turns every quiet item into a conflict on a fast machine.
     let changed_locally = local.updated_at > last_sync_at;
 
-    match (changed_locally, remote.deleted) {
-        (false, true) => Resolution::ApplyDelete,
-        (false, false) => Resolution::ApplyRemote,
+    match (changed_locally, local.deleted, remote.deleted) {
+        // Both sides agree it is gone. Nothing to apply, and the tombstone
+        // this machine holds is already the right answer.
+        (_, true, true) => Resolution::KeepLocal,
+        // This machine deleted it since the last sync and the other one has
+        // not heard yet. Taking the remote copy here would resurrect a
+        // credential the user deleted, which is exactly what happened for as
+        // long as a deletion had no record to be pushed from.
+        (true, true, false) => Resolution::KeepLocal,
+        // The deletion was already pushed, so a live record newer than it is
+        // not an echo — somebody created this id again on another machine.
+        (false, true, false) => Resolution::ApplyRemote,
+        (false, false, true) => Resolution::ApplyDelete,
+        (false, false, false) => Resolution::ApplyRemote,
         // A local edit outranks a remote delete. Restoring something someone
         // is still editing is recoverable; deleting it is not.
-        (true, true) => Resolution::KeepLocal,
-        (true, false) => Resolution::Conflict {
+        (true, false, true) => Resolution::KeepLocal,
+        (true, false, false) => Resolution::Conflict {
             remote_wins: remote.updated_at > local.updated_at,
         },
     }
 }
 
-/// Items this machine should push: everything it changed since the last sync.
-pub fn to_push(local: &[LocalItem], last_sync_at: u64) -> Vec<Uuid> {
+/// What this machine should push: everything it changed since the last sync,
+/// deletions included.
+///
+/// Returns the records rather than their ids, because the caller has to seal
+/// an item and a deletion differently and "which of these is a tombstone" is
+/// not something it should have to work out again.
+pub fn to_push(local: &[LocalItem], last_sync_at: u64) -> Vec<LocalItem> {
     local
         .iter()
         .filter(|item| item.updated_at > last_sync_at)
-        .map(|item| item.id)
+        .copied()
         .collect()
 }
 
@@ -86,10 +142,11 @@ mod tests {
     }
 
     fn local(updated_at: u64) -> LocalItem {
-        LocalItem {
-            id: Uuid::nil(),
-            updated_at,
-        }
+        LocalItem::present(Uuid::nil(), updated_at)
+    }
+
+    fn buried(deleted_at: u64) -> LocalItem {
+        LocalItem::deleted(Uuid::nil(), deleted_at)
     }
 
     fn remote(updated_at: u64, deleted: bool) -> RemoteItem {
@@ -174,27 +231,65 @@ mod tests {
     }
 
     #[test]
-    fn only_locally_changed_items_are_pushed() {
-        let stale = LocalItem {
-            id: id(),
-            updated_at: 500,
-        };
-        let fresh = LocalItem {
-            id: id(),
-            updated_at: 1_500,
-        };
+    fn a_local_delete_is_not_resurrected_by_a_later_pull() {
+        // The bug this whole record exists for. The item was deleted here
+        // after the last sync; the server still has the live copy because it
+        // has not been told yet. Applying it hands the credential back.
+        assert_eq!(
+            reconcile(Some(buried(1_500)), remote(1_400, false), SYNCED_AT),
+            Resolution::KeepLocal
+        );
+        // And it holds even when the remote copy is the newer of the two: the
+        // remote cannot be reacting to a deletion it has not received.
+        assert_eq!(
+            reconcile(Some(buried(1_500)), remote(1_900, false), SYNCED_AT),
+            Resolution::KeepLocal
+        );
+    }
 
-        assert_eq!(to_push(&[stale, fresh], SYNCED_AT), vec![fresh.id]);
+    #[test]
+    fn an_id_created_again_elsewhere_after_the_delete_was_synced_comes_back() {
+        // The deletion went out before the last sync, so a live record newer
+        // than that is not an echo of it — somebody made this item again.
+        assert_eq!(
+            reconcile(Some(buried(500)), remote(1_500, false), SYNCED_AT),
+            Resolution::ApplyRemote
+        );
+    }
+
+    #[test]
+    fn two_machines_deleting_the_same_item_agree_without_applying_anything() {
+        assert_eq!(
+            reconcile(Some(buried(1_500)), remote(1_500, true), SYNCED_AT),
+            Resolution::KeepLocal
+        );
+        assert_eq!(
+            reconcile(Some(buried(500)), remote(1_500, true), SYNCED_AT),
+            Resolution::KeepLocal
+        );
+    }
+
+    #[test]
+    fn only_locally_changed_items_are_pushed() {
+        let stale = LocalItem::present(id(), 500);
+        let fresh = LocalItem::present(id(), 1_500);
+
+        assert_eq!(to_push(&[stale, fresh], SYNCED_AT), vec![fresh]);
+    }
+
+    #[test]
+    fn a_deletion_since_the_last_sync_is_pushed_like_any_other_change() {
+        // Without this a delete never left the machine, and the server's
+        // tombstone rows had nothing to hold.
+        let stale = LocalItem::deleted(id(), 500);
+        let fresh = LocalItem::deleted(id(), 1_500);
+
+        assert_eq!(to_push(&[stale, fresh], SYNCED_AT), vec![fresh]);
     }
 
     #[test]
     fn a_first_sync_pushes_everything() {
-        let items: Vec<LocalItem> = (1..=3)
-            .map(|n| LocalItem {
-                id: id(),
-                updated_at: n,
-            })
-            .collect();
+        let items: Vec<LocalItem> = (1..=3).map(|n| LocalItem::present(id(), n)).collect();
 
         assert_eq!(to_push(&items, 0).len(), 3);
     }

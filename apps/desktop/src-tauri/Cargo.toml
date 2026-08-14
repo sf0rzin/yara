@@ -37,3 +37,14 @@ uuid.workspace = true
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-process = "2"
 tauri-plugin-updater = "2"
+
+# The clipboard, at the level the webview cannot reach. Keeping a copied
+# password out of Win+V and the Cloud Clipboard means putting two registered
+# formats on the clipboard alongside the text, and neither the browser API nor
+# the Tauri plugin can do that.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+  "Win32_Foundation",
+  "Win32_System_DataExchange",
+  "Win32_System_Memory",
+] }

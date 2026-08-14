@@ -13,7 +13,7 @@ use base64::Engine as _;
 use serde::Serialize;
 use uuid::Uuid;
 use yara_core::{AccountKeypair, AccountKeys, Item, KdfParams, SecretKey, SyncState};
-use yara_sync_client::{merge, Client, Enrolment, SyncItem};
+use yara_sync_client::{deletes, merge, Client, Enrolment, SyncItem};
 
 use crate::state::AppState;
 
@@ -59,6 +59,10 @@ pub struct SyncReport {
     pub pulled: usize,
     pub pushed: usize,
     pub conflicts: usize,
+    /// Deletions the server offered without a proof that this account made
+    /// them. Ignored, and counted so the interface can say so — a run of these
+    /// is what a compromised server trying to wipe the account looks like.
+    pub unproven_deletes: usize,
     pub revision: i64,
 }
 
@@ -167,18 +171,38 @@ pub async fn sync_now(state: Arc<AppState>) -> Result<SyncReport, String> {
             continue;
         };
 
+        // A deletion is obeyed only when this account can prove it made it.
+        // The flag is ordinary JSON from a server the design treats as
+        // hostile, and one pull answered with a deleted record per item would
+        // otherwise erase every credential on every enrolled machine.
+        let proof = state.with_vault(|vault| Ok(deletes::proven_deletion(vault, id, record)))?;
+        if record.deleted && proof.is_none() {
+            report.unproven_deletes += 1;
+            continue;
+        }
+
         let local = state.with_vault(|vault| {
-            Ok(vault.get(id).map(|item| merge::LocalItem {
-                id,
-                updated_at: item.updated_at,
-            }))
+            Ok(vault
+                .get(id)
+                .map(|item| merge::LocalItem::present(id, item.updated_at))
+                // No item, but a record that this machine deleted one. Passing
+                // `None` here is what let a pull hand a deleted credential
+                // straight back.
+                .or_else(|| {
+                    vault
+                        .tombstone(id)
+                        .map(|grave| merge::LocalItem::deleted(id, grave.deleted_at))
+                }))
         })?;
 
         let remote_item = decode_item(&state, id, record)?;
         let remote = merge::RemoteItem {
             id,
-            updated_at: remote_item.as_ref().map(|i| i.updated_at).unwrap_or(0),
-            deleted: record.deleted,
+            updated_at: proof
+                .map(|grave| grave.deleted_at)
+                .or_else(|| remote_item.as_ref().map(|i| i.updated_at))
+                .unwrap_or(0),
+            deleted: proof.is_some(),
         };
 
         match merge::reconcile(local, remote, sync.last_synced_at) {
@@ -230,26 +254,46 @@ pub async fn sync_now(state: Arc<AppState>) -> Result<SyncReport, String> {
         }
     }
 
-    // Then everything this machine changed since the last sync.
+    // Then everything this machine changed since the last sync — deletions
+    // included. They were invisible here for as long as `to_push` walked only
+    // the items that still existed, which is why a delete on one machine was
+    // silently undone by the next sync from another.
     let outgoing = state.with_vault(|vault| {
         let local: Vec<merge::LocalItem> = vault
             .items()
             .iter()
-            .map(|item| merge::LocalItem {
-                id: item.id,
-                updated_at: item.updated_at,
-            })
+            .map(|item| merge::LocalItem::present(item.id, item.updated_at))
+            .chain(
+                vault
+                    .tombstones()
+                    .iter()
+                    .map(|grave| merge::LocalItem::deleted(grave.id, grave.deleted_at)),
+            )
             .collect();
 
         let mut records = Vec::new();
-        for id in merge::to_push(&local, sync.last_synced_at) {
-            if let Some(item) = vault.get(id) {
+        for change in merge::to_push(&local, sync.last_synced_at) {
+            if change.deleted {
+                let Some(grave) = vault.tombstone(change.id) else {
+                    continue;
+                };
+                records.push(SyncItem {
+                    id: change.id.to_string(),
+                    revision: 0,
+                    // No body: the delete has to travel, the contents do not.
+                    // The proof is what makes the other machine believe it.
+                    ciphertext: None,
+                    deleted: true,
+                    proof: Some(deletes::seal_proof(vault, &grave).map_err(|e| e.to_string())?),
+                });
+            } else if let Some(item) = vault.get(change.id) {
                 let sealed = vault.seal_item(item).map_err(|e| e.to_string())?;
                 records.push(SyncItem {
-                    id: id.to_string(),
+                    id: change.id.to_string(),
                     revision: 0,
                     ciphertext: Some(serde_json::to_string(&sealed).map_err(|e| e.to_string())?),
                     deleted: false,
+                    proof: None,
                 });
             }
         }
