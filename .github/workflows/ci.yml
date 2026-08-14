@@ -154,10 +154,22 @@ jobs:
           fi
           echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
 
+      # `config` resolves env_file paths and fails on a missing one, and the
+      # connector token deliberately lives at an absolute path on the server —
+      # it is a secret, so it is not in the repository and never should be.
+      #
+      # So the runner is given an empty file at that path. Marking the entry
+      # `required: false` in compose would also silence this and would be the
+      # wrong fix: on the host a missing token must stop the stack, not start
+      # cloudflared with no way in. What is being checked here is the shape of
+      # the file, not the secrets of a deployment.
       - name: Compose file is valid
         env:
           YARA_VERSION: ${{ steps.released.outputs.version }}
-        run: docker compose -f deploy/docker-compose.yml config -q
+        run: |
+          sudo install -d /srv/yara/secrets
+          sudo touch /srv/yara/secrets/tunnel.env
+          docker compose -f deploy/docker-compose.yml config -q
 
       # Builds the image the origin runs, including the checksum check on the
       # downloaded binary — so a release whose .sha256 does not match its
