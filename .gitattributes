@@ -22,7 +22,6 @@
 *.example text eol=lf
 Caddyfile text eol=lf
 Dockerfile text eol=lf
-.dockerignore text eol=lf
 
 # Read by PowerShell on Windows, where CRLF is native.
 *.ps1     text eol=crlf
