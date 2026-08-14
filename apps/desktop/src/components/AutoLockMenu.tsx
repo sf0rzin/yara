@@ -22,6 +22,8 @@ const CHOICES: { label: string; seconds: number | null }[] = [
 
 interface AutoLockMenuProps {
   current: number | null;
+  /** The button this was opened from, which is not "elsewhere". */
+  triggerRef: React.RefObject<HTMLButtonElement | null>;
   onChoose: (seconds: number | null) => void;
   onLockNow: () => void;
   onDismiss: () => void;
@@ -29,11 +31,23 @@ interface AutoLockMenuProps {
 
 export function AutoLockMenu({
   current,
+  triggerRef,
   onChoose,
   onLockNow,
   onDismiss,
 }: AutoLockMenuProps): JSX.Element {
   const ref = useRef<HTMLDivElement>(null);
+  const firstItemRef = useRef<HTMLButtonElement>(null);
+
+  // Focused here rather than with `autoFocus`, for the same reason the item
+  // context menu in Vault.tsx does it this way: React does not apply autoFocus
+  // to an element mounted after the first render. Without it this menu opened
+  // with focus still on the sidebar button behind it, and since the popover is
+  // drawn above that button, Tab walked out of the sidebar entirely — a menu
+  // raised from the keyboard that could not then be operated from one.
+  useEffect(() => {
+    firstItemRef.current?.focus();
+  }, []);
 
   // Escape and a click elsewhere both dismiss. Neither changes the setting:
   // dismissing a menu is not choosing from it.
@@ -42,30 +56,36 @@ export function AutoLockMenu({
       if (event.key === "Escape") onDismiss();
     };
     const onDown = (event: PointerEvent) => {
-      if (!ref.current?.contains(event.target as Node)) onDismiss();
+      const target = event.target as Node;
+      if (ref.current?.contains(target)) return;
+      // A press on the trigger belongs to the trigger. Dismissing here as well
+      // closed the menu on pointerdown and let the button's own click reopen
+      // it a moment later, so the one gesture everybody tries — press it again
+      // — could open this menu and never shut it.
+      if (triggerRef.current?.contains(target)) return;
+      onDismiss();
     };
 
     window.addEventListener("keydown", onKey);
-    // Captured, so a press on the button that opened this does not reopen it
-    // in the same gesture.
     window.addEventListener("pointerdown", onDown, true);
     return () => {
       window.removeEventListener("keydown", onKey);
       window.removeEventListener("pointerdown", onDown, true);
     };
-  }, [onDismiss]);
+  }, [onDismiss, triggerRef]);
 
   return (
     <div className="popover" ref={ref} role="menu" aria-label="Lock this vault">
       <p className="section-label">Lock this vault</p>
 
       <div className="popover__options">
-        {CHOICES.map((choice) => {
+        {CHOICES.map((choice, index) => {
           const chosen = choice.seconds === current;
           return (
             <button
               key={choice.label}
               type="button"
+              ref={index === 0 ? firstItemRef : undefined}
               role="menuitemradio"
               aria-checked={chosen}
               className="popover__item"

@@ -1,5 +1,10 @@
-import { useEffect, useState, type JSX } from "react";
-import { errorMessage, resolveApproval, type ApprovalPrompt } from "../api";
+import { useCallback, useEffect, useState, type JSX } from "react";
+import {
+  errorMessage,
+  resolveApproval,
+  type ApprovalChoice,
+  type ApprovalPrompt,
+} from "../api";
 import { Icon } from "./Icon";
 
 const WINDOW_MINUTES = 15;
@@ -29,7 +34,7 @@ export function ApprovalDialog({
   queueLength = 1,
   onSettled,
 }: ApprovalDialogProps): JSX.Element {
-  const [busyChoice, setBusyChoice] = useState<"deny" | "once" | "window" | null>(null);
+  const [busyChoice, setBusyChoice] = useState<ApprovalChoice | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [moreOpen, setMoreOpen] = useState(false);
 
@@ -50,28 +55,37 @@ export function ApprovalDialog({
       ? `This command can print the ${prompt.field}. Approving it discloses the credential as fully as Reveal would.`
       : `The launched process receives the ${prompt.field}${prompt.envVar ? ` in $${prompt.envVar}` : ""}. The requesting agent receives only the command output.`;
 
-  async function answer(choice: "deny" | "once" | "window") {
-    setBusyChoice(choice);
-    setError(null);
-    try {
-      await resolveApproval(prompt.id, choice, choice === "window" ? WINDOW_MINUTES : undefined);
-      onSettled();
-    } catch (caught) {
-      setError(errorMessage(caught));
-      setBusyChoice(null);
-    }
-  }
+  const answer = useCallback(
+    async (choice: ApprovalChoice) => {
+      setBusyChoice(choice);
+      setError(null);
+      try {
+        await resolveApproval(prompt.id, choice, choice === "window" ? WINDOW_MINUTES : undefined);
+        onSettled();
+      } catch (caught) {
+        setError(errorMessage(caught));
+        setBusyChoice(null);
+      }
+    },
+    [onSettled, prompt.id],
+  );
 
   // Escape denies. Dismissing a security prompt should never mean yes, and
   // there is no click-outside-to-close for the same reason.
+  //
+  // The dependency list used to name `prompt.id` and carry a suppression for
+  // the rule that says so, which nothing enforced. It happened to be harmless
+  // because this dialog is keyed on the prompt id and so remounts per request
+  // — but a listener that denies on Escape closing over a stale `answer` is
+  // exactly the class of bug the rule exists to catch, and it was one edit away
+  // the whole time.
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") void answer("deny");
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [prompt.id]);
+  }, [answer]);
 
   return (
     <div className="overlay overlay--front" role="presentation">

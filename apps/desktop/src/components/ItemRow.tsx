@@ -3,6 +3,14 @@ import type { ItemSummary } from "../api";
 import { Tile } from "./Tile";
 import { TotpBadge } from "./TotpBadge";
 
+/**
+ * The row's element id, so the list can move focus to whichever option the
+ * arrow keys just selected without holding a ref per row.
+ */
+export function itemOptionId(id: string): string {
+  return `item-option-${id}`;
+}
+
 interface ItemRowProps {
   item: ItemSummary;
   selected: boolean;
@@ -32,9 +40,17 @@ export function ItemRow({
     .join(" · ");
 
   return (
-    <li>
+    // The row is an option in the list's listbox, exactly as the palette does
+    // it: the li carries the structure, the button carries the role. Selection
+    // used to be marked with `data-selected` alone — a styling hook, which says
+    // nothing to a screen reader, so walking the list with the arrow keys moved
+    // a highlight that only sighted users could see.
+    <li role="presentation">
       <button
         type="button"
+        id={itemOptionId(item.id)}
+        role="option"
+        aria-selected={selected}
         className="row"
         data-selected={selected || undefined}
         data-drop-edge={dropEdge}

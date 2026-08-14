@@ -190,6 +190,8 @@ let mockSync: {
   lastSyncedAt: unixNow() - 1_800,
 };
 
+let mockRevision = 41;
+
 interface MockSubscription {
   plan: string | null;
   amountMinor: number;
@@ -292,6 +294,33 @@ function matches(item: MockItem, query: string): boolean {
         (!field.secret && field.value.toLowerCase().includes(q)),
     )
   );
+}
+
+/**
+ * A stand-in authenticator export.
+ *
+ * Entries rather than a file: nothing here parses anything, and what the import
+ * screen needs is a preview carrying all three outcomes at once, so every
+ * branch of the confirm step — will be added, already here, cannot be read —
+ * is reachable in a browser session. "Banco Inter" is already in the vault
+ * above, which is what makes the duplicate branch real rather than declared.
+ */
+const importFixture: { entries: string[]; skipped: { name: string; reason: string }[] } = {
+  entries: ["Cloudflare", "Namecheap", "Banco Inter"],
+  skipped: [
+    { name: "Old router", reason: "the URI carries no secret" },
+    { name: "line 14", reason: "not an otpauth:// URI" },
+  ],
+};
+
+/**
+ * The real command matches by seed, because the same code saved under two
+ * labels is still the same code. The fixture has no seeds to match on, so this
+ * matches by name against the items that already carry one — close enough to
+ * exercise the branch, and said out loud so nobody reads it as the rule.
+ */
+function alreadyImported(name: string): boolean {
+  return items.some((item) => item.name === name && item.totpSeed !== null);
 }
 
 function strengthOf(password: string): "weak" | "fair" | "strong" {
@@ -484,7 +513,11 @@ const handlers: Record<string, (args: Record<string, unknown>) => unknown> = {
   },
   sync_now: () => {
     mockSync = { ...mockSync, lastSyncedAt: unixNow() };
-    return { pulled: 2, pushed: 1, conflicts: 0 };
+    mockRevision += 1;
+    // `revision` is not optional in `SyncReport`. Omitting it made the mock's
+    // report a shape the real command never returns, which is exactly the kind
+    // of drift that lets a field be added to the type and never rendered.
+    return { pulled: 2, pushed: 1, conflicts: 0, revision: mockRevision };
   },
   sync_forget: () => {
     mockSync = {
@@ -501,8 +534,15 @@ const handlers: Record<string, (args: Record<string, unknown>) => unknown> = {
     mockAutoLock = (args.seconds as number | null) ?? null;
   },
 
-  reveal_password: (args) =>
-    items.find((i) => i.id === args.id)?.password ?? "",
+  // Both failures are errors in the real command, and an empty string is not
+  // one of its answers. Returning "" here meant a dev session showed a blank
+  // password field where the app would in fact have shown a reason.
+  reveal_password: (args) => {
+    const item = items.find((i) => i.id === String(args.id));
+    if (!item) throw new Error(`item ${args.id} not found`);
+    if (item.password === null) throw new Error("this item has no password");
+    return item.password;
+  },
 
   totp_code: (args) => {
     const item = items.find((i) => i.id === args.id);
@@ -590,6 +630,60 @@ const handlers: Record<string, (args: Record<string, unknown>) => unknown> = {
     if (index >= 0) items.splice(index, 1);
   },
 
+  /*
+   * The file picker, which is the first thing the Import dialog reaches for.
+   *
+   * Without it the dialog failed on "Choose an export file" and the preview it
+   * exists to show could never be reached — so the two handlers below would
+   * have been unreachable on their own. Returns a path rather than null,
+   * because a cancelled picker is the one outcome that renders nothing.
+   */
+  "plugin:dialog|open": () => "C:\\Users\\anthony\\Downloads\\proton-authenticator-export.txt",
+
+  // Import. Absent until now, so the dialog opened straight into "mock: no
+  // handler for preview_import" — the same failure the sync handlers above
+  // were added to fix, on the one screen whose entire job is to show you what
+  // is about to happen before it happens.
+  preview_import: () => ({
+    ready: importFixture.entries.filter((name) => !alreadyImported(name)),
+    duplicates: importFixture.entries.filter(alreadyImported),
+    skipped: importFixture.skipped.map((problem) => ({ ...problem })),
+  }),
+
+  run_import: () => {
+    const ready = importFixture.entries.filter((name) => !alreadyImported(name));
+    for (const name of ready) {
+      items.push({
+        id: String(items.length + 1),
+        name,
+        kind: "login",
+        // What an authenticator export leaves behind: a code and nothing to log
+        // in to. Same shape as Banco Inter above.
+        username: null,
+        password: null,
+        url: null,
+        notes: null,
+        folder: null,
+        totpSeed: 60 + items.length,
+        fields: [],
+        tags: [],
+        updatedAt: unixNow(),
+      });
+    }
+    // Written for real, so importing the same file twice reports everything as
+    // a duplicate and the "Nothing to import" branch is reachable too.
+    return ready.length;
+  },
+
+  /*
+   * Kept without a caller.
+   *
+   * `api.ts` has no binding for this command, so nothing in the interface can
+   * reach it. Removing the handler would be the tidy thing to do and the wrong
+   * one: what is missing is the binding, and whether changing the master
+   * password is offered from the interface at all is a security decision that
+   * belongs with whoever owns that command, not with the mock.
+   */
   change_master_password: () => undefined,
 
   // No real decoding here — the mock exists to exercise the interface, and
@@ -809,7 +903,15 @@ export function installDevMock(): void {
         if (!handler) {
           return Promise.reject(`mock: no handler for ${command}`);
         }
-        return Promise.resolve(handler(args));
+        try {
+          return Promise.resolve(handler(args));
+        } catch (caught) {
+          // Several handlers report a refusal by throwing, and the internals
+          // this stands in for hand every outcome back as a promise. Without
+          // this the two differ for anyone holding the internals directly
+          // rather than going through `invoke`, which is what a test does.
+          return Promise.reject(caught);
+        }
       },
       transformCallback: (callback: unknown) => callback,
     },

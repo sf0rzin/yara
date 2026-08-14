@@ -1,5 +1,10 @@
 import { useEffect, useState, type JSX } from "react";
-import { checkForUpdate, type AvailableUpdate } from "../lib/updates";
+import {
+  checkForUpdateAtLaunch,
+  dismissUpdate,
+  updateDismissed,
+  type AvailableUpdate,
+} from "../lib/updates";
 import { Icon } from "./Icon";
 
 /**
@@ -15,13 +20,17 @@ import { Icon } from "./Icon";
  */
 export function UpdateNotice(): JSX.Element | null {
   const [update, setUpdate] = useState<AvailableUpdate | null>(null);
-  const [dismissed, setDismissed] = useState(false);
+  // Seeded from module scope, because this component unmounts on every
+  // navigation: state kept here made "Later" last until the next screen.
+  const [dismissed, setDismissed] = useState(updateDismissed);
   const [installing, setInstalling] = useState(false);
   const [failed, setFailed] = useState(false);
 
   useEffect(() => {
     let live = true;
-    void checkForUpdate().then((result) => {
+    // The launch check, which happens once whether this mounts once or twenty
+    // times. Remounting must not put the app back on the network.
+    void checkForUpdateAtLaunch().then((result) => {
       // Only an offer reaches the interface. A failure is recorded for the
       // settings screen to show and does not interrupt anybody here.
       if (live && result.state === "available") setUpdate(result.update);
@@ -64,7 +73,10 @@ export function UpdateNotice(): JSX.Element | null {
       <button
         type="button"
         className="button button--quiet"
-        onClick={() => setDismissed(true)}
+        onClick={() => {
+          dismissUpdate();
+          setDismissed(true);
+        }}
         disabled={installing}
       >
         Later

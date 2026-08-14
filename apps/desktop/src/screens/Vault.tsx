@@ -26,7 +26,7 @@ import { CommandPalette } from "../components/CommandPalette";
 import { Icon } from "../components/Icon";
 import { ImportDialog } from "../components/ImportPanel";
 import { ItemDetail } from "../components/ItemDetail";
-import { ItemRow } from "../components/ItemRow";
+import { ItemRow, itemOptionId } from "../components/ItemRow";
 import { NewItemDialog } from "../components/NewItemDialog";
 import { Sidebar } from "../components/Sidebar";
 import { SubscriptionsView } from "../components/SubscriptionsView";
@@ -94,6 +94,14 @@ export function Vault({ onLock }: VaultProps): JSX.Element {
     void lockVault();
     onLock();
   }, [onLock]);
+
+  // Stable, because the approval dialog rebinds its Escape-denies listener
+  // whenever this changes and this screen re-renders once a second while the
+  // lock countdown ticks.
+  const settleApproval = useCallback(
+    () => setApprovals((queue) => queue.slice(1)),
+    [],
+  );
 
   // Never means never: an interval of Infinity leaves the countdown pinned
   // and the callback unreachable, which is exactly the intent.
@@ -273,7 +281,14 @@ export function Vault({ onLock }: VaultProps): JSX.Element {
       const next = event.key === "ArrowDown"
         ? Math.min(current + 1, items.length - 1)
         : Math.max(current < 0 ? 0 : current - 1, 0);
-      setSelectedId(items[next].id);
+      const nextId = items[next].id;
+      setSelectedId(nextId);
+
+      // Focus follows the selection. Every row is rendered, so the option
+      // already exists and can be focused before React re-renders — and
+      // focusing it is what makes the move audible and scrolls it into view.
+      // Setting state alone changed a highlight nothing announced.
+      document.getElementById(itemOptionId(nextId))?.focus();
     };
     window.addEventListener("keydown", onArrow);
     return () => window.removeEventListener("keydown", onArrow);
@@ -539,7 +554,7 @@ export function Vault({ onLock }: VaultProps): JSX.Element {
               ) : items.length === 0 ? (
                 <p className="empty">{emptyMessage(view)}</p>
               ) : (
-                <ul className="rows">
+                <ul className="rows" role="listbox" aria-label={viewTitle(view)}>
                   {items.map((item) => (
                     <ItemRow
                       key={item.id}
@@ -754,7 +769,7 @@ export function Vault({ onLock }: VaultProps): JSX.Element {
           key={approvals[0].id}
           prompt={approvals[0]}
           queueLength={approvals.length}
-          onSettled={() => setApprovals((queue) => queue.slice(1))}
+          onSettled={settleApproval}
         />
       )}
     </div>
