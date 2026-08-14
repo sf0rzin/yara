@@ -22,3 +22,8 @@ dist-ssr
 # `git add -A`, and the fix for that is the working tree not offering it.
 /tmp
 /scratch
+
+# Which release the deploy host runs. Local to that host: it is edited there to
+# upgrade, and a copy in the repository would either go stale or quietly pin
+# every host to whatever was committed.
+deploy/.env
