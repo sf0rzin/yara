@@ -136,6 +136,102 @@ pub async fn enrol(
     })
 }
 
+/// Joins an account this machine has never seen, using the recovery kit.
+///
+/// The other half of enrolment, and the half that did not exist. Enrolment
+/// generated a kit, wrapped both keys under it, uploaded them and told the user
+/// to write the kit down — and nothing in the codebase could consume one, so a
+/// second machine could not join and a printed kit was decoration.
+///
+/// The order matters. The account blobs are public by design, so anyone can
+/// fetch them; they are useless without the password and the kit, and this is
+/// the only place the two come back together. Only after unwrapping does this
+/// machine hold the account key, and only that key can register a device — a
+/// device key cannot, or revoking a stolen laptop would be theatre.
+///
+/// Everything the server returns is treated as hostile. The KDF parameters in
+/// particular arrive from it, which is why `AccountKeys::derive` bounds them:
+/// unchecked, a hostile `memory_kib` is an allocation that aborts the process.
+pub async fn join(
+    state: Arc<AppState>,
+    base_url: String,
+    account_id: String,
+    password: String,
+    kit: String,
+    label: Option<String>,
+) -> Result<SyncReport, String> {
+    if state.with_vault(|vault| Ok(vault.sync_state().is_some()))? {
+        return Err("this vault is already syncing".into());
+    }
+
+    let base_url = base_url.trim_end_matches('/').to_string();
+    let account_id = account_id.trim().to_string();
+
+    // Every failure from here to the unwrap reads the same to the caller.
+    // A wrong kit, a wrong password and a tampered blob are the same event as
+    // far as anyone outside is concerned; telling them apart would turn this
+    // into an oracle for which half somebody got right.
+    let opaque = || "that account, password and recovery kit do not go together".to_string();
+
+    let secret = SecretKey::from_kit(&kit).map_err(|_| opaque())?;
+    let account = Client::account(&base_url, &account_id)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let salt = base64::engine::general_purpose::STANDARD
+        .decode(&account.salt)
+        .map_err(|_| opaque())?;
+    let params: KdfParams = serde_json::from_str(&account.kdf).map_err(|_| opaque())?;
+
+    let keys = AccountKeys::derive(&password, &secret, &salt, params).map_err(|_| opaque())?;
+
+    let wrapped_account: yara_core::Sealed =
+        serde_json::from_str(&account.wrapped_account_key).map_err(|_| opaque())?;
+    let account_key =
+        AccountKeypair::from_seed(&keys.unwrap(&wrapped_account).map_err(|_| opaque())?)
+            .map_err(|_| opaque())?;
+
+    // The vault key, so this machine can read what the others wrote. Unwrapping
+    // it here also proves the kit and the password are right before anything is
+    // registered anywhere.
+    let wrapped_vault: yara_core::Sealed =
+        serde_json::from_str(&account.wrapped_vault_key).map_err(|_| opaque())?;
+    let vault_key = keys.unwrap(&wrapped_vault).map_err(|_| opaque())?;
+
+    let device_key = AccountKeypair::generate();
+    let device_id = Uuid::new_v4().to_string();
+
+    Client::register_as_account(
+        &base_url,
+        &account_id,
+        &device_id,
+        device_key.public().as_bytes(),
+        label.as_deref(),
+        |message| account_key.sign(message),
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+
+    state.with_vault_mut(|vault| {
+        vault
+            .adopt_vault_key(&password, &vault_key)
+            .map_err(|_| opaque())?;
+        vault.set_sync_state(Some(SyncState {
+            base_url: base_url.clone(),
+            account_id: account_id.clone(),
+            device_id,
+            device_seed: b64(&device_key.seed()),
+            // Nothing has been seen yet, so the first sync pulls everything.
+            last_revision: 0,
+            last_synced_at: 0,
+        }));
+        Ok(())
+    })?;
+    state.save()?;
+
+    sync_now(state).await
+}
+
 /// Reconciles once: pull, apply, push.
 pub async fn sync_now(state: Arc<AppState>) -> Result<SyncReport, String> {
     let Some(sync) = state.with_vault(|vault| Ok(vault.sync_state().cloned()))? else {

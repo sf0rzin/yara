@@ -5,6 +5,7 @@ import {
   iconsEnabled,
   setIconsEnabled,
   syncEnrol,
+  syncJoin,
   syncForget,
   syncNow,
   syncStatus,
@@ -99,14 +100,26 @@ export function SyncView(): JSX.Element {
           }
         />
       ) : (
-        <Enrol
-          busy={busy}
-          onEnrol={(baseUrl, invite, password, label) =>
-            void run(async () => {
-              setKit(await syncEnrol(baseUrl, invite, password, label));
-            })
-          }
-        />
+        <>
+          <Enrol
+            busy={busy}
+            onEnrol={(baseUrl, invite, password, label) =>
+              void run(async () => {
+                setKit(await syncEnrol(baseUrl, invite, password, label));
+              })
+            }
+          />
+          <Join
+            busy={busy}
+            report={report}
+            onJoin={(baseUrl, accountId, password, kit, label) =>
+              void run(async () => {
+                setReport(await syncJoin(baseUrl, accountId, password, kit, label));
+                await refresh();
+              })
+            }
+          />
+        </>
       )}
 
       <MasterPassword />
@@ -437,6 +450,160 @@ function Enrol({
 
       <button type="submit" className="button button--primary" disabled={!ready || busy}>
         {busy ? "Enrolling…" : "Enrol this machine"}
+      </button>
+    </form>
+  );
+}
+
+/**
+ * Joining an account that already exists, with the recovery kit.
+ *
+ * The other half of enrolment, and for a long time the missing one: the first
+ * machine printed a kit and told you to keep it, and nothing anywhere could
+ * spend one. A second machine could not join and the kit authorised nothing.
+ *
+ * Deliberately not presented as a password reset. The kit is one half of what
+ * unwraps the account and the master password is the other, so this is the
+ * screen for a machine that does not have the vault yet — not for someone who
+ * has forgotten how to open the one they have.
+ */
+function Join({
+  busy,
+  report,
+  onJoin,
+}: {
+  busy: boolean;
+  report: SyncReport | null;
+  onJoin: (
+    baseUrl: string,
+    accountId: string,
+    password: string,
+    kit: string,
+    label?: string,
+  ) => void;
+}): JSX.Element {
+  const [open, setOpen] = useState(false);
+  const [baseUrl, setBaseUrl] = useState("https://yara.lat");
+  const [accountId, setAccountId] = useState("");
+  const [kit, setKit] = useState("");
+  const [password, setPassword] = useState("");
+  const [label, setLabel] = useState("");
+
+  const ready = baseUrl.trim() && accountId.trim() && kit.trim() && password.length > 0;
+
+  if (!open) {
+    return (
+      <p className="sync__aside">
+        Already have an account on another machine?{" "}
+        <button type="button" className="linkish" onClick={() => setOpen(true)}>
+          Join it with your recovery kit
+        </button>
+      </p>
+    );
+  }
+
+  return (
+    <form
+      className="sync__form"
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (ready && !busy) {
+          onJoin(
+            baseUrl.trim(),
+            accountId.trim(),
+            password,
+            kit.trim(),
+            label.trim() || undefined,
+          );
+        }
+      }}
+    >
+      <p className="sync__lead">
+        This adds the machine you are on now to an account you already have. You
+        need the recovery kit the first machine showed you once, and the master
+        password for that vault — the kit alone is not enough, and neither is
+        the password.
+      </p>
+
+      <label className="input-label">
+        Server
+        <input
+          className="input"
+          value={baseUrl}
+          onChange={(event) => setBaseUrl(event.target.value)}
+          autoComplete="off"
+          spellCheck={false}
+        />
+      </label>
+
+      <label className="input-label">
+        Account
+        <input
+          className="input"
+          value={accountId}
+          onChange={(event) => setAccountId(event.target.value)}
+          placeholder="Shown beside the recovery kit"
+          autoComplete="off"
+          spellCheck={false}
+        />
+      </label>
+
+      <label className="input-label">
+        Recovery kit
+        <input
+          className="input"
+          value={kit}
+          onChange={(event) => setKit(event.target.value)}
+          placeholder="abcde-fghij-klmno-pqrst"
+          autoComplete="off"
+          spellCheck={false}
+        />
+      </label>
+
+      <label className="input-label">
+        Master password
+        <input
+          className="input"
+          type="password"
+          value={password}
+          onChange={(event) => setPassword(event.target.value)}
+          autoComplete="current-password"
+        />
+      </label>
+      <p className="input-hint">
+        The password for the vault you are joining, which may not be the one
+        that opens this machine. It is not sent.
+      </p>
+
+      <label className="input-label">
+        This machine
+        <input
+          className="input"
+          value={label}
+          onChange={(event) => setLabel(event.target.value)}
+          placeholder="Optional — desktop, laptop"
+          autoComplete="off"
+        />
+      </label>
+
+      {/* Anything this machine already holds is kept and pushed up, so say so
+          before somebody wonders whether joining wipes it. */}
+      <p className="input-hint">
+        Items already on this machine are kept, and go up with the first sync.
+      </p>
+
+      {report && (
+        <p className="notice" role="status">
+          <Icon name="check" size={13} />
+          <span>
+            Joined. {report.pulled} {report.pulled === 1 ? "item" : "items"} came
+            down.
+          </span>
+        </p>
+      )}
+
+      <button type="submit" className="button button--primary" disabled={!ready || busy}>
+        {busy ? "Joining…" : "Join this account"}
       </button>
     </form>
   );

@@ -12,7 +12,7 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use yara_core::AccountKeypair;
 
-use crate::signing::{fresh_nonce, sign_request, RequestToSign};
+use crate::signing::{self, fresh_nonce, sign_request, RequestToSign};
 
 /// Long enough for a slow link, short enough that a hung server does not hang
 /// the app. Sync is a background courtesy; it is never worth blocking on.
@@ -247,6 +247,70 @@ impl Client {
             .await
             .map_err(|_| Error::Unreachable)?;
 
+        interpret::<serde_json::Value>(response).await.map(|_| ())
+    }
+
+    /// Registers this device on the account key's say-so.
+    ///
+    /// The path a second machine takes. It has no invite — invites bootstrap
+    /// the first device and the server refuses one for an account that already
+    /// has a key on record — and no device key the server would recognise,
+    /// because this is the request that would establish one. What it has is the
+    /// account key, which it holds only because it unwrapped the account blob
+    /// with the master password and the recovery kit. Possession of that key is
+    /// the proof, and nothing derived from the password goes on the wire.
+    ///
+    /// The body is signed, so the public key being registered is covered: a
+    /// captured registration cannot be re-sent with a different key swapped in.
+    pub async fn register_as_account(
+        base: &str,
+        account_id: &str,
+        device_id: &str,
+        public_key: &[u8],
+        label: Option<&str>,
+        sign: impl FnOnce(&[u8]) -> [u8; 64],
+    ) -> Result<()> {
+        use base64::Engine as _;
+
+        let http = reqwest::Client::builder()
+            .timeout(TIMEOUT)
+            .build()
+            .map_err(|_| Error::Unreachable)?;
+
+        let body = Register {
+            account_id,
+            device_id,
+            public_key: base64::engine::general_purpose::STANDARD.encode(public_key),
+            label,
+            invite: None,
+        };
+        // Serialised once and sent as those exact bytes. Signing a value and
+        // then letting reqwest re-serialise it would sign something the server
+        // never sees, which is the quiet way a signing scheme stops meaning
+        // anything.
+        let bytes = serde_json::to_vec(&body)
+            .map_err(|_| Error::Refused("could not encode the registration".into()))?;
+
+        const PATH: &str = "/api/v1/devices";
+        let headers = signing::sign_as_account(
+            account_id,
+            "POST",
+            PATH,
+            &bytes,
+            now(),
+            signing::fresh_nonce(),
+            sign,
+        );
+
+        let mut request = http
+            .post(format!("{}{PATH}", base.trim_end_matches('/')))
+            .header("content-type", "application/json")
+            .body(bytes);
+        for (name, value) in headers.pairs() {
+            request = request.header(name, value);
+        }
+
+        let response = request.send().await.map_err(|_| Error::Unreachable)?;
         interpret::<serde_json::Value>(response).await.map(|_| ())
     }
 

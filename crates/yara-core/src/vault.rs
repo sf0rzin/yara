@@ -672,6 +672,46 @@ impl UnlockedVault {
         Ok(())
     }
 
+    /// Takes on an account's vault key, so this machine can read what its
+    /// other machines wrote.
+    ///
+    /// A vault created on this machine has a vault key of its own, and items
+    /// pulled from an account are sealed under the account's. Joining an
+    /// account from a recovery kit is the moment those have to become the same
+    /// key, and this is that moment.
+    ///
+    /// The password is needed because the key on disk is wrapped under one
+    /// derived from it, and an open vault holds only the vault key — not the
+    /// key that wraps it. Without re-wrapping, the next unlock would recover
+    /// the old key and fail to open a payload sealed under the new one, which
+    /// is a vault that saves cleanly and never opens again.
+    ///
+    /// Items already held locally are not re-encrypted, because they are not
+    /// individually encrypted at rest: the whole payload is sealed under the
+    /// vault key when the file is written, so they follow the new key by
+    /// themselves. What does change is that anything this machine already
+    /// pushed under its old key is unreadable to it afterwards — which is why
+    /// this is only correct while joining, before anything has been pushed.
+    pub fn adopt_vault_key(&mut self, password: &str, key: &[u8]) -> Result<()> {
+        let vault_key = Key::from_slice(key)?;
+
+        let aad = associated_data(FORMAT_VERSION, &self.kdf)?;
+        let master_key = crypto::derive_key(password.as_bytes(), &self.kdf.salt, self.kdf.params)?;
+
+        // Opening the current wrapped key is what proves the password. Sealing
+        // with a key derived from the wrong one succeeds perfectly happily —
+        // encryption verifies nothing — and would leave this vault holding a
+        // key wrapped under a password nobody knows. Only decryption is a
+        // check, so the check has to be a decryption.
+        crypto::open(&master_key, &self.wrapped_key, &aad)?;
+
+        let wrapped_key = crypto::seal(&master_key, vault_key.expose(), &aad)?;
+
+        self.vault_key = vault_key;
+        self.wrapped_key = wrapped_key;
+        Ok(())
+    }
+
     pub fn items(&self) -> &[Item] {
         &self.data.items
     }
@@ -1238,6 +1278,58 @@ mod tests {
 
         assert_eq!(vault.items().len(), 1);
         assert_eq!(vault.get(item.id).unwrap().name, "GitHub (work)");
+    }
+
+    #[test]
+    fn adopting_a_vault_key_makes_another_vaults_items_readable() {
+        // The join: this machine has its own vault, the account has a key of
+        // its own, and until the two are the same key nothing pulled from the
+        // account can be opened. Without this the recovery kit was decoration.
+        let mut theirs = UnlockedVault::create_with_params("pw", fast()).unwrap();
+        let id = theirs.add(Item::new("GitHub").with_password("hunter2"));
+        let sealed_item = theirs.seal_item(theirs.get(id).unwrap()).unwrap();
+
+        let mut mine = UnlockedVault::create_with_params("pw", fast()).unwrap();
+        assert!(
+            mine.open_item(id, &sealed_item).is_err(),
+            "two vaults do not share a key by accident"
+        );
+
+        mine.adopt_vault_key("pw", theirs.vault_key_bytes())
+            .unwrap();
+        assert_eq!(mine.open_item(id, &sealed_item).unwrap().name, "GitHub");
+    }
+
+    #[test]
+    fn a_vault_that_adopted_a_key_still_opens_afterwards() {
+        // The failure this guards is the expensive one: the wrapped key on
+        // disk is what the next unlock recovers, so forgetting to re-wrap
+        // produces a vault that saves without complaint and never opens again.
+        let theirs = UnlockedVault::create_with_params("pw", fast()).unwrap();
+
+        let mut mine = UnlockedVault::create_with_params("pw", fast()).unwrap();
+        mine.add(Item::new("Local only").with_password("kept"));
+        mine.adopt_vault_key("pw", theirs.vault_key_bytes())
+            .unwrap();
+
+        let reopened = UnlockedVault::open(&mine.seal().unwrap(), "pw").unwrap();
+        assert_eq!(reopened.items().len(), 1, "local items survive the swap");
+        assert_eq!(reopened.vault_key_bytes(), theirs.vault_key_bytes());
+    }
+
+    #[test]
+    fn adopting_a_key_needs_the_current_password() {
+        let theirs = UnlockedVault::create_with_params("pw", fast()).unwrap();
+        let mut mine = UnlockedVault::create_with_params("pw", fast()).unwrap();
+
+        assert!(mine
+            .adopt_vault_key("wrong", theirs.vault_key_bytes())
+            .is_err());
+        assert_ne!(
+            mine.vault_key_bytes(),
+            theirs.vault_key_bytes(),
+            "a refused adoption must not have swapped the key anyway"
+        );
     }
 
     #[test]

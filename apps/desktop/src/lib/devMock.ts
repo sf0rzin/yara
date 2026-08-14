@@ -615,13 +615,57 @@ const handlers: Record<string, (args: Record<string, unknown>) => unknown> = {
       accountId: mockSync.accountId,
     };
   },
+  /*
+   * Joining an existing account with a recovery kit.
+   *
+   * Refuses on a kit that is not the shape `SecretKey::from_kit` accepts, so
+   * the screen's failure path is reachable — and refuses with the same wording
+   * for a bad kit and a bad password, because the real command deliberately
+   * cannot tell you which half you got wrong.
+   */
+  sync_join: (args) => {
+    const kit = String(args.kit ?? "").trim();
+    const accountId = String(args.accountId ?? "").trim();
+    const password = String(args.password ?? "");
+
+    const shaped = /^[0-9A-Za-z]{4}(-[0-9A-Za-z]{4}){3,5}$/.test(kit);
+    if (!shaped || accountId.length === 0 || password.length === 0) {
+      throw new Error("that account, password and recovery kit do not go together");
+    }
+
+    mockSync = {
+      enrolled: true,
+      baseUrl: String(args.baseUrl ?? "https://yara.lat"),
+      accountId,
+      deviceId: "b7e2f0a1-55cc-4f3e-9a12-6d0c4471aa93",
+      lastSyncedAt: unixNow(),
+    };
+    mockRevision += 1;
+    return {
+      pulled: 6,
+      pushed: items.length,
+      conflicts: 0,
+      unprovenDeletes: 0,
+      revision: mockRevision,
+    };
+  },
   sync_now: () => {
     mockSync = { ...mockSync, lastSyncedAt: unixNow() };
     mockRevision += 1;
     // `revision` is not optional in `SyncReport`. Omitting it made the mock's
     // report a shape the real command never returns, which is exactly the kind
     // of drift that lets a field be added to the type and never rendered.
-    return { pulled: 2, pushed: 1, conflicts: 0, revision: mockRevision };
+    //
+    // `unprovenDeletes` is here for the same reason: it is the count that says
+    // a server tried to delete something it could not prove, and a mock that
+    // never reports one is a mock in which that line can never be seen.
+    return {
+      pulled: 2,
+      pushed: 1,
+      conflicts: 0,
+      unprovenDeletes: new URLSearchParams(window.location.search).has("unproven") ? 3 : 0,
+      revision: mockRevision,
+    };
   },
   sync_forget: () => {
     mockSync = {
