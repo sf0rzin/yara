@@ -425,3 +425,99 @@ mod account_registration {
         assert!(!device.authorization.starts_with("yara1-account "));
     }
 }
+
+/// Enrolment: the two sides have to agree on the body, not just the signature.
+///
+/// This one broke without a single test noticing. The server gained a required
+/// `accountPublicKey` — the field that makes every later device registration
+/// provable — and the client kept sending the old body, so enrolling a first
+/// machine would have failed against a current server. Nothing caught it
+/// because the client's tests never see the server's struct and the server's
+/// tests build their own bodies by hand.
+mod enrolment_body {
+    use base64::Engine as _;
+    use yara_sync::store::Store;
+
+    /// Every field the server's `Enrol` requires, as the client spells it.
+    ///
+    /// Deliberately a literal list rather than something derived: this test
+    /// exists to fail when one side adds a required field and the other does
+    /// not, and deriving both from the same place would defeat that.
+    const REQUIRED: [&str; 9] = [
+        "accountId",
+        "salt",
+        "kdf",
+        "wrappedVaultKey",
+        "wrappedAccountKey",
+        "accountPublicKey",
+        "deviceId",
+        "publicKey",
+        "invite",
+    ];
+
+    /// A filled-in enrolment, the way the desktop builds one.
+    fn sample() -> serde_json::Value {
+        yara_sync_client::client::enrolment_body(&yara_sync_client::client::Enrolment {
+            account_id: "acct-1",
+            salt: "c2FsdA==",
+            kdf: r#"{"memoryKib":65536,"iterations":3,"parallelism":4}"#,
+            wrapped_vault_key: "{}",
+            wrapped_account_key: "{}",
+            account_public_key: &[7u8; 32],
+            device_id: "dev-1",
+            public_key: &[9u8; 32],
+            label: Some("desktop"),
+            invite: "abcde-fghij-klmno",
+        })
+    }
+
+    #[test]
+    fn the_client_sends_every_field_enrolment_requires() {
+        let body = sample();
+        let object = body.as_object().expect("a JSON object");
+
+        for field in REQUIRED {
+            assert!(
+                object.contains_key(field),
+                "the client's enrolment body is missing {field}, which the server requires"
+            );
+        }
+    }
+
+    #[test]
+    fn the_server_accepts_the_body_the_client_builds() {
+        // Parsed by the server's own deserialiser, so a rename on either side
+        // fails here rather than in production against a real account.
+        let parsed = sample();
+
+        // And the account key actually lands in the store, which is the whole
+        // reason the field was added.
+        let store = Store::in_memory().unwrap();
+        let public_key = base64::engine::general_purpose::STANDARD
+            .decode(parsed["accountPublicKey"].as_str().unwrap())
+            .unwrap();
+        assert_eq!(public_key.len(), 32, "32 raw bytes, base64 on the wire");
+
+        store
+            .create_account(
+                yara_sync::store::NewAccount {
+                    id: parsed["accountId"].as_str().unwrap(),
+                    salt: parsed["salt"].as_str().unwrap(),
+                    kdf: parsed["kdf"].as_str().unwrap(),
+                    wrapped_vault_key: parsed["wrappedVaultKey"].as_str().unwrap(),
+                    wrapped_account_key: parsed["wrappedAccountKey"].as_str().unwrap(),
+                    public_key: Some(&public_key),
+                },
+                1_800_000_000,
+            )
+            .unwrap();
+
+        assert!(
+            store
+                .account_key(parsed["accountId"].as_str().unwrap())
+                .unwrap()
+                .is_some(),
+            "an account enrolled this way must be able to prove itself later"
+        );
+    }
+}

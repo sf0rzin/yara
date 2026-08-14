@@ -116,10 +116,43 @@ pub struct Enrolment<'a> {
     pub kdf: &'a str,
     pub wrapped_vault_key: &'a str,
     pub wrapped_account_key: &'a str,
+    /// The public half of the account key, whose private half is inside
+    /// `wrapped_account_key`.
+    ///
+    /// This is the only moment it can be handed over: the server has nothing to
+    /// check a signature against until it holds this, and every later device
+    /// registration is proved against it. Omit it and the account can never
+    /// gain a second device.
+    pub account_public_key: &'a [u8],
     pub device_id: &'a str,
     pub public_key: &'a [u8],
     pub label: Option<&'a str>,
     pub invite: &'a str,
+}
+
+/// The enrolment request, as JSON.
+///
+/// Split out of [`Client::enrol`] so a test can read what the client actually
+/// sends. The server's `Enrol` struct makes several of these fields mandatory,
+/// and the two are only ever compared by a real request — which meant a field
+/// added on one side and forgotten on the other broke enrolment with nothing
+/// failing until somebody tried it against a live server. It happened once.
+pub fn enrolment_body(request: &Enrolment<'_>) -> serde_json::Value {
+    use base64::Engine as _;
+    let b64 = |bytes: &[u8]| base64::engine::general_purpose::STANDARD.encode(bytes);
+
+    serde_json::json!({
+        "accountId": request.account_id,
+        "salt": request.salt,
+        "kdf": request.kdf,
+        "wrappedVaultKey": request.wrapped_vault_key,
+        "wrappedAccountKey": request.wrapped_account_key,
+        "accountPublicKey": b64(request.account_public_key),
+        "deviceId": request.device_id,
+        "publicKey": b64(request.public_key),
+        "label": request.label,
+        "invite": request.invite,
+    })
 }
 
 pub struct Client {
@@ -168,24 +201,12 @@ impl Client {
     /// Unsigned, because this is the request that brings the first key into
     /// existence. The invite is the gate.
     pub async fn enrol(base: &str, request: Enrolment<'_>) -> Result<()> {
-        use base64::Engine as _;
-
         let http = reqwest::Client::builder()
             .timeout(TIMEOUT)
             .build()
             .map_err(|_| Error::Unreachable)?;
 
-        let body = serde_json::json!({
-            "accountId": request.account_id,
-            "salt": request.salt,
-            "kdf": request.kdf,
-            "wrappedVaultKey": request.wrapped_vault_key,
-            "wrappedAccountKey": request.wrapped_account_key,
-            "deviceId": request.device_id,
-            "publicKey": base64::engine::general_purpose::STANDARD.encode(request.public_key),
-            "label": request.label,
-            "invite": request.invite,
-        });
+        let body = enrolment_body(&request);
 
         let url = format!("{}/api/v1/account", base.trim_end_matches('/'));
         let response = http

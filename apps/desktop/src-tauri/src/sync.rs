@@ -108,6 +108,7 @@ pub async fn enrol(
             kdf: &serde_json::to_string(&params).map_err(|e| e.to_string())?,
             wrapped_vault_key: &sealed_to_string(&wrapped_vault)?,
             wrapped_account_key: &sealed_to_string(&wrapped_account)?,
+            account_public_key: account_key.public().as_bytes(),
             device_id: &device_id,
             public_key: device_key.public().as_bytes(),
             label: label.as_deref(),
