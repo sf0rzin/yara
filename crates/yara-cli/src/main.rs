@@ -28,6 +28,9 @@ enum Command {
     Status,
 
     /// List item names. Never returns secrets, and needs no approval.
+    ///
+    /// One tab-separated line per item: id, name, username, and the labels of
+    /// any custom fields. The labels are what `--field` takes.
     List {
         /// Filter by name, username or address.
         query: Option<String>,
@@ -45,7 +48,9 @@ enum Command {
         #[arg(long, default_value = "YARA_SECRET")]
         env: String,
 
-        /// Which field to use.
+        /// Which field to use: password, username, totp, or the exact label of
+        /// a custom field as shown by `yara list`. Labels are matched exactly,
+        /// including case.
         #[arg(long, default_value = "password")]
         field: String,
 
@@ -70,6 +75,9 @@ enum Command {
         #[arg(long)]
         item: String,
 
+        /// Which field to reveal: password, username, totp, or the exact label
+        /// of a custom field as shown by `yara list`. Labels are matched
+        /// exactly, including case.
         #[arg(long, default_value = "password")]
         field: String,
 
@@ -78,14 +86,26 @@ enum Command {
     },
 }
 
+/// Parses `--field`.
+///
+/// The built-in names are reserved; anything else is the label of a custom
+/// field. The vault, the protocol, the broker and the MCP server have all
+/// supported those for a while — only this program did not, so the same item
+/// was reachable from an agent and not from the documented command, and the
+/// error said the field did not exist.
+///
+/// No case folding, deliberately, and this used to fold. A grant is pinned to
+/// the exact label, so lowercasing here would send "API Key" to the broker as
+/// "api key", which matches no field and cannot be approved. It also has to
+/// agree with the MCP server, which does not fold either: the two must ask the
+/// same question or a grant issued through one will not cover the other.
 fn parse_field(value: &str) -> Result<Field, String> {
-    match value.to_ascii_lowercase().as_str() {
+    match value {
         "password" => Ok(Field::Password),
         "username" => Ok(Field::Username),
         "totp" | "otp" | "code" => Ok(Field::Totp),
-        other => Err(format!(
-            "unknown field {other:?}; expected password, username or totp"
-        )),
+        "" => Err("--field cannot be empty".into()),
+        label => Ok(Field::Custom(label.to_string())),
     }
 }
 
@@ -151,6 +171,25 @@ async fn run(cli: Cli) -> Result<ExitCode, String> {
     Ok(report(response))
 }
 
+/// One item as a tab-separated line: id, name, username, custom field labels.
+///
+/// The labels are here because `--field` accepts them and nothing else in the
+/// shell reports them. Without this column the only way to name a custom field
+/// from the command line was to already know it was there.
+///
+/// Labels are joined with a comma rather than given a column each, because the
+/// number of them varies per item and a ragged table cannot be cut into
+/// fields.
+fn item_row(item: &yara_broker::protocol::ItemRef) -> String {
+    format!(
+        "{}\t{}\t{}\t{}",
+        item.id,
+        item.name,
+        item.username.clone().unwrap_or_default(),
+        item.fields.join(", ")
+    )
+}
+
 /// Prints the response and decides this program's exit code.
 fn report(response: Response) -> ExitCode {
     match response {
@@ -170,9 +209,8 @@ fn report(response: Response) -> ExitCode {
             if items.is_empty() {
                 eprintln!("no matching items");
             }
-            for item in items {
-                let username = item.username.unwrap_or_default();
-                println!("{}\t{}\t{}", item.id, item.name, username);
+            for item in &items {
+                println!("{}", item_row(item));
             }
             ExitCode::SUCCESS
         }
@@ -211,19 +249,83 @@ mod tests {
     use super::*;
 
     #[test]
-    fn field_names_are_accepted_in_the_forms_people_type() {
-        assert_eq!(parse_field("password").unwrap(), Field::Password);
-        assert_eq!(parse_field("PASSWORD").unwrap(), Field::Password);
-        assert_eq!(parse_field("totp").unwrap(), Field::Totp);
-        assert_eq!(parse_field("otp").unwrap(), Field::Totp);
-        assert_eq!(parse_field("code").unwrap(), Field::Totp);
+    fn the_built_in_names_stay_reserved() {
+        for (name, expected) in [
+            ("password", Field::Password),
+            ("username", Field::Username),
+            ("totp", Field::Totp),
+            ("otp", Field::Totp),
+            ("code", Field::Totp),
+        ] {
+            assert_eq!(parse_field(name).unwrap(), expected, "{name}");
+        }
+    }
+
+    /// The same vault item was reachable through the MCP server and not
+    /// through the documented command, which rejected every custom label and
+    /// said those fields did not exist.
+    #[test]
+    fn an_unknown_name_is_the_label_of_a_custom_field() {
+        assert_eq!(
+            parse_field("Deploy key").unwrap(),
+            Field::Custom("Deploy key".into())
+        );
+    }
+
+    /// Verbatim, with its capital letters. A grant is pinned to the exact
+    /// label, so folding the case here would ask for a field no item has —
+    /// and would disagree with the MCP server, which does not fold.
+    #[test]
+    fn a_label_is_never_case_folded() {
+        assert_eq!(
+            parse_field("API Key").unwrap(),
+            Field::Custom("API Key".into())
+        );
+        assert_eq!(
+            parse_field("PASSWORD").unwrap(),
+            Field::Custom("PASSWORD".into()),
+            "the built-in names are the lowercase spellings and nothing else"
+        );
     }
 
     #[test]
-    fn an_unknown_field_explains_the_valid_ones() {
-        let error = parse_field("secret").unwrap_err();
-        assert!(error.contains("password"));
-        assert!(error.contains("totp"));
+    fn an_empty_field_name_is_rejected() {
+        assert!(parse_field("").is_err());
+    }
+
+    /// The labels have to be discoverable from the shell, or `--field` accepts
+    /// names there is no way to learn.
+    #[test]
+    fn a_listed_item_shows_its_custom_field_labels() {
+        let row = item_row(&yara_broker::protocol::ItemRef {
+            id: uuid::Uuid::nil(),
+            name: "db-prod".into(),
+            username: Some("app".into()),
+            has_password: true,
+            has_totp: false,
+            fields: vec!["Deploy key".into(), "Billing key".into()],
+        });
+
+        let columns: Vec<&str> = row.split('\t').collect();
+        assert_eq!(columns.len(), 4);
+        assert_eq!(columns[1], "db-prod");
+        assert_eq!(columns[3], "Deploy key, Billing key");
+    }
+
+    /// An item with no custom fields still has to produce the same shape, or
+    /// `cut -f4` reads the wrong column on some lines.
+    #[test]
+    fn a_row_has_the_same_number_of_columns_however_empty_the_item_is() {
+        let row = item_row(&yara_broker::protocol::ItemRef {
+            id: uuid::Uuid::nil(),
+            name: "empty".into(),
+            username: None,
+            has_password: false,
+            has_totp: false,
+            fields: Vec::new(),
+        });
+
+        assert_eq!(row.split('\t').count(), 4);
     }
 
     #[test]

@@ -1,11 +1,11 @@
 //! End-to-end behaviour of the broker, with a fake vault and a scripted user.
 
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use tokio::sync::oneshot;
 use uuid::Uuid;
-use yara_broker::audit::Entry;
+use yara_broker::audit::{Action, Entry, Outcome};
 use yara_broker::grant::ClientId;
 use yara_broker::protocol::{AccessRequest, Field, Intent, ItemRef, Refusal, Request, Response};
 use yara_broker::transport::{
@@ -16,9 +16,13 @@ use yara_core::SecretString;
 const SECRET: &str = "s3cr3t-value-not-in-output";
 
 struct FakeVault {
-    unlocked: bool,
+    unlocked: AtomicBool,
     item: ItemRef,
     ambiguous: bool,
+    /// The item says it has a password and the vault hands back nothing —
+    /// which is what an item edited between the prompt and the fetch looks
+    /// like from here.
+    emptied: bool,
     /// Stands in for the encrypted vault the real bridge writes to, so a test
     /// can tell "the broker recorded it" from "the broker remembered it".
     stored_audit: Mutex<Vec<Entry>>,
@@ -27,7 +31,7 @@ struct FakeVault {
 impl FakeVault {
     fn new() -> Self {
         Self {
-            unlocked: true,
+            unlocked: AtomicBool::new(true),
             item: ItemRef {
                 id: Uuid::new_v4(),
                 name: "db-prod".into(),
@@ -37,14 +41,25 @@ impl FakeVault {
                 fields: Vec::new(),
             },
             ambiguous: false,
+            emptied: false,
             stored_audit: Mutex::new(Vec::new()),
         }
+    }
+
+    fn locked() -> Self {
+        let vault = Self::new();
+        vault.lock();
+        vault
+    }
+
+    fn lock(&self) {
+        self.unlocked.store(false, Ordering::SeqCst);
     }
 }
 
 impl VaultBridge for FakeVault {
     fn is_unlocked(&self) -> bool {
-        self.unlocked
+        self.unlocked.load(Ordering::SeqCst)
     }
 
     fn list(&self, _query: Option<&str>) -> Vec<ItemRef> {
@@ -63,6 +78,10 @@ impl VaultBridge for FakeVault {
     }
 
     fn secret(&self, _id: Uuid, field: &Field) -> Option<SecretString> {
+        if self.emptied {
+            return None;
+        }
+
         match field {
             Field::Password => Some(SecretString::new(SECRET)),
             Field::Username => self.item.username.clone().map(SecretString::new),
@@ -125,6 +144,22 @@ impl Approver for SilentUser {
     fn ask(&self, _request: ApprovalRequest) -> oneshot::Receiver<Decision> {
         let (tx, rx) = oneshot::channel();
         drop(tx);
+        rx
+    }
+}
+
+/// A user who walks away and locks the vault, then answers yes.
+///
+/// The prompt waits up to two minutes, which is plenty of time for an
+/// auto-lock to fire underneath it.
+struct UserWhoLocksFirst(Arc<FakeVault>);
+
+impl Approver for UserWhoLocksFirst {
+    fn ask(&self, _request: ApprovalRequest) -> oneshot::Receiver<Decision> {
+        self.0.lock();
+
+        let (tx, rx) = oneshot::channel();
+        let _ = tx.send(Decision::AllowOnce);
         rx
     }
 }
@@ -245,11 +280,7 @@ async fn closing_the_prompt_without_answering_is_not_consent() {
 #[tokio::test]
 async fn a_locked_vault_refuses_before_asking_anyone() {
     let user = ScriptedUser::new(Decision::AllowOnce);
-    let vault = FakeVault {
-        unlocked: false,
-        ..FakeVault::new()
-    };
-    let broker = broker_with(vault, user.clone());
+    let broker = broker_with(FakeVault::locked(), user.clone());
 
     match broker.handle(reveal("db-prod"), &client()).await {
         Response::Refused { reason, .. } => assert_eq!(reason, Refusal::VaultLocked),
@@ -329,11 +360,7 @@ async fn listing_items_works_without_approval_and_exposes_no_secrets() {
 
 #[tokio::test]
 async fn listing_is_refused_while_the_vault_is_locked() {
-    let vault = FakeVault {
-        unlocked: false,
-        ..FakeVault::new()
-    };
-    let broker = broker_with(vault, ScriptedUser::new(Decision::Deny));
+    let broker = broker_with(FakeVault::locked(), ScriptedUser::new(Decision::Deny));
 
     match broker
         .handle(Request::List { query: None }, &client())
@@ -569,6 +596,192 @@ async fn a_command_that_does_not_exist_is_reported_without_leaking() {
     }
 }
 
+/// The record has to describe what happened, not what was about to be tried.
+///
+/// It used to be written before the spawn, so a command that could not start
+/// was logged as having run — the Agent access screen told the user their
+/// production password had gone to a process that never existed.
+#[tokio::test]
+async fn a_command_that_could_not_start_is_not_logged_as_having_run() {
+    let vault = Arc::new(FakeVault::new());
+    let broker = Broker::new(
+        Arc::clone(&vault) as Arc<dyn VaultBridge>,
+        ScriptedUser::new(Decision::AllowOnce),
+    );
+
+    broker
+        .handle(
+            run("db-prod", "definitely-not-a-real-binary", &[]),
+            &client(),
+        )
+        .await;
+
+    let stored = vault.load_audit();
+    assert_eq!(stored.len(), 1);
+    match &stored[0].outcome {
+        Outcome::Failed { error } => assert!(!error.contains(SECRET)),
+        other => panic!("the spawn failed, so this must not read as an access: {other:?}"),
+    }
+    assert!(!stored[0].outcome.was_allowed());
+    // The command line is still worth keeping: what was attempted matters.
+    assert!(matches!(stored[0].action, Action::Ran { .. }));
+}
+
+/// The same argument for a field that turns out to hold nothing.
+#[tokio::test]
+async fn an_emptied_field_is_logged_as_refused_rather_than_revealed() {
+    let vault = Arc::new(FakeVault {
+        emptied: true,
+        ..FakeVault::new()
+    });
+    let broker = Broker::new(
+        Arc::clone(&vault) as Arc<dyn VaultBridge>,
+        ScriptedUser::new(Decision::AllowOnce),
+    );
+
+    match broker.handle(reveal("db-prod"), &client()).await {
+        Response::Refused { reason, .. } => assert_eq!(reason, Refusal::FieldEmpty),
+        other => panic!("unexpected {other:?}"),
+    }
+
+    let stored = vault.load_audit();
+    assert_eq!(stored.len(), 1);
+    assert_eq!(
+        stored[0].outcome,
+        Outcome::Refused {
+            reason: Refusal::FieldEmpty
+        },
+        "nothing was disclosed, so nothing may be recorded as disclosed"
+    );
+}
+
+/// An approval answered as the vault locks authorises access to a key that is
+/// no longer there.
+#[tokio::test]
+async fn locking_during_the_prompt_refuses_and_says_so_in_the_log() {
+    let vault = Arc::new(FakeVault::new());
+    let broker = Broker::new(
+        Arc::clone(&vault) as Arc<dyn VaultBridge>,
+        Arc::new(UserWhoLocksFirst(Arc::clone(&vault))),
+    );
+
+    match broker.handle(reveal("db-prod"), &client()).await {
+        Response::Refused { reason, .. } => assert_eq!(reason, Refusal::VaultLocked),
+        other => panic!("unexpected {other:?}"),
+    }
+
+    let stored = vault.load_audit();
+    assert_eq!(stored.len(), 1);
+    assert!(!stored[0].outcome.was_allowed());
+
+    assert_eq!(
+        broker.grant_count(),
+        0,
+        "a grant minted as the vault locked would outlive the key and be \
+         redeemable without a prompt at the next unlock"
+    );
+}
+
+/// A chain of reuses has to lead back to the prompt that started it.
+#[tokio::test]
+async fn a_reused_grant_names_the_approval_that_minted_it() {
+    let broker = broker_with(
+        FakeVault::new(),
+        ScriptedUser::new(Decision::AllowFor {
+            seconds: 900,
+            uses: 5,
+        }),
+    );
+
+    for _ in 0..3 {
+        broker
+            .handle(run("db-prod", "hostname", &[]), &client())
+            .await;
+    }
+
+    // recent() is newest first, so the approval is last.
+    let entries = broker.recent_audit(10);
+    assert_eq!(entries.len(), 3);
+
+    let approved = entries.last().unwrap().outcome.grant();
+    assert!(
+        approved.is_some(),
+        "the approval must record the grant it issued, or the uuid the reuses \
+         name appears in no other record"
+    );
+
+    for reused in &entries[..2] {
+        match reused.outcome {
+            Outcome::Reused { grant } => assert_eq!(Some(grant), approved),
+            ref other => panic!("unexpected {other:?}"),
+        }
+    }
+}
+
+/// Grants used to accumulate for the life of the unlock: nothing ever called
+/// prune, and a one-shot approval is spent the instant it is issued.
+#[tokio::test]
+async fn one_shot_approvals_do_not_pile_up_in_the_store() {
+    let broker = broker_with(FakeVault::new(), ScriptedUser::new(Decision::AllowOnce));
+
+    for _ in 0..5 {
+        broker.handle(reveal("db-prod"), &client()).await;
+    }
+
+    assert_eq!(
+        broker.grant_count(),
+        0,
+        "each grant was spent on the request that created it"
+    );
+
+    // A grant that is still worth something stays, of course.
+    let broker = broker_with(
+        FakeVault::new(),
+        ScriptedUser::new(Decision::AllowFor {
+            seconds: 900,
+            uses: 5,
+        }),
+    );
+    broker
+        .handle(run("db-prod", "hostname", &[]), &client())
+        .await;
+    assert_eq!(broker.grant_count(), 1);
+}
+
+/// A listing is a search, not an access.
+#[tokio::test]
+async fn a_listing_records_the_query_without_inventing_an_item() {
+    let vault = Arc::new(FakeVault::new());
+    let broker = Broker::new(
+        Arc::clone(&vault) as Arc<dyn VaultBridge>,
+        ScriptedUser::new(Decision::Deny),
+    );
+
+    broker
+        .handle(
+            Request::List {
+                query: Some("git".into()),
+            },
+            &client(),
+        )
+        .await;
+
+    let stored = vault.load_audit();
+    assert_eq!(stored.len(), 1);
+    assert!(
+        stored[0].item.is_empty(),
+        "a row saying an item called git was accessed describes an item that \
+         does not exist"
+    );
+    assert!(
+        stored[0].reason.is_empty(),
+        "the reason is the client's words, and the client supplied none"
+    );
+    assert!(stored[0].field.is_none());
+    assert_eq!(stored[0].query.as_deref(), Some("git"));
+    assert_eq!(stored[0].action, Action::Listed { matches: 1 });
+}
+
 #[tokio::test]
 async fn every_decision_lands_in_the_audit_log() {
     let broker = broker_with(FakeVault::new(), ScriptedUser::new(Decision::Deny));
@@ -681,6 +894,100 @@ async fn a_client_can_talk_to_the_broker_over_a_named_pipe() {
     drop(writer);
     drop(lines);
     let _ = tokio::time::timeout(std::time::Duration::from_secs(5), serving).await;
+}
+
+/// The accept loop has to outlive its clients.
+///
+/// It used to end on the first transport error, and once it ended nobody
+/// owned the pipe: any process could create the name and answer the CLI and
+/// the MCP server in yara's place, fabricating an unlocked status and
+/// harvesting the item names and stated reasons agents send. Meanwhile the
+/// real CLI reported "could not reach the vault" with yara running and
+/// unlocked in front of the user.
+#[cfg(windows)]
+#[tokio::test]
+async fn the_accept_loop_survives_clients_that_hang_up_mid_conversation() {
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    use tokio::net::windows::named_pipe::{ClientOptions, NamedPipeClient};
+
+    /// Opens the pipe once the listener has it. A client can arrive before the
+    /// first instance exists, or in the moment between one being handed off
+    /// and its replacement being created.
+    async fn open_when_ready(pipe: &str) -> NamedPipeClient {
+        for _ in 0..200 {
+            if let Ok(stream) = ClientOptions::new().open(pipe) {
+                return stream;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        panic!("the broker never opened {pipe}");
+    }
+
+    let pipe = format!(r"\\.\pipe\yara-test-{}", Uuid::new_v4());
+    let broker = broker_with(FakeVault::new(), ScriptedUser::new(Decision::AllowOnce));
+
+    let serving = tokio::spawn({
+        let broker = Arc::clone(&broker);
+        let pipe = pipe.clone();
+        async move { yara_broker::transport::serve(broker, &pipe).await }
+    });
+
+    // Connect and vanish, several times over, including mid-request.
+    for _ in 0..3 {
+        drop(open_when_ready(&pipe).await);
+
+        let mut stream = open_when_ready(&pipe).await;
+        stream.write_all(b"{\"request\":\"sta").await.unwrap();
+        drop(stream);
+    }
+
+    // A well-behaved client afterwards must still be answered.
+    let stream = open_when_ready(&pipe).await;
+    let (reader, mut writer) = tokio::io::split(stream);
+    let mut lines = BufReader::new(reader).lines();
+
+    let encoded = yara_broker::protocol::encode(&Request::Status).unwrap();
+    writer.write_all(encoded.as_bytes()).await.unwrap();
+    writer.flush().await.unwrap();
+
+    let line = tokio::time::timeout(std::time::Duration::from_secs(5), lines.next_line())
+        .await
+        .expect("the broker stopped listening")
+        .unwrap()
+        .unwrap();
+
+    assert!(matches!(
+        yara_broker::protocol::decode::<Response>(&line).unwrap(),
+        Response::Status { unlocked: true, .. }
+    ));
+
+    assert!(!serving.is_finished(), "it must still be listening");
+    serving.abort();
+}
+
+/// The one genuinely fatal case, and the reason it is a value rather than a
+/// line on a stdout nobody is reading: a windowed app has to be able to say
+/// this to the person in front of it.
+#[cfg(windows)]
+#[tokio::test]
+async fn a_second_listener_reports_that_one_is_already_running() {
+    use tokio::net::windows::named_pipe::ServerOptions;
+    use yara_broker::transport::ServeError;
+
+    let pipe = format!(r"\\.\pipe\yara-test-{}", Uuid::new_v4());
+    let _held = ServerOptions::new()
+        .first_pipe_instance(true)
+        .create(&pipe)
+        .unwrap();
+
+    let broker = broker_with(FakeVault::new(), ScriptedUser::new(Decision::Deny));
+
+    match yara_broker::transport::serve(broker, &pipe).await {
+        Err(error @ ServeError::AlreadyRunning) => {
+            assert!(!error.to_string().contains("os error"), "{error}");
+        }
+        other => panic!("unexpected {other:?}"),
+    }
 }
 
 #[cfg(windows)]
