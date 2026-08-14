@@ -1,5 +1,6 @@
 import type { JSX } from "react";
 import type { ItemSummary } from "../api";
+import { useSecretCopy } from "../lib/clipboard";
 import { Icon } from "./Icon";
 import { Tile } from "./Tile";
 import { TotpBadge } from "./TotpBadge";
@@ -25,6 +26,19 @@ export function AuthenticatorGrid({
   onImport,
   onContextMenu,
 }: AuthenticatorGridProps): JSX.Element {
+  /*
+   * The badges in this grid copy a live code, and a copy has three outcomes
+   * worth hearing about: Windows refused to keep it out of Clipboard History,
+   * the timed wipe failed, or it went cleanly. A badge is a 40-pixel button
+   * with nowhere to put a sentence, so it used to discard all three — and the
+   * failure that matters most is the quiet one, because a code left on the
+   * clipboard outlives the thirty seconds it is good for and nothing says so.
+   *
+   * The grid has room, so the announcement lives here and every badge shares
+   * it, the same way the detail pane shares one line across its rows.
+   */
+  const { said, copy, clearNow } = useSecretCopy();
+
   return (
     <section className="auth-view" aria-label="Authenticator codes">
       <header className="auth-view__toolbar">
@@ -66,6 +80,22 @@ export function AuthenticatorGrid({
         <p className="notice notice--loud">
           <Icon name="alert" size={13} />
           {error}
+        </p>
+      )}
+
+      {said && (
+        <p className={said.loud ? "notice notice--loud" : "notice"} role="status">
+          <Icon name={said.loud ? "alert" : "check"} size={13} />
+          <span>{said.message}</span>
+          {said.offerClear && (
+            <button
+              type="button"
+              className="linkish notice__action"
+              onClick={() => void clearNow(said.what)}
+            >
+              Take it off now
+            </button>
+          )}
         </p>
       )}
 
@@ -111,7 +141,12 @@ export function AuthenticatorGrid({
                 </button>
               </header>
 
-              <TotpBadge itemId={item.id} prominent copyable />
+              <TotpBadge
+                itemId={item.id}
+                prominent
+                copyable
+                onCopy={(code) => copy(`The code for ${item.name}`, code)}
+              />
             </article>
           ))}
         </div>

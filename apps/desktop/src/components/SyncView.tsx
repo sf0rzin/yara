@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState, type JSX } from "react";
 import {
+  changeMasterPassword,
   errorMessage,
   iconsEnabled,
   setIconsEnabled,
@@ -12,6 +13,7 @@ import {
   type SyncStatus,
 } from "../api";
 import { Icon } from "./Icon";
+import { StrengthMeter, useStrength } from "./StrengthMeter";
 import {
   checkForUpdate,
   lastUpdateCheck,
@@ -107,8 +109,180 @@ export function SyncView(): JSX.Element {
         />
       )}
 
+      <MasterPassword />
       <IconSetting />
       <UpdateSetting />
+    </section>
+  );
+}
+
+/**
+ * Changing the master password.
+ *
+ * There was no way to do this at all — the command existed and nothing in the
+ * interface could reach it, so the only answer to "someone watched me type it"
+ * was to export and start again.
+ *
+ * The current password is asked for because the command demands it, and the
+ * command demands it because it used to re-key on the word of whoever called
+ * it. The interface says what the change is worth: a new wrapping of the same
+ * key, which is the honest description and a smaller claim than people expect.
+ */
+function MasterPassword(): JSX.Element {
+  const [open, setOpen] = useState(false);
+  const [current, setCurrent] = useState("");
+  const [next, setNext] = useState("");
+  const [again, setAgain] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [problem, setProblem] = useState<string | null>(null);
+  const [changed, setChanged] = useState(false);
+  const strength = useStrength(next);
+
+  // Nothing typed here outlives the form. The fields hold the password to the
+  // whole vault, and a cancelled attempt should not leave it in React state
+  // for as long as the settings screen stays open.
+  const close = () => {
+    setOpen(false);
+    setCurrent("");
+    setNext("");
+    setAgain("");
+    setProblem(null);
+  };
+
+  const ready = current.length > 0 && next.length > 0 && again.length > 0;
+
+  async function submit(event: React.FormEvent) {
+    event.preventDefault();
+    if (busy) return;
+    setProblem(null);
+
+    // Twice, and compared here, because the backend only ever sees one of them.
+    // Getting this wrong locks you out of your own vault with a password you
+    // mistyped and never saw.
+    if (next !== again) {
+      setProblem("The two new passwords do not match.");
+      return;
+    }
+    if (strength === "weak") {
+      setProblem("Choose a longer master password.");
+      return;
+    }
+
+    setBusy(true);
+    try {
+      await changeMasterPassword(current, next);
+      setChanged(true);
+      close();
+    } catch (caught) {
+      // Shown as the vault worded it. A wrong current password comes back as
+      // "could not decrypt: wrong password or corrupted data", which is
+      // deliberately both — rewriting it as "wrong password" would have the
+      // interface tell you which, and it does not know.
+      setProblem(errorMessage(caught));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="master">
+      <p className="section-label">Master password</p>
+
+      <p className="sync__lead">
+        Changing it re-wraps the 32-byte key this vault is encrypted under. Your
+        items are not re-encrypted and what is stored for each of them does not
+        change — this is a new lock on the same box, not a new box. Sync
+        enrolment is left as it is, and a grant an agent is already holding
+        keeps working until it expires or you revoke it.
+      </p>
+
+      {changed && (
+        <p className="notice" role="status">
+          <Icon name="check" size={13} />
+          Master password changed. The old one no longer opens this vault.
+        </p>
+      )}
+
+      {open ? (
+        <form className="sync__form" onSubmit={(event) => void submit(event)}>
+          <label className="input-label">
+            Current master password
+            <input
+              className="input"
+              type="password"
+              value={current}
+              autoComplete="current-password"
+              onChange={(event) => setCurrent(event.target.value)}
+            />
+          </label>
+          <p className="input-hint">
+            Checked against the vault on disk before anything is written.
+            Without it, anything running inside this window could re-key your
+            vault while it sat unlocked in front of you.
+          </p>
+
+          <label className="input-label">
+            New master password
+            <input
+              className="input"
+              type="password"
+              value={next}
+              autoComplete="new-password"
+              onChange={(event) => setNext(event.target.value)}
+            />
+          </label>
+          <StrengthMeter strength={strength} />
+
+          <label className="input-label">
+            New master password again
+            <input
+              className="input"
+              type="password"
+              value={again}
+              autoComplete="new-password"
+              onChange={(event) => setAgain(event.target.value)}
+            />
+          </label>
+
+          {problem && (
+            <p className="notice notice--loud" role="alert">
+              <Icon name="alert" size={13} />
+              {problem}
+            </p>
+          )}
+
+          <div className="sync__actions">
+            <button
+              type="submit"
+              className="button button--primary"
+              disabled={!ready || busy}
+            >
+              {busy ? "Changing…" : "Change master password"}
+            </button>
+            <button
+              type="button"
+              className="button button--quiet"
+              disabled={busy}
+              onClick={close}
+            >
+              Cancel
+            </button>
+          </div>
+        </form>
+      ) : (
+        <div className="sync__actions">
+          <button
+            type="button"
+            className="button button--outline"
+            onClick={() => {
+              setChanged(false);
+              setOpen(true);
+            }}
+          >
+            Change master password…
+          </button>
+        </div>
+      )}
     </section>
   );
 }

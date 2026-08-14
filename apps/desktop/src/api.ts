@@ -184,7 +184,38 @@ export interface ListFilter {
   folder?: string | null;
 }
 
+/**
+ * Whether a vault file is at the live path.
+ *
+ * Not what the app asks at startup any more, and not what anything else should
+ * ask either: a false here covers both "no vault yet" and "a save was
+ * interrupted and the vault is beside itself", which want opposite offers. Use
+ * `vaultStartup` for that question.
+ */
 export const vaultExists = () => invoke<boolean>("vault_exists");
+
+/**
+ * Which of the three situations this machine is in at startup.
+ *
+ * `vault_exists` answers a question with two answers, and there are three. A
+ * save interrupted between its two renames leaves no file at the live path
+ * while a complete copy sits beside it — which read as "no vault yet", so the
+ * app offered first-run setup and the vault created there deleted the last
+ * surviving copy on its own first save. `recover` is that third state, and the
+ * interface must never offer to create a vault while it is showing.
+ */
+export type Startup = "setup" | "locked" | "recover";
+
+export const vaultStartup = () => invoke<Startup>("vault_startup");
+
+/**
+ * Puts a surviving copy back at the live path.
+ *
+ * Copies rather than moves, so an interruption during recovery still leaves
+ * something to recover from. Throws if there is nothing there that parses as a
+ * vault, or if a vault has appeared at the live path since.
+ */
+export const recoverVault = () => invoke<void>("recover_vault");
 
 export const isUnlocked = () => invoke<boolean>("is_unlocked");
 
@@ -253,6 +284,56 @@ export const totpCode = (id: string) => invoke<TotpCode>("totp_code", { id });
 
 export const estimateStrength = (password: string) =>
   invoke<Strength>("estimate_strength", { password });
+
+/**
+ * Re-wraps the vault key under a new master password.
+ *
+ * The current password is proof, not a formality: the command re-opens the
+ * file on disk with it before writing anything. Without that step this re-keyed
+ * the vault on the word of whoever called it, so anything running inside the
+ * webview could have locked the user out of their own vault while it sat
+ * unlocked in front of them.
+ *
+ * A current password that does not open the file comes back as the vault's
+ * ordinary decrypt error, which says "wrong password or corrupted data" and
+ * means either. Callers show it as it is — narrowing it to "wrong password"
+ * would be the frontend inventing a distinction the vault refuses to make.
+ */
+export const changeMasterPassword = (currentPassword: string, newPassword: string) =>
+  invoke<void>("change_master_password", { currentPassword, newPassword });
+
+/**
+ * What one copy did, in terms the interface may repeat to the user.
+ *
+ * `excludedFromHistory` is the whole reason this goes through the backend: no
+ * amount of JavaScript can place the clipboard formats that keep an entry out
+ * of Win+V and the Cloud Clipboard, and when Windows will not take them the
+ * interface has to stop claiming the copy is private to this machine.
+ */
+export interface Copied {
+  excludedFromHistory: boolean;
+  /** Seconds until the copy is wiped. */
+  clearsIn: number;
+  /** Which copy this is. The clear that follows carries the same number. */
+  token: number;
+}
+
+/**
+ * What became of a copy when its time was up.
+ *
+ * Three outcomes rather than a boolean, because "we did not take it off" and
+ * "somebody else's copy is on there now" are opposite facts: one leaves a
+ * password on the clipboard and one does not.
+ */
+export type Cleared =
+  | { outcome: "wiped" }
+  | { outcome: "alreadyGone" }
+  | { outcome: "failed"; detail: string };
+
+export const copySecret = (value: string) => invoke<Copied>("copy_secret", { value });
+
+/** Takes a copied secret off the clipboard now rather than on the timer. */
+export const clearClipboard = () => invoke<Cleared>("clear_clipboard");
 
 export interface ImportProblem {
   name: string;
