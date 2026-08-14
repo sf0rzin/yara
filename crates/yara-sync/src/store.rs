@@ -57,6 +57,14 @@ pub struct NewAccount<'a> {
     pub kdf: &'a str,
     pub wrapped_vault_key: &'a str,
     pub wrapped_account_key: &'a str,
+    /// The public half of the account's Ed25519 key, 32 raw bytes.
+    ///
+    /// Optional only because accounts created before this column existed have
+    /// none, and one of those databases is deployed. A new account always
+    /// carries it — without it nothing can ever prove it owns the account, and
+    /// [`Store::register_device_on_invite`] is the only way it could add a
+    /// second device.
+    pub public_key: Option<&'a [u8]>,
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -70,6 +78,26 @@ pub struct ItemRecord {
     pub ciphertext: Option<String>,
     #[serde(default)]
     pub deleted: bool,
+}
+
+/// The one place an account row is written, so the two callers cannot drift
+/// apart on which columns they set.
+fn insert_account(conn: &Connection, account: NewAccount<'_>, now: i64) -> Result<()> {
+    conn.execute(
+        "INSERT INTO accounts
+           (id, salt, kdf, wrapped_vault_key, wrapped_account_key, account_public_key, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        params![
+            account.id,
+            account.salt,
+            account.kdf,
+            account.wrapped_vault_key,
+            account.wrapped_account_key,
+            account.public_key,
+            now
+        ],
+    )?;
+    Ok(())
 }
 
 pub struct Store {
@@ -137,9 +165,43 @@ impl Store {
             "#,
         )?;
 
+        Self::migrate(&conn)?;
+
         Ok(Self {
             conn: Mutex::new(conn),
         })
+    }
+
+    /// Brings an older database up to the current shape.
+    ///
+    /// Additive and in place, because there is a live deployment holding data
+    /// nobody else has a copy of: the server cannot recreate a wrapped key it
+    /// has never been able to read.
+    ///
+    /// A fresh database goes through this too rather than declaring the newer
+    /// columns in `CREATE TABLE`, so every test exercises the migration and it
+    /// cannot rot into something that only ever ran once, on the one machine
+    /// where a failure is expensive.
+    fn migrate(conn: &Connection) -> Result<()> {
+        // Registering a device was supposed to be signed by the account key,
+        // and the accounts table had nowhere to keep that key — which is why
+        // the check was never performed and the endpoint would attach any
+        // public key to any account id. Nullable: an account written before
+        // this column existed has no key on record, and that state has to stay
+        // representable rather than be guessed at.
+        if !Self::has_column(conn, "accounts", "account_public_key")? {
+            conn.execute_batch("ALTER TABLE accounts ADD COLUMN account_public_key BLOB")?;
+        }
+        Ok(())
+    }
+
+    fn has_column(conn: &Connection, table: &str, column: &str) -> Result<bool> {
+        let found: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM pragma_table_info(?1) WHERE name = ?2",
+            params![table, column],
+            |row| row.get(0),
+        )?;
+        Ok(found > 0)
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, Connection> {
@@ -180,23 +242,8 @@ impl Store {
 
     // ---- accounts ------------------------------------------------------
 
-    #[allow(clippy::too_many_arguments)]
-    pub fn create_account(
-        &self,
-        id: &str,
-        salt: &str,
-        kdf: &str,
-        wrapped_vault_key: &str,
-        wrapped_account_key: &str,
-        now: i64,
-    ) -> Result<()> {
-        self.lock().execute(
-            "INSERT INTO accounts
-               (id, salt, kdf, wrapped_vault_key, wrapped_account_key, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            params![id, salt, kdf, wrapped_vault_key, wrapped_account_key, now],
-        )?;
-        Ok(())
+    pub fn create_account(&self, account: NewAccount<'_>, now: i64) -> Result<()> {
+        insert_account(&self.lock(), account, now)
     }
 
     /// Creates an account and its first device against one invite.
@@ -227,19 +274,7 @@ impl Store {
             return Err(Error::BadInvite);
         }
 
-        tx.execute(
-            "INSERT INTO accounts
-               (id, salt, kdf, wrapped_vault_key, wrapped_account_key, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            params![
-                account.id,
-                account.salt,
-                account.kdf,
-                account.wrapped_vault_key,
-                account.wrapped_account_key,
-                now
-            ],
-        )?;
+        insert_account(&tx, account, now)?;
 
         tx.execute(
             "INSERT INTO devices (id, account_id, public_key, label, created_at)
@@ -271,6 +306,47 @@ impl Store {
             .optional()?)
     }
 
+    /// The account's Ed25519 public key, when one was recorded.
+    ///
+    /// `None` means either that the account does not exist or that it predates
+    /// the column, and the caller must not distinguish the two: doing so would
+    /// turn device registration into a way of asking which account ids are
+    /// real, which is the thing `/account/{id}` is careful about too.
+    pub fn account_key(&self, id: &str) -> Result<Option<Vec<u8>>> {
+        Ok(self
+            .lock()
+            .query_row(
+                "SELECT account_public_key FROM accounts WHERE id = ?1",
+                params![id],
+                |row| row.get::<_, Option<Vec<u8>>>(0),
+            )
+            .optional()?
+            .flatten())
+    }
+
+    /// Removes an account, its devices and its items.
+    ///
+    /// One transaction, so a deletion cannot half-happen and leave items
+    /// belonging to an account that no longer exists. `docs/hosting.md`
+    /// promises that asking for an account to be deleted deletes it, and a
+    /// partial delete would make that promise false in the one direction
+    /// nobody would notice.
+    ///
+    /// The devices and items rows would go by cascade, but they are deleted
+    /// here by name: the cascade depends on a pragma being set at open time,
+    /// and a promise about erasure should not rest on a connection setting.
+    pub fn delete_account(&self, id: &str) -> Result<bool> {
+        let mut conn = self.lock();
+        let tx = conn.transaction()?;
+
+        tx.execute("DELETE FROM items WHERE account_id = ?1", params![id])?;
+        tx.execute("DELETE FROM devices WHERE account_id = ?1", params![id])?;
+        let removed = tx.execute("DELETE FROM accounts WHERE id = ?1", params![id])?;
+
+        tx.commit()?;
+        Ok(removed > 0)
+    }
+
     // ---- devices -------------------------------------------------------
 
     pub fn register_device(
@@ -286,6 +362,78 @@ impl Store {
              VALUES (?1, ?2, ?3, ?4, ?5)",
             params![id, account_id, public_key, label, now],
         )?;
+        Ok(())
+    }
+
+    /// Attaches the first device to an account that has no account key on
+    /// record, spending an invite for it.
+    ///
+    /// The bootstrap, and only the bootstrap. An account created before the
+    /// account key column existed has nothing a registration could be verified
+    /// against, so the invite has to stand in — but only while the account has
+    /// no device at all, because a device already there means the invite is
+    /// being replayed against somebody else's account.
+    ///
+    /// Every one of those conditions is checked inside the transaction that
+    /// does the insert. Split across statements, two invites redeemed at the
+    /// same instant would both see an empty device list and both attach a key.
+    pub fn register_device_on_invite(
+        &self,
+        invite: &str,
+        account_id: &str,
+        device_id: &str,
+        public_key: &[u8],
+        label: Option<&str>,
+        now: i64,
+    ) -> Result<()> {
+        let mut conn = self.lock();
+        let tx = conn.transaction()?;
+
+        // Uniform `BadInvite` for a missing account, an account that already
+        // has a key, and an account that already has a device: an unsigned
+        // caller learns only that the invite did not work.
+        //
+        // The outer `Option` is whether the row exists and the inner one is
+        // whether it has a key. Collapsing the two would send a registration
+        // for an account that does not exist all the way to the insert, where
+        // it fails on a foreign key and reads as a server fault.
+        let account: Option<Option<Vec<u8>>> = tx
+            .query_row(
+                "SELECT account_public_key FROM accounts WHERE id = ?1",
+                params![account_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        match account {
+            None | Some(Some(_)) => return Err(Error::BadInvite),
+            Some(None) => {}
+        }
+
+        let devices: i64 = tx.query_row(
+            "SELECT COUNT(*) FROM devices WHERE account_id = ?1",
+            params![account_id],
+            |row| row.get(0),
+        )?;
+        if devices > 0 {
+            return Err(Error::BadInvite);
+        }
+
+        let spent = tx.execute(
+            "UPDATE invites SET used_by = ?2
+             WHERE code_hash = ?1 AND used_by IS NULL AND expires_at > ?3",
+            params![Self::hash_code(invite), account_id, now],
+        )?;
+        if spent == 0 {
+            return Err(Error::BadInvite);
+        }
+
+        tx.execute(
+            "INSERT INTO devices (id, account_id, public_key, label, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![device_id, account_id, public_key, label, now],
+        )?;
+
+        tx.commit()?;
         Ok(())
     }
 
@@ -438,18 +586,23 @@ mod tests {
 
     const NOW: i64 = 1_800_000_000;
     const ACCOUNT: &str = "acct-1";
+    const ACCOUNT_KEY: [u8; 32] = [3u8; 32];
+
+    fn new_account<'a>(id: &'a str, public_key: Option<&'a [u8]>) -> NewAccount<'a> {
+        NewAccount {
+            id,
+            salt: "salt",
+            kdf: "{}",
+            wrapped_vault_key: "wrapped-vault",
+            wrapped_account_key: "wrapped-account",
+            public_key,
+        }
+    }
 
     fn store() -> Store {
         let store = Store::in_memory().unwrap();
         store
-            .create_account(
-                ACCOUNT,
-                "salt",
-                "{}",
-                "wrapped-vault",
-                "wrapped-account",
-                NOW,
-            )
+            .create_account(new_account(ACCOUNT, Some(&ACCOUNT_KEY)), NOW)
             .unwrap();
         store
     }
@@ -630,7 +783,7 @@ mod tests {
     fn a_device_key_is_only_visible_to_its_own_account() {
         let store = store();
         store
-            .create_account("other", "s", "{}", "v", "a", NOW)
+            .create_account(new_account("other", None), NOW)
             .unwrap();
         store
             .register_device("dev-1", ACCOUNT, &[1u8; 32], Some("laptop"), NOW)
@@ -667,5 +820,222 @@ mod tests {
         assert_eq!(blobs.wrapped_account_key, "wrapped-account");
         assert_eq!(blobs.revision, 0);
         assert!(store().account("nobody").unwrap().is_none());
+    }
+
+    #[test]
+    fn an_account_remembers_the_key_that_speaks_for_it() {
+        let store = store();
+        assert_eq!(
+            store.account_key(ACCOUNT).unwrap().as_deref(),
+            Some(&ACCOUNT_KEY[..])
+        );
+
+        // An account with no key on record and an account that does not exist
+        // have to look the same to the caller.
+        store
+            .create_account(new_account("legacy", None), NOW)
+            .unwrap();
+        assert!(store.account_key("legacy").unwrap().is_none());
+        assert!(store.account_key("nobody").unwrap().is_none());
+    }
+
+    #[test]
+    fn enrolment_records_the_account_key() {
+        let store = Store::in_memory().unwrap();
+        store.create_invite("first", NOW, 3600).unwrap();
+        store
+            .enrol(
+                "first",
+                new_account("acct-new", Some(&ACCOUNT_KEY)),
+                "dev-1",
+                &[1u8; 32],
+                None,
+                NOW,
+            )
+            .unwrap();
+
+        assert_eq!(
+            store.account_key("acct-new").unwrap().as_deref(),
+            Some(&ACCOUNT_KEY[..]),
+            "without this the account could never prove anything again"
+        );
+    }
+
+    #[test]
+    fn the_invite_bootstrap_is_only_for_an_account_with_no_key_and_no_device() {
+        let store = Store::in_memory().unwrap();
+        store
+            .create_account(new_account("legacy", None), NOW)
+            .unwrap();
+        store
+            .create_account(new_account("keyed", Some(&ACCOUNT_KEY)), NOW)
+            .unwrap();
+        for code in ["one", "two", "three"] {
+            store.create_invite(code, NOW, 3600).unwrap();
+        }
+
+        // An account that has a key must sign, so no invite gets it in.
+        assert!(matches!(
+            store.register_device_on_invite("one", "keyed", "dev-x", &[1u8; 32], None, NOW),
+            Err(Error::BadInvite)
+        ));
+        // And the refusal must not have spent the code.
+        assert!(store
+            .register_device_on_invite("one", "legacy", "dev-1", &[1u8; 32], None, NOW)
+            .is_ok());
+
+        // Once that account has a device the bootstrap is closed: a second
+        // invite must not attach a key to somebody else's account.
+        assert!(matches!(
+            store.register_device_on_invite("two", "legacy", "dev-2", &[2u8; 32], None, NOW),
+            Err(Error::BadInvite)
+        ));
+        assert!(store.device_key("legacy", "dev-2").unwrap().is_none());
+
+        // An account that does not exist is refused the same way, and the
+        // invite survives for whoever it was meant for.
+        assert!(matches!(
+            store.register_device_on_invite("three", "nobody", "dev-3", &[3u8; 32], None, NOW),
+            Err(Error::BadInvite)
+        ));
+        assert!(store.redeem_invite("three", ACCOUNT, NOW).is_ok());
+    }
+
+    #[test]
+    fn deleting_an_account_leaves_nothing_behind() {
+        let store = store();
+        store
+            .register_device("dev-1", ACCOUNT, &[1u8; 32], None, NOW)
+            .unwrap();
+        store
+            .push_items(ACCOUNT, 0, &[item("a", "x"), item("b", "y")], NOW)
+            .unwrap();
+
+        assert!(store.delete_account(ACCOUNT).unwrap());
+
+        let conn = store.lock();
+        for (table, column) in [
+            ("accounts", "id"),
+            ("devices", "account_id"),
+            ("items", "account_id"),
+        ] {
+            let left: i64 = conn
+                .query_row(
+                    &format!("SELECT COUNT(*) FROM {table} WHERE {column} = ?1"),
+                    params![ACCOUNT],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(left, 0, "{table} still holds rows for a deleted account");
+        }
+        drop(conn);
+
+        assert!(!store.delete_account(ACCOUNT).unwrap());
+    }
+
+    #[test]
+    fn deleting_one_account_leaves_the_others_alone() {
+        let store = store();
+        store
+            .create_account(new_account("other", None), NOW)
+            .unwrap();
+        store
+            .register_device("dev-other", "other", &[9u8; 32], None, NOW)
+            .unwrap();
+        store
+            .push_items("other", 0, &[item("a", "x")], NOW)
+            .unwrap();
+
+        store.delete_account(ACCOUNT).unwrap();
+
+        assert!(store.device_key("other", "dev-other").unwrap().is_some());
+        assert_eq!(store.items_since("other", 0).unwrap().len(), 1);
+    }
+
+    /// The migration has to survive meeting the database that is already
+    /// deployed, which was written before the account key column existed.
+    #[test]
+    fn a_database_from_before_the_account_key_column_still_opens_and_works() {
+        let dir = std::env::temp_dir().join(format!(
+            "yara-sync-legacy-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("sync.db");
+
+        {
+            // The exact shape that shipped: no account_public_key anywhere.
+            let old = Connection::open(&path).unwrap();
+            old.execute_batch(
+                r#"
+                CREATE TABLE accounts (
+                  id                  TEXT PRIMARY KEY,
+                  salt                TEXT NOT NULL,
+                  kdf                 TEXT NOT NULL,
+                  wrapped_vault_key   TEXT NOT NULL,
+                  wrapped_account_key TEXT NOT NULL,
+                  revision            INTEGER NOT NULL DEFAULT 0,
+                  created_at          INTEGER NOT NULL
+                );
+                CREATE TABLE devices (
+                  id         TEXT PRIMARY KEY,
+                  account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+                  public_key BLOB NOT NULL,
+                  label      TEXT,
+                  created_at INTEGER NOT NULL,
+                  last_seen  INTEGER
+                );
+                CREATE TABLE items (
+                  account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+                  id         TEXT NOT NULL,
+                  revision   INTEGER NOT NULL,
+                  ciphertext TEXT,
+                  deleted    INTEGER NOT NULL DEFAULT 0,
+                  updated_at INTEGER NOT NULL,
+                  PRIMARY KEY (account_id, id)
+                );
+                CREATE TABLE invites (
+                  code_hash  BLOB PRIMARY KEY,
+                  created_at INTEGER NOT NULL,
+                  expires_at INTEGER NOT NULL,
+                  used_by    TEXT
+                );
+                INSERT INTO accounts (id, salt, kdf, wrapped_vault_key, wrapped_account_key, created_at)
+                VALUES ('old-acct', 'salt', '{}', 'wrapped-vault', 'wrapped-account', 1);
+                "#,
+            )
+            .unwrap();
+        }
+
+        let store = Store::open(&path).unwrap();
+
+        // The data that was there is still readable.
+        let blobs = store.account("old-acct").unwrap().unwrap();
+        assert_eq!(blobs.wrapped_vault_key, "wrapped-vault");
+        // And the column exists, holding the only honest answer for a row
+        // written before it did.
+        assert!(store.account_key("old-acct").unwrap().is_none());
+
+        // The account still works: it can push, and its one bootstrap is open.
+        store.create_invite("bootstrap", NOW, 3600).unwrap();
+        store
+            .register_device_on_invite("bootstrap", "old-acct", "dev-1", &[4u8; 32], None, NOW)
+            .unwrap();
+        assert_eq!(
+            store
+                .push_items("old-acct", 0, &[item("a", "x")], NOW)
+                .unwrap(),
+            1
+        );
+
+        // Opening it twice must be as harmless as opening it once.
+        drop(store);
+        let again = Store::open(&path).unwrap();
+        assert!(again.device_key("old-acct", "dev-1").unwrap().is_some());
+        drop(again);
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
