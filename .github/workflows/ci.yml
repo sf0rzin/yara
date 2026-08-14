@@ -5,6 +5,12 @@ on:
     branches: [main]
   pull_request:
 
+# Nothing here publishes anything, so nothing here needs a token that could.
+# The default grant is write, and it applies to a workflow that runs on every
+# pull request — including one from a fork.
+permissions:
+  contents: read
+
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
@@ -42,11 +48,27 @@ jobs:
           npm ci
           npm run build
 
+      # Before the Rust steps, which take minutes. The frontend had neither of
+      # these until now, which is how a react-hooks suppression sat in the tree
+      # for the life of a file with no rule behind it to suppress.
+      - name: Lint frontend
+        working-directory: apps/desktop
+        run: npm run lint
+
+      - name: Test frontend
+        working-directory: apps/desktop
+        run: npm test
+
       - run: cargo fmt --all --check
 
-      - run: cargo clippy --workspace --all-targets -- -D warnings
+      # `--locked` on everything that resolves dependencies. The supply-chain
+      # job audits advisories and licences against Cargo.lock, so a build
+      # allowed to resolve around the lockfile is a build nothing audited — and
+      # a lockfile that has drifted should fail here loudly rather than be
+      # silently updated by whichever job ran first.
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
-      - run: cargo test --workspace
+      - run: cargo test --workspace --locked
 
   # Two crates that must build away from Windows, for different reasons.
   #
@@ -68,15 +90,80 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - run: cargo clippy -p yara-core -p yara-sync --all-targets -- -D warnings
+      - run: cargo clippy -p yara-core -p yara-sync --all-targets --locked -- -D warnings
 
-      - run: cargo test -p yara-core -p yara-sync
+      - run: cargo test -p yara-core -p yara-sync --locked
 
   supply-chain:
     name: Advisories and licences
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # `bans` is in the list because deny.toml has a [bans] section, and a
+      # section that never runs is a setting the file only appears to have:
+      # `wildcards = "deny"` was dead configuration until this line named it.
+      # Duplicate versions stay allowed there, so the one new way to fail is a
+      # dependency pinned to `*`.
       - uses: EmbarkStudios/cargo-deny-action@v2
         with:
-          command: check advisories licenses sources
+          command: check advisories bans licenses sources
+
+  # Everything under deploy/ runs on the server and nowhere else, so without
+  # this job its first execution is in production. None of these checks need a
+  # server; they only need someone to have written them down.
+  deploy:
+    name: Deploy configuration
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # .gitattributes forces LF on .sh, .service and .timer because CRLF
+      # genuinely breaks them — `#!/usr/bin/env bash\r` fails with "bad
+      # interpreter", and systemd rejects a directive with a trailing carriage
+      # return. Nothing checked that the tree agrees with that claim.
+      - name: Nothing under deploy/ carries a carriage return
+        run: |
+          if grep -rlU $'\r' deploy/; then
+            echo "::error::the files above must be LF-only; see .gitattributes"
+            exit 1
+          fi
+
+      - name: Shell scripts
+        run: shellcheck deploy/*.sh
+
+      # The Caddyfile asks, in a comment, for `caddy fmt` before committing.
+      # An instruction nothing enforces is a request, and this is the check
+      # that makes it a rule. `--diff` exits non-zero when the file differs.
+      - name: Caddyfile is formatted
+        run: |
+          docker run --rm -v "$PWD/deploy:/deploy" -w /deploy caddy:2-alpine \
+            caddy fmt --diff Caddyfile
+
+      # The image installs a released binary rather than compiling one, so
+      # building it needs a version that has been released. Deliberately not the
+      # version in Cargo.toml: on the pull request that bumps it, no release
+      # carrying that version exists yet.
+      - name: Resolve the newest released version
+        id: released
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! tag="$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName)"; then
+            echo "::error::no published release to build the sync image against"
+            exit 1
+          fi
+          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Compose file is valid
+        env:
+          YARA_VERSION: ${{ steps.released.outputs.version }}
+        run: docker compose -f deploy/docker-compose.yml config -q
+
+      # Builds the image the origin runs, including the checksum check on the
+      # downloaded binary — so a release whose .sha256 does not match its
+      # artifact fails here rather than on the server.
+      - name: Sync image builds
+        run: |
+          docker build deploy \
+            --build-arg "YARA_VERSION=${{ steps.released.outputs.version }}" \
+            --tag yara-sync:ci

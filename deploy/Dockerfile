@@ -1,31 +1,50 @@
 # yara-sync, as a container.
 #
-# The host it runs on carries no Rust toolchain, no Caddy and no cloudflared —
-# every service there is a container, and adding a language toolchain to a
-# shared machine to build one binary is the kind of drift that makes a server
-# impossible to reason about later. So the toolchain lives in a build stage and
-# is thrown away.
+# This image does not compile anything. It wraps the binary the release
+# workflow already built, signed off with a checksum, and published as a
+# release asset — `yara-sync-<version>-x86_64-linux`. Building from source here
+# meant the deploy host ran a full Rust build of whatever happened to be
+# checked out at /opt/yara, which is a different binary from the one CI tested
+# and a Rust toolchain's worth of moving parts on a machine shared with other
+# projects.
 #
-# rusqlite is `bundled`, so there is no libsqlite3 to install and no chance of
-# the build and the runtime disagreeing about its version. reqwest is on
-# rustls, so there is no OpenSSL either. What survives into the runtime is one
-# static-ish binary and a CA bundle.
+#   docker build deploy --build-arg YARA_VERSION=0.4.5
+#
+# What the checksum buys, stated plainly: it catches a truncated or corrupted
+# download and pins the image to the exact artifact of that release. It is not
+# a signature — the binary and its .sha256 come from the same place, so anyone
+# who could replace one could replace the other. What actually guards this is
+# that the release workflow is the only thing that writes there and that
+# installing a new binary stays a deliberate act by an operator.
+ARG YARA_VERSION
+ARG YARA_REPO=sf0rzin/yara
 
-FROM rust:1-bookworm AS build
-WORKDIR /src
+FROM ubuntu:24.04 AS fetch
+ARG YARA_VERSION
+ARG YARA_REPO
 
-# The whole workspace, because Cargo has to parse every member's manifest to
-# resolve the lockfile even when only one package is asked for. `-p yara-sync`
-# is what keeps it from *compiling* the rest — which matters, because the
-# broker's transport is named pipes and does not build on Linux at all.
-COPY . .
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends ca-certificates curl && \
+    rm -rf /var/lib/apt/lists/*
 
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    --mount=type=cache,target=/src/target \
-    cargo build --release -p yara-sync && \
-    cp target/release/yara-sync /usr/local/bin/yara-sync
+WORKDIR /fetch
 
-FROM debian:bookworm-slim
+# Fail here rather than downloading a URL with an empty version in it, which
+# 404s in a way that reads like the release being missing.
+RUN test -n "${YARA_VERSION}" || { echo "build with --build-arg YARA_VERSION=x.y.z" >&2; exit 1; }
+
+RUN base="https://github.com/${YARA_REPO}/releases/download/v${YARA_VERSION}" && \
+    name="yara-sync-${YARA_VERSION}-x86_64-linux" && \
+    curl -fsSL --retry 3 -O "${base}/${name}" -O "${base}/${name}.sha256" && \
+    sha256sum -c "${name}.sha256" && \
+    install -m 0755 "${name}" /usr/local/bin/yara-sync
+
+# Ubuntu 24.04 rather than a Debian slim image, and not by preference: the
+# binary is linked against the glibc of the runner that built it, which
+# release.yml pins to ubuntu-24.04 for this reason. A bookworm base is two glibc
+# releases behind and the container simply fails to start, with a symbol
+# version error that names neither file.
+FROM ubuntu:24.04
 
 # ca-certificates is not optional: the icon proxy fetches favicons over TLS,
 # and without a trust store every fetch fails in a way that looks like the
@@ -35,12 +54,12 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 
 # A fixed uid rather than a name lookup, so the bind-mounted state directory on
-# the host has stable ownership that does not depend on what order Debian
-# happened to allocate system users in.
+# the host has stable ownership that does not depend on what order the base
+# image happened to allocate system users in.
 RUN groupadd --gid 10001 yara && \
     useradd --uid 10001 --gid 10001 --no-create-home --shell /usr/sbin/nologin yara
 
-COPY --from=build /usr/local/bin/yara-sync /usr/local/bin/yara-sync
+COPY --from=fetch /usr/local/bin/yara-sync /usr/local/bin/yara-sync
 
 USER 10001:10001
 

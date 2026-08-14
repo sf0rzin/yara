@@ -109,6 +109,15 @@ that is only safe because the listener is unpublished: there is no path to it
 that skips the tunnel. Break that and `{client_ip}` becomes forgeable by any
 caller — it is the one audit field that has to be true.
 
+What the origin keeps of all that is deliberately less than what it sees. The
+access log scrubs the identifier out of the two paths that carry one —
+`/api/v1/account/{id}` and `/api/v1/icons/{domain}` — before writing, and Caddy
+redacts the `Authorization` header by itself, which is where an account id
+otherwise rides on every signed request. Twenty MiB across ten files is a lot
+of plaintext to leave pairing account ids with addresses on a shared host, and
+before the filter existed that is exactly what it was. What survives is the
+route, the address and the time.
+
 ## DNS
 
 ```
@@ -157,12 +166,17 @@ On the host:
 
 ```
 /opt/yara/                 the git clone; deploy/ is read straight out of it
+/opt/yara/deploy/.env      YARA_VERSION — which release of the sync service runs here
 /srv/yara/data/            sync.db and the icon cache, owned by uid 10001
 /srv/yara/updates/         latest.json
 /srv/yara/downloads/       installers and .sig files, if self-hosting them
 /srv/yara/logs/            caddy's access log
 /srv/yara/secrets/         tunnel.env, mode 0600, root
 ```
+
+`.env` is the only file in that clone that is not in git, and it holds no
+secret — just the version, so that upgrading is an edit on the host rather than
+a commit. See [Upgrading the sync service](#upgrading-the-sync-service).
 
 `deploy/Caddyfile` is the origin's config, bind-mounted read-only into the
 container. It does not speak ACME, and the two site blocks between them mean
@@ -194,6 +208,12 @@ no request at all. This paragraph used to say "at launch" and to describe the
 notice as rendering *behind* the unlock screen, as though the vault were mounted
 underneath it. It is not, and the difference is visible from the server: launch
 the app and leave it locked, and `/updates/latest.json` records nothing.
+
+**And once per run, not once per mount.** The notice lives inside the item
+list, which unmounts the moment another screen is open, so its effect fired
+again on every trip through the sidebar — one request to `/updates/latest.json`
+per navigation, from every install. The check is memoised for the life of the
+process now, which is what the paragraph above always claimed.
 
 The behaviour is the intended one either way. Answering an update prompt is not
 something to do before proving you own the vault, and installing restarts the
@@ -249,8 +269,11 @@ Implemented in `crates/yara-sync`, which mirrors the broker's split: `auth`
 decides who gets in and is pure, `store` is the only module that touches a
 database, `api` is the only one that knows about HTTP.
 
-The desktop client is not written yet, so nothing pushes to it — but the
-service itself is complete and tested against real signed requests.
+The desktop client is written and pushes to it. `apps/desktop/src-tauri/src/sync.rs`
+holds enrolment, `sync_now`, status and forget; `apps/desktop/src/components/SyncView.tsx`
+is the screen, including the recovery kit, which is shown exactly once. So this
+service now has real clients rather than only tests, and a change to the wire
+format breaks installed software.
 
 ### Two secrets, not one
 
@@ -327,12 +350,41 @@ opaque per-item records rather than a whole file. The server assigns a
 monotonic revision to every write:
 
 ```
-GET  /api/v1/health                                 → {service, version}
-GET  /api/v1/account/{id}                           → {salt, kdf, wrappedVaultKey, wrappedAccountKey, revision}
-POST /api/v1/devices   {accountId, deviceId, publicKey, invite?}
-GET  /api/v1/items?since=<revision>                 → {revision, items[]}
-POST /api/v1/items     {expectedRevision, items[]}  → {revision} | 409
+unsigned
+GET    /api/v1/health                                → {service, version}
+GET    /api/v1/icons/{domain}                        → the site's icon, cached
+POST   /api/v1/account   {accountId, salt, kdf, wrappedVaultKey,
+                          wrappedAccountKey, deviceId, publicKey, label?, invite}
+GET    /api/v1/account/{id}                          → {salt, kdf, wrappedVaultKey, wrappedAccountKey, revision}
+
+signed by the account key
+POST   /api/v1/devices   {accountId, deviceId, publicKey, label?}
+DELETE /api/v1/devices/{id}                          → {deviceId, revoked}
+
+signed by the device key
+GET    /api/v1/items?since=<revision>                → {revision, items[]}
+POST   /api/v1/items     {expectedRevision, items[]} → {revision} | 409
 ```
+
+Which of those three groups a route is in matters more than its shape, and this
+table used to list neither the enrolment route nor the icon proxy — so an
+auditor reading it came away thinking every way into the service was signed.
+
+`POST /api/v1/account` is enrolment: it creates the account and its first
+device, and it cannot be signed, because it is the request that brings the first
+key into existence. The invite is the entire gate, which is why it is spent
+inside the same transaction that writes the account — a failure in between would
+burn a code on an account nobody can reach. `/health` says only that the process
+is up, `/icons/{domain}` carries no account id at all, and `GET /account/{id}`
+hands back blobs that are useless without the password and the secret key.
+
+Adding or revoking a device is signed by the **account** key rather than a
+device key, which is what stops a single stolen device from enrolling its
+successor or revoking its siblings.
+
+Everything unsigned shares one per-address rate limit, because between them
+they are the whole surface an attacker gets to grind against without holding a
+key at all.
 
 Signed requests carry:
 
@@ -352,12 +404,22 @@ account may already read, so a tampered value costs the caller a re-fetch and
 nothing else. Nothing that changes meaning is allowed in a query string for
 exactly that reason.
 
-Operators get one command, because invites are the only thing that needs a
-human:
+The operator's side is four subcommands — everything a human has to decide, and
+nothing a client can do for itself:
 
 ```bash
-yara-sync invite    # a single-use code, valid 48 hours, stored hashed
-yara-sync purge     # drop tombstones older than 30 days
+yara-sync invite                             # a single-use code, valid 48 hours, stored hashed
+yara-sync purge                              # drop tombstones older than 30 days
+yara-sync revoke <account-id> <device-id>    # drop one device's key
+yara-sync delete-account <account-id>        # remove an account, its devices and its items
+```
+
+Run them against the running container so the purge opens the same SQLite file
+as the service rather than racing a second writer at it:
+
+```bash
+sudo docker compose -f /opt/yara/deploy/docker-compose.yml exec -T sync \
+  /usr/local/bin/yara-sync invite
 ```
 
 Each item is `{id, revision, ciphertext, deleted}`. The client pulls everything
@@ -401,24 +463,65 @@ S3-compatible storage is the answer, and it is an afternoon.
 
 | Job | Runner | What it defends |
 | --- | --- | --- |
-| Workspace | windows-latest | `fmt`, `clippy -D warnings`, the whole test suite |
-| Core | ubuntu-latest | that `yara-core` still has no platform dependency |
-| Supply chain | ubuntu-latest | `cargo-deny`: advisories, licences, sources |
+| Workspace (Windows) | windows-latest | `fmt`, `clippy -D warnings`, the Rust test suite, and the frontend's lint and tests |
+| Core and sync (Linux) | ubuntu-latest | that `yara-core` still has no platform dependency, and that the binary the server runs builds and passes its tests off Windows |
+| Advisories and licences | ubuntu-latest | `cargo-deny`: advisories, bans, licences, sources |
+| Deploy configuration | ubuntu-latest | that everything in `deploy/` is valid before the server is the thing that finds out |
 
-The Linux job exists for one reason. `yara-core` claims to be free of UI and
-platform entanglement — that is the claim that keeps the part worth auditing
-small — and a claim nothing enforces decays. The rest of the workspace has no
-Linux build to run: the broker's transport is named pipes and its caller
-identification is a Win32 call.
+The Linux job covers two crates, for opposite reasons. `yara-core` claims to be
+free of UI and platform entanglement — that is the claim that keeps the part
+worth auditing small — and a claim nothing enforces decays. `yara-sync` is the
+other way round: Linux is where it actually runs, so a Windows-only build says
+nothing about the binary that ends up on the server. What genuinely has no
+Linux build is the broker and the desktop app: named pipes, and a Win32 call
+for caller identification.
+
+Every cargo invocation passes `--locked`. The supply-chain job audits
+`Cargo.lock`, so a build permitted to resolve around it is a build nothing
+audited; a lockfile that has drifted now fails loudly instead of being quietly
+updated by whichever job reached it first.
 
 `deny.toml`'s licence allowlist was derived from the tree as it actually is, so
 a new entry appearing there is a real change in what the project depends on.
+Its `[bans]` section is in the command too — a section CI never ran is a
+setting the file only appears to have, and every line in that one was exactly
+that until `bans` was named. `wildcards` is a warning rather than an error
+there, and deliberately: this workspace's own path dependencies have no version
+requirement to give, cargo records that as `*`, and cargo-deny only forgives it
+for crates marked `publish = false`. None of the members are, so denying would
+fail the build on six dependencies that are not what the rule is aimed at.
+
+The deploy job runs `shellcheck` over the two scripts, checks that nothing
+under `deploy/` has picked up a carriage return, holds the Caddyfile to
+`caddy fmt`, validates the compose file, and builds the sync image — which
+downloads the released binary and verifies its checksum, so a release whose
+`.sha256` does not match its artifact fails in CI rather than on the server.
+
+`.github/workflows/release.yml` pins every third-party action to a commit SHA.
+`@v0` and `@stable` are names their owners move, and one of those actions runs
+in the job holding the update signing key. That workflow also has no Rust build
+cache, deliberately: a cache written by a run on the default branch is readable
+from a tag ref, so any push to main could have populated what got mounted into
+the signing job. `.github/dependabot.yml` is what keeps the pins from rotting.
 
 ## Deployment
 
-CI builds, signs, and publishes to GitHub Releases. Nothing here compiles
-anything and nothing here holds a signing key. Cut a release by pushing a tag
-that matches the version in `tauri.conf.json`.
+Two things ship, by two different routes, and they are worth keeping apart: the
+desktop app, which the origin only ever advertises, and the sync binary, which
+the origin actually runs.
+
+### The desktop app
+
+CI builds it, signs it, and publishes it to GitHub Releases. Nothing on this
+host compiles it and nothing here holds a signing key.
+
+Cut a release by pushing a tag. The first job in `release.yml` refuses to let
+anything build unless the ref is a tag and the version in `Cargo.toml`,
+`apps/desktop/package.json` and `apps/desktop/src-tauri/tauri.conf.json` all
+equal it. That gate is not theoretical tidiness: `workflow_dispatch` accepts any
+ref, the jobs read `github.ref_name` as a version, and dispatching from main
+produced a signed release tagged `main` — which the mirror below would have put
+in front of every install within five minutes.
 
 The origin then **pulls**. `yara-manifest.timer` runs every five minutes,
 fetches the `latest.json` asset from the newest release, parses it, and renames
@@ -442,6 +545,56 @@ verification on the client.
 The mirror is also quiet about the ordinary states — no releases yet, rate
 limited, GitHub down — because none of them are reasons to stop serving the
 manifest already on disk.
+
+### Upgrading the sync service
+
+The server binary is a release artifact as well —
+`yara-sync-<version>-x86_64-linux`, with a `.sha256` beside it — and this host
+runs that artifact. `deploy/Dockerfile` downloads it, checks it against the
+checksum, and copies it into an `ubuntu:24.04` runtime image. Nothing here
+compiles anything, which is now true rather than aspirational: this document
+made that claim while `docker-compose.yml` carried a `build:` block against the
+repository root, so the binary holding other people's ciphertext was in fact a
+build of whatever happened to be checked out at `/opt/yara` when someone last
+ran `up`.
+
+The runtime base is Ubuntu 24.04 to match the runner that produced the binary,
+which `release.yml` pins for that reason. A Debian bookworm base is two glibc
+releases behind and the container simply fails to start.
+
+Which version this host runs is one line, in `/opt/yara/deploy/.env`:
+
+```
+YARA_VERSION=0.4.5
+```
+
+Compose reads that file because it sits beside the compose file, whatever
+directory you run from. There is no default and no fallback: an unset variable
+stops compose with a message rather than building an image out of an empty
+version string.
+
+Upgrading is editing that line:
+
+```bash
+cd /opt/yara
+git pull
+$EDITOR deploy/.env    # YARA_VERSION=<the new version>
+
+sudo docker compose -f /opt/yara/deploy/docker-compose.yml up -d --build sync
+sudo yara-egress-guard
+sudo docker compose -f /opt/yara/deploy/docker-compose.yml logs -n 20 sync
+```
+
+The image tag carries the version, so this rebuilds rather than silently
+reusing the image already on the host. The build fails if the checksum does not
+match the artifact, which is the failure you want — an interrupted download
+stops the upgrade instead of producing a container that will not start.
+
+Re-run the egress guard afterwards. Compose recreating the network is one of
+the things that drops the iptables hooks.
+
+Rolling back is the same edit with the previous version. That image is still in
+the local store, so it comes back without downloading anything.
 
 ## Site icons
 
@@ -490,11 +643,39 @@ it creates networks, and that can drop the hooks.
 ## Obligations
 
 Holding other people's data, even encrypted and even for friends, brings a
-short list worth an afternoon rather than a surprise: a privacy notice saying
-what is stored and what is visible, a route to delete an account and have it
-actually deleted, and incident notification if the machine is breached. LGPD
-and GDPR both apply at this scale; neither is onerous when the honest answer to
-"what did they get" is "wrapped blobs and timestamps".
+short list worth an afternoon rather than a surprise. This section used to
+describe all of it as though it were in place. It is not, so here is what
+exists and what does not.
+
+**In place.** A security policy with a private reporting channel and response
+windows a single maintainer can actually meet — [`SECURITY.md`](../SECURITY.md)
+— covering the vault format, the broker, the sync protocol and the update
+channel. This document, which is the honest inventory of what is stored and
+what each hop can see: ciphertext the server has no key for, plus the metadata
+named under [What each hop can see](#what-each-hop-can-see). And deletion, as
+of `yara-sync delete-account <account-id>`, which removes the account, its
+devices and its items — a request can now be honoured in full rather than by
+hand against the database.
+
+**Outstanding.**
+
+*A user-facing privacy notice.* What is above is written for someone reading
+the source. Somebody enrolling deserves the same facts in the app, at the point
+they enrol, in a paragraph rather than a page.
+
+*Deletion the account holder can start themselves.* The subcommand is an
+operator's tool: it needs someone to ask and someone to run it, and nothing
+records that either happened. That is honest for a handful of invited people
+and would not be at any larger scale.
+
+*Incident notification.* There is no list of who would be told, and no drafted
+message. The account set is small enough that this is minutes of work in the
+moment, which is an argument for it being cheap, not for it being done.
+
+LGPD and GDPR both apply at this scale; neither is onerous when the honest
+answer to "what did they get" is "wrapped blobs and timestamps". None of the
+three is a reason to take the service down. All three are reasons not to invite
+anyone new until they are done.
 
 ## When to resize
 

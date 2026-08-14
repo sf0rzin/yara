@@ -78,18 +78,41 @@ log. It is not the path of least resistance, by design.
 
 ## Approval
 
-The broker listens on a local named pipe (`\\.\pipe\yara.broker` on Windows; a
-Unix domain socket elsewhere). A request looks like:
+The broker listens on a local named pipe, `\\.\pipe\yara.broker`. That is the
+whole transport list — Windows only, and not a placeholder for something
+portable, because the identification below is a Win32 call on the same pipe.
+
+Messages are newline-delimited JSON, one per line, so the channel is readable
+in a log. A request to run a command with a credential injected is:
 
 ```json
 {
-  "client": "claude-code",
+  "request": "access",
   "item": "db-prod",
   "field": "password",
-  "mode": "inject",
+  "mode": "run",
+  "command": "npm",
+  "args": ["run", "migrate"],
+  "env_var": "DATABASE_URL",
   "reason": "run database migration"
 }
 ```
+
+`"mode": "reveal"` is the other intent, and it carries no command: `request`,
+`item`, `field`, `mode` and `reason`, and nothing else.
+
+Note what is absent: nothing in the message names the caller. An earlier version
+of this document showed a `"client": "claude-code"` field, which the broker has
+never had — it would be ignored as an unknown key, which is the more misleading
+outcome of the two, since it reads as though a caller announces who it is. An
+identity the caller fills in itself is not an identity; the real one comes off
+the pipe, below.
+
+That example was not a message the broker would accept either way. It had no
+`"request": "access"` tag, and `"mode": "inject"` matches neither intent. Both
+are the kind of thing a first client is written against, so the wire format is
+worth reading from `crates/yara-broker/src/protocol.rs`, which is where these
+examples now come from.
 
 If the vault is locked, the user is prompted to unlock. Then the yara window
 raises a modal naming the requesting process, the item, the mode, and the stated

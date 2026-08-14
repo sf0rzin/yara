@@ -40,11 +40,29 @@ allow = [
 ]
 
 [bans]
+# This section did nothing at all until CI's cargo-deny command grew `bans`
+# beside `advisories licenses sources`. Everything below had been sitting here
+# looking like configuration.
+#
 # Duplicate versions are noise in a tree this size — Tauri alone brings several
 # and none of them are ours to resolve. Worth revisiting if binary size starts
 # to matter.
 multiple-versions = "allow"
-wildcards = "deny"
+
+# A `*` on a crate from a registry means the build resolves to whatever was
+# published most recently, which is the one dependency specification that can
+# change under you without anything in the tree changing.
+#
+# Warn rather than deny, for one specific reason. Every intra-workspace path
+# dependency here — `yara-core = { path = ... }` and its two siblings — carries
+# no version requirement, because there is nothing sensible to put there, and
+# cargo records that as `*`. cargo-deny excuses those only for crates that
+# declare `publish = false`, and none of these member crates does; the pair
+# below is what the setting is for, and it is half-applied until they do.
+# Denying today would fail CI on six dependencies that are not the problem this
+# guards against.
+wildcards = "warn"
+allow-wildcard-paths = true
 
 [sources]
 unknown-registry = "deny"

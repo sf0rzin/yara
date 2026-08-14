@@ -1,0 +1,37 @@
+# Keeps the action pins in the workflows current.
+#
+# The workflows pin every action to a full commit SHA rather than to a tag,
+# because a tag is a name its owner can move — `@v0` and `@stable` both point
+# at whatever their upstream pushed last, and one of those actions runs in the
+# job that holds the release signing key. A pin removes that, and hands over
+# the problem of noticing that the pin is now old. This is what notices.
+#
+# Dependabot reads the version comment beside each SHA, so the comments are
+# load-bearing rather than decorative: strip one and the pin stops being
+# updated and starts silently rotting.
+version: 2
+
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    # One pull request for all of them. Reviewing six SHA bumps together is the
+    # same work as reviewing one, and six separate branches is not.
+    groups:
+      actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: ci
+    labels: []
+
+# Cargo and npm are deliberately absent. `cargo-deny` already fails CI on a
+# security advisory, which is the part that has to be automatic; a weekly pull
+# request for every patch release of every transitive crate is a stream one
+# maintainer would start ignoring, and an ignored bot is worse than no bot.
+#
+# `dtolnay/rust-toolchain` is pinned to a commit on its `stable` branch, which
+# carries no version tags, so Dependabot cannot bump it. Refresh that one by
+# hand when it matters:
+#
+#   gh api repos/dtolnay/rust-toolchain/commits/stable --jq .sha

@@ -25,7 +25,11 @@
 #       sudo docker compose -f /opt/yara/deploy/docker-compose.yml restart caddy
 #
 # Run `caddy fmt` before committing a change here; the formatter wants no blank
-# line between this header and the block below it.
+# line between this header and the block below it. CI runs `caddy fmt --diff`
+# over this file, so that sentence is now a rule rather than a request:
+#
+#   docker run --rm -v "$PWD/deploy:/deploy" -w /deploy caddy:2-alpine \
+#     caddy fmt --overwrite Caddyfile
 {
 	# Real client addresses, restored across the one hop that exists.
 	#
@@ -94,10 +98,13 @@ http://yara.lat:8080 {
 
 	# Sync service, and the icon proxy alongside it.
 	#
-	# Account ids travel in the request body and signatures in headers, never
-	# in the path, so the log below records who connected and when but not what
-	# they hold. Rate limiting is the service's job: stock Caddy has none, and
-	# adding one means maintaining a custom xcaddy build.
+	# Most of what would identify an account travels in the request body or in
+	# the Authorization header, which Caddy redacts in the log by itself. Two
+	# routes are the exception and put an identifier in the path — an account id
+	# under /api/v1/account/{id}, a site somebody holds an entry for under
+	# /api/v1/icons/{domain} — so the log block at the bottom scrubs those two
+	# before writing. Rate limiting is the service's job: stock Caddy has none,
+	# and adding one means maintaining a custom xcaddy build.
 	handle /api/* {
 		request_body {
 			max_size 4MB
@@ -114,12 +121,30 @@ http://yara.lat:8080 {
 		respond 404
 	}
 
+	# The access log, minus the two things in a path that name a person.
+	#
+	# 20 MiB across ten files is up to 200 MiB of plaintext on a host shared
+	# with other projects, and until the filter below existed every line of it
+	# paired an account id — or a domain out of somebody's vault — with a client
+	# address and a timestamp. The route survives the scrub, which is what an
+	# operator reading this file is actually after; the identifier does not.
+	#
+	# The other half of that is Caddy's own doing: it replaces the value of
+	# Authorization with REDACTED unless `log_credentials` is set in the global
+	# block above. It must stay unset. Every signed request carries
+	# `yara1 <account_id>/<device_id>` in that header, so turning it on would
+	# undo this filter without touching it.
 	log {
 		output file /var/log/caddy/yara.log {
 			roll_size 20MiB
 			roll_keep 10
 		}
-		format json
+		format filter {
+			wrap json
+			fields {
+				request>uri regexp "^(/api/v1/(?:account|icons))/[^/?]+" "$1/[redacted]"
+			}
+		}
 	}
 }
 

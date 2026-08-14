@@ -6,17 +6,34 @@
 # lets this host carry several unrelated projects. See
 # Workspace/docs/servers/sforzin.md for why, and docs/hosting.md for what each
 # hop can see.
+#
+# `YARA_VERSION` says which release of the sync service this host runs, and
+# lives in deploy/.env beside this file. Upgrading is editing that one line and
+# bringing the stack back up — see "Upgrading the sync service" in
+# docs/hosting.md.
 
 name: yara
 
 services:
   # The sync API and the icon proxy. Reachable from Caddy and from nothing
   # else: no ports are published, and `app` is the only network it joins.
+  #
+  # The image installs the released binary; it compiles nothing. This used to
+  # build the workspace from a context of `..`, which made the origin's binary
+  # a build of whatever was checked out at /opt/yara at the time rather than
+  # the artifact CI produced and tested.
+  #
+  # No default for the version, deliberately: an unset variable stops compose
+  # with a message instead of building `yara-sync:` out of an empty string. The
+  # tag carries the version too, so `up -d` after an edit rebuilds rather than
+  # silently reusing the old image.
   sync:
     build:
-      context: ..
-      dockerfile: deploy/Dockerfile
-    image: yara-sync:local
+      context: .
+      dockerfile: Dockerfile
+      args:
+        YARA_VERSION: ${YARA_VERSION:?set YARA_VERSION in deploy/.env}
+    image: yara-sync:${YARA_VERSION}
     restart: unless-stopped
     networks:
       - app
