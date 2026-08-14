@@ -1,4 +1,4 @@
-import { useState, type JSX } from "react";
+import { useCallback, useRef, useState, type JSX } from "react";
 import { formatCountdown } from "../lib/useAutoLock";
 import type { View } from "../views";
 import { AutoLockMenu } from "./AutoLockMenu";
@@ -64,6 +64,23 @@ export function Sidebar({
   const [menuOpen, setMenuOpen] = useState(false);
   const [renaming, setRenaming] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
+
+  const menuTriggerRef = useRef<HTMLButtonElement>(null);
+
+  // Closing hands focus back to the button that opened it. The menu takes focus
+  // when it opens, so dismissing it any other way would drop a keyboard user at
+  // the top of the document — the same rule the item context menu follows.
+  const closeMenu = useCallback(() => {
+    setMenuOpen(false);
+    menuTriggerRef.current?.focus();
+  }, []);
+
+  // Written once: the footer button shows this and its accessible name has to
+  // contain it, or the name and the label stop agreeing the moment one changes.
+  const lockSummary =
+    autoLockSeconds === null
+      ? "Until you lock it"
+      : `Locks in ${formatCountdown(lockRemainingMs)}`;
 
   const renderEntry = (entry: NavEntry) => {
     const active = isSameView(view, entry.view);
@@ -182,21 +199,6 @@ export function Sidebar({
       </nav>
 
       <footer className="sidebar__footer-anchor">
-        {menuOpen && (
-          <AutoLockMenu
-            current={autoLockSeconds}
-            onChoose={(seconds) => {
-              onChangeAutoLock(seconds);
-              setMenuOpen(false);
-            }}
-            onLockNow={() => {
-              setMenuOpen(false);
-              onLock();
-            }}
-            onDismiss={() => setMenuOpen(false)}
-          />
-        )}
-
         <button
           type="button"
           className="sidebar__utility"
@@ -210,8 +212,16 @@ export function Sidebar({
 
         <button
           type="button"
+          ref={menuTriggerRef}
           className="sidebar__footer"
-          aria-label="Lock vault"
+          /*
+           * The name says the two things the old one did not: what the button
+           * reads, and what pressing it does. It used to be "Lock vault", which
+           * matched no word on screen — so voice control had no way to ask for
+           * it — and described an action this control does not perform. It
+           * opens a menu; locking is one row inside that menu.
+           */
+          aria-label={`Vault unlocked. ${lockSummary}. Change when it locks, or lock it now`}
           aria-haspopup="menu"
           aria-expanded={menuOpen}
           onClick={() => setMenuOpen((open) => !open)}
@@ -221,14 +231,32 @@ export function Sidebar({
           </span>
           <span className="sidebar__footer-text">
             <span className="sidebar__footer-title">Vault unlocked</span>
-            <span className="sidebar__footer-sub">
-              {autoLockSeconds === null
-                ? "Until you lock it"
-                : `Locks in ${formatCountdown(lockRemainingMs)}`}
-            </span>
+            <span className="sidebar__footer-sub">{lockSummary}</span>
           </span>
           <Icon name="chevronRight" size={13} />
         </button>
+
+        {/* After its trigger, not before it. The popover is positioned against
+            the anchor either way, but source order is what Tab follows, and a
+            menu rendered ahead of the button that opens it is a menu Tab has
+            already walked past by the time it exists. */}
+        {menuOpen && (
+          <AutoLockMenu
+            current={autoLockSeconds}
+            triggerRef={menuTriggerRef}
+            onChoose={(seconds) => {
+              onChangeAutoLock(seconds);
+              closeMenu();
+            }}
+            onLockNow={() => {
+              // Not closeMenu: locking unmounts this whole screen, so there is
+              // no longer a button to hand focus back to.
+              setMenuOpen(false);
+              onLock();
+            }}
+            onDismiss={closeMenu}
+          />
+        )}
       </footer>
     </aside>
   );

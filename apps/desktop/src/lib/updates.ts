@@ -61,6 +61,42 @@ export function lastUpdateCheck(): CheckRecord | null {
   return last;
 }
 
+/**
+ * The launch check, held so it happens once and not once per mount.
+ *
+ * `<UpdateNotice />` lives inside the item list, and that column unmounts the
+ * moment anybody opens Authenticator, AI access, Activity or Settings. Its
+ * effect therefore ran again on every navigation, so the sentence above about
+ * checking once at launch was not true of the code under it: the app talked to
+ * the update server every time the user moved between screens.
+ *
+ * The promise is memoised rather than the result, which also collapses the two
+ * overlapping mounts React's strict mode produces in development.
+ */
+let launch: Promise<UpdateCheck> | null = null;
+
+export function checkForUpdateAtLaunch(): Promise<UpdateCheck> {
+  launch ??= checkForUpdate();
+  return launch;
+}
+
+/**
+ * Whether the offer has been waved away for this run.
+ *
+ * Module scope for the same reason as `last`. Held inside the notice, "Later"
+ * lasted until the next click on the sidebar and then the strip came back —
+ * which reads as an app that ignores you.
+ */
+let dismissed = false;
+
+export function updateDismissed(): boolean {
+  return dismissed;
+}
+
+export function dismissUpdate(): void {
+  dismissed = true;
+}
+
 /** False in a browser dev session, where there is no plugin to call. */
 function insideTauri(): boolean {
   return "__TAURI_INTERNALS__" in window;
@@ -69,6 +105,10 @@ function insideTauri(): boolean {
 export async function checkForUpdate(): Promise<UpdateCheck> {
   const record = (result: UpdateCheck): UpdateCheck => {
     last = { at: Math.floor(Date.now() / 1000), result };
+    // What the settings screen's "Check now" just learned becomes what a
+    // remounted notice sees. Without this a manual check could find an update
+    // that the strip in the item list would then never offer.
+    launch = Promise.resolve(result);
     return result;
   };
 
