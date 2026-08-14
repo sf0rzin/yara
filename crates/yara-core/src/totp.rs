@@ -52,6 +52,16 @@ impl TotpAlgorithm {
 const DEFAULT_DIGITS: u32 = 6;
 const DEFAULT_PERIOD: u64 = 30;
 
+/// The widest verification window on offer: ten steps, five minutes at the
+/// usual period.
+///
+/// A window is a tolerance for a clock that is wrong, and past a few steps it
+/// stops being that and becomes "accept anything this account was ever issued".
+/// Bounded here rather than trusted to the caller, because the caller is
+/// eventually a command handler passing a number through from somewhere else,
+/// and an unbounded one also means an unbounded loop.
+const MAX_SKEW: u64 = 10;
+
 /// Everything needed to generate codes for one account.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TotpConfig {
@@ -158,15 +168,36 @@ impl TotpConfig {
 
     /// Verifies a user-supplied code, allowing `skew` steps of clock drift on
     /// either side. Comparison is constant-time.
+    ///
+    /// Everything is checked before any arithmetic happens. `period` is
+    /// `#[serde(default)]`, which supplies 30 only when the field is *absent*,
+    /// and nothing revalidates a config on load — so a hand-edited vault, or
+    /// an item that arrived over sync, can carry `"period": 0` and reach the
+    /// division here. Dividing by it panics, the release profile is
+    /// `panic = "abort"`, and the dump of an aborted yara is a dump of a
+    /// process holding the whole vault in memory.
     pub fn verify_at(&self, code: &str, unix_seconds: u64, skew: u64) -> Result<bool> {
         use subtle::ConstantTimeEq;
 
+        self.validate()?;
+        if skew > MAX_SKEW {
+            return Err(Error::InvalidSkew {
+                got: skew,
+                max: MAX_SKEW,
+            });
+        }
+
+        let key = self.decode_secret()?;
         let candidate = code.trim();
         let mut matched = false;
 
-        let start = (unix_seconds / self.period).saturating_sub(skew);
-        for step in start..=(unix_seconds / self.period + skew) {
-            let expected = self.generate_at(step * self.period)?;
+        // Counters, not timestamps. The old loop multiplied each step back
+        // into seconds only for `generate_at` to divide it out again, and that
+        // multiply is what overflowed — a panic in debug, a wrapped counter
+        // that silently checks the wrong codes in release.
+        let current = unix_seconds / self.period;
+        for counter in current.saturating_sub(skew)..=current.saturating_add(skew) {
+            let expected = hotp(&key, counter, self.digits, self.algorithm);
             // Keep going after a match so the loop runs a fixed number of times.
             matched |= bool::from(expected.as_bytes().ct_eq(candidate.as_bytes()));
         }
@@ -439,6 +470,65 @@ mod tests {
         let previous = config.generate_at(now - 30).unwrap();
         assert!(config.verify_at(&previous, now, 1).unwrap());
         assert!(!config.verify_at(&previous, now, 0).unwrap());
+    }
+
+    #[test]
+    fn verifying_against_a_zero_period_is_an_error_rather_than_a_crash() {
+        // `#[serde(default)]` fills in 30 only when the field is absent, and
+        // nothing revalidates a config on load — so a hand-edited vault or an
+        // item that arrived over sync can carry this. The division used to
+        // happen before anything looked at it, and under `panic = "abort"` a
+        // divide by zero is a crash dump of a process holding the vault.
+        let mut config = TotpConfig::new(rfc_secret(20));
+        config.period = 0;
+
+        assert!(matches!(
+            config.verify_at("123456", 1_234_567_890, 1),
+            Err(Error::InvalidPeriod)
+        ));
+    }
+
+    #[test]
+    fn verifying_with_absurd_digits_is_an_error_too() {
+        let mut config = TotpConfig::new(rfc_secret(20));
+        config.digits = 20;
+        assert!(matches!(
+            config.verify_at("123456", 1_234_567_890, 1),
+            Err(Error::InvalidDigits(20))
+        ));
+    }
+
+    #[test]
+    fn an_absurd_skew_is_refused_rather_than_attempted() {
+        // The old range expression overflowed on the way to a loop that would
+        // have run for the rest of the decade. A window this wide is not
+        // clock drift, it is "accept every code this account ever had".
+        let config = TotpConfig::new(rfc_secret(20));
+
+        let started = std::time::Instant::now();
+        assert!(matches!(
+            config.verify_at("123456", 1_234_567_890, u64::MAX),
+            Err(Error::InvalidSkew {
+                got: u64::MAX,
+                max: _
+            })
+        ));
+        assert!(started.elapsed() < std::time::Duration::from_secs(1));
+    }
+
+    #[test]
+    fn verifying_at_the_end_of_time_does_not_overflow() {
+        // The counter for the last representable second, with the window
+        // running off the end of it. Adding the skew unsaturated panics in
+        // debug and wraps in release, and a wrapped counter checks codes from
+        // 1970 against a code from now.
+        let mut config = TotpConfig::new(rfc_secret(20));
+        config.period = 1;
+
+        assert!(!config.verify_at("123456", u64::MAX, 10).unwrap());
+
+        let code = config.generate_at(u64::MAX).unwrap();
+        assert!(config.verify_at(&code, u64::MAX, 10).unwrap());
     }
 
     #[test]

@@ -53,11 +53,16 @@ impl Import {
 
 // ---- Proton Authenticator ----------------------------------------------
 
+/// The envelope, and nothing more than the envelope.
+///
+/// `entries` stays unparsed at this stage so one unreadable row cannot fail
+/// the file around it. The export's own `version` is not read at all: nothing
+/// here behaves differently for one, and insisting it be a number failed whole
+/// backups written by an exporter that wrote `"version": "1"` — the report for
+/// which was "not a Proton backup", with no indication of which field.
 #[derive(Deserialize)]
 struct ProtonBackup {
-    #[allow(dead_code)]
-    version: u32,
-    entries: Vec<ProtonEntry>,
+    entries: Vec<serde_json::Value>,
 }
 
 #[derive(Deserialize)]
@@ -92,7 +97,24 @@ pub fn from_proton_authenticator(text: &str) -> Result<Import> {
 
     let mut import = Import::default();
 
-    for entry in backup.entries {
+    for (position, raw) in backup.entries.into_iter().enumerate() {
+        // One entry at a time, because the alternative loses the file. A
+        // single row missing its `uri` used to fail the whole import with
+        // "not a Proton backup", and the obvious next thing to do after a
+        // failed import is delete the plaintext export — which destroys the
+        // twenty-two entries that would have read perfectly.
+        let fallback = raw_name(&raw, position + 1);
+        let entry: ProtonEntry = match serde_json::from_value(raw) {
+            Ok(entry) => entry,
+            Err(error) => {
+                import.skipped.push(Skipped {
+                    name: fallback,
+                    reason: error.to_string(),
+                });
+                continue;
+            }
+        };
+
         let label = pick_name(&entry.content);
 
         // Only time-based codes. Proton also stores Steam entries, which use a
@@ -121,6 +143,21 @@ pub fn from_proton_authenticator(text: &str) -> Result<Import> {
     }
 
     Ok(import)
+}
+
+/// What to call an entry that could not be parsed at all.
+///
+/// Its own label if there is one that survived, and its position in the file
+/// if there is not. A position is a better fallback than "Untitled": the user
+/// is being told to go and look at a row in a file they cannot read, and
+/// "entry 2" says which row while "Untitled" says nothing.
+fn raw_name(raw: &serde_json::Value, position: usize) -> String {
+    raw.get("content")
+        .and_then(|content| content.get("name"))
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .map_or_else(|| format!("entry {position}"), str::to_string)
 }
 
 /// The export's own label first, because it is what the user recognises.
@@ -267,6 +304,73 @@ mod tests {
     fn a_byte_order_mark_does_not_defeat_it() {
         let uri = format!("otpauth://totp/a?secret={SEED}");
         let text = format!("\u{feff}{}", backup(&entry("x", "Totp", &uri)));
+        assert_eq!(from_proton_authenticator(&text).unwrap().entries.len(), 1);
+    }
+
+    #[test]
+    fn an_entry_missing_its_uri_does_not_take_the_file_with_it() {
+        // The failure that motivated all of this. One row without a `uri`
+        // failed the parse of the whole file, which was reported as "not a
+        // Proton backup" with no indication of which row — and the natural
+        // next step, deleting the plaintext export, destroys the entries that
+        // would have read perfectly. A TOTP seed is the hardest thing in a
+        // vault to get back.
+        let good = format!("otpauth://totp/a?secret={SEED}");
+        let broken = r#"{"id":"b","content":{"entry_type":"Totp","name":"Missing"},"note":null}"#;
+
+        let import = from_proton_authenticator(&backup(&format!(
+            "{},{},{}",
+            entry("First", "Totp", &good),
+            broken,
+            entry("Third", "Totp", &good),
+        )))
+        .unwrap();
+
+        assert_eq!(import.entries.len(), 2);
+        assert_eq!(import.entries[0].name, "First");
+        assert_eq!(import.entries[1].name, "Third");
+
+        assert_eq!(import.skipped.len(), 1);
+        assert_eq!(import.skipped[0].name, "Missing");
+        assert!(
+            import.skipped[0].reason.contains("uri"),
+            "the reason has to name the field: {}",
+            import.skipped[0].reason
+        );
+        assert_eq!(import.total(), 3, "every entry is accounted for");
+    }
+
+    #[test]
+    fn an_unreadable_entry_with_no_name_is_reported_by_its_position() {
+        // "Untitled" would tell the user nothing about which of twenty-three
+        // rows to go and look at.
+        let import = from_proton_authenticator(&backup(r#"{"id":"a"},{"id":"b"}"#)).unwrap();
+
+        assert_eq!(import.skipped.len(), 2);
+        assert_eq!(import.skipped[0].name, "entry 1");
+        assert_eq!(import.skipped[1].name, "entry 2");
+    }
+
+    #[test]
+    fn a_version_that_is_not_a_number_does_not_fail_the_file() {
+        // Nothing here reads the version, so nothing here should be able to
+        // reject a file over it. An exporter writing `"1"` instead of `1`
+        // used to cost the user every code in the export.
+        let uri = format!("otpauth://totp/a?secret={SEED}");
+        let text = format!(
+            r#"{{"version":"1","entries":[{}]}}"#,
+            entry("GitHub", "Totp", &uri)
+        );
+
+        let import = from_proton_authenticator(&text).unwrap();
+        assert_eq!(import.entries.len(), 1);
+        assert!(import.skipped.is_empty());
+    }
+
+    #[test]
+    fn a_backup_with_no_version_at_all_still_reads() {
+        let uri = format!("otpauth://totp/a?secret={SEED}");
+        let text = format!(r#"{{"entries":[{}]}}"#, entry("GitHub", "Totp", &uri));
         assert_eq!(from_proton_authenticator(&text).unwrap().entries.len(), 1);
     }
 

@@ -16,10 +16,14 @@
 //! vault must stay openable after the defaults are raised. They are fed to the
 //! AEAD as associated data, so an attacker who edits the header down to
 //! `iterations = 1` gets an authentication failure rather than a cheaper attack.
+//! That failure only arrives after the derivation, though, so the parameters
+//! are range-checked before they reach it: a header asking for 256 GiB has to
+//! be refused rather than attempted.
 
 use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
+use zeroize::Zeroizing;
 
 use crate::crypto::{self, KdfParams, Key, Sealed, SALT_LEN};
 use crate::error::{Error, Result};
@@ -347,6 +351,52 @@ pub struct VaultCounts {
 /// re-encrypted in full on every write.
 const AUDIT_CAPACITY: usize = 500;
 
+/// How long a deletion is remembered: ninety days.
+///
+/// The server purges tombstones at thirty, so the client has to remember
+/// longer than the server does. Once the server has forgotten a delete it
+/// stops telling anyone about it, and a device whose own record expired first
+/// would meet the item again on a peer that had been offline and take it for
+/// something new. Ninety days is three times the window, which covers a laptop
+/// that spent a summer in a drawer.
+const TOMBSTONE_RETENTION: u64 = 90 * 24 * 60 * 60;
+
+/// How many deletions are remembered at most, oldest dropped first.
+///
+/// Bounded for the same reason the audit log is: the whole file is
+/// re-encrypted on every write, so a list that only grows is a vault that gets
+/// slower forever. Five thousand is far past any real vault's churn.
+const TOMBSTONE_CAPACITY: usize = 5_000;
+
+/// Domain separation for a deletion proof.
+///
+/// A proof is sealed under the same key as an item and names the same id.
+/// Without a tag telling the two apart, the AEAD would accept one in place of
+/// the other and the only thing left to notice the swap would be whether the
+/// JSON inside happened to parse as the other type.
+const DELETION_AAD: &[u8] = b"yara.tombstone.v1";
+
+/// A record that an item was deleted here, kept after the item is gone.
+///
+/// Without one a delete never leaves the machine. Sync pushes what it can see,
+/// and an item that is merely absent looks exactly like one the other device
+/// has not sent yet — so the next pull hands the deleted item straight back.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Tombstone {
+    pub id: Uuid,
+    /// Unix seconds, stamped by whichever device recorded the deletion — which
+    /// for a delete that arrived over sync is when this machine applied it,
+    /// not when the other one decided.
+    pub deleted_at: u64,
+}
+
+fn deletion_aad(id: Uuid) -> Vec<u8> {
+    let mut aad = Vec::with_capacity(DELETION_AAD.len() + 16);
+    aad.extend_from_slice(DELETION_AAD);
+    aad.extend_from_slice(id.as_bytes());
+    aad
+}
+
 /// The decrypted contents of a vault.
 ///
 /// Both fields default, so a vault written by an older build still opens: a
@@ -387,6 +437,17 @@ pub struct VaultData {
     /// user made that nothing in the items records.
     #[serde(default)]
     pub folders: Vec<String>,
+    /// Items deleted here, newest last.
+    ///
+    /// A deletion is a fact about the vault the same way an item is, and it is
+    /// the only fact that can be lost by being written as nothing at all. See
+    /// [`Tombstone`] for what the absence used to cost.
+    ///
+    /// Bounded by [`TOMBSTONE_RETENTION`] and [`TOMBSTONE_CAPACITY`], and
+    /// defaulted like everything else here so a vault written before deletes
+    /// were recorded still opens.
+    #[serde(default)]
+    pub tombstones: Vec<Tombstone>,
 }
 
 /// Folds a vault written when tags were the organising idea into folders.
@@ -472,9 +533,16 @@ impl UnlockedVault {
     }
 
     pub fn create_with_params(password: &str, params: KdfParams) -> Result<Self> {
+        // Refuse here as well as in `open`, because a vault written with
+        // parameters this program will not open again is worse than an error:
+        // nobody finds out until it is the only copy.
+        params.validate()?;
+
         let kdf = KdfHeader {
             algorithm: KDF_ALGORITHM.to_string(),
-            salt: crypto::random_bytes(SALT_LEN),
+            // The salt is not a secret — it is written to the file in the
+            // clear — so it leaves the zeroizing wrapper here.
+            salt: crypto::random_bytes(SALT_LEN).to_vec(),
             params,
         };
 
@@ -502,6 +570,14 @@ impl UnlockedVault {
         if file.kdf.algorithm != KDF_ALGORITHM {
             return Err(Error::UnsupportedKdf(file.kdf.algorithm.clone()));
         }
+        // Before the derivation, not after. The header is plaintext and the
+        // associated data that would catch an edit to it is only checked once
+        // the KDF has already run, so a flipped byte making `memory_kib`
+        // 268435455 asks Argon2 for ~256 GiB and takes the process with it
+        // instead of returning `Decrypt`. This answers in microseconds and
+        // gives away nothing — the numbers it judges are in the clear in the
+        // file the caller just read.
+        file.kdf.params.validate()?;
 
         let aad = associated_data(file.format, &file.kdf)?;
         let master_key = crypto::derive_key(password.as_bytes(), &file.kdf.salt, file.kdf.params)?;
@@ -513,18 +589,33 @@ impl UnlockedVault {
         let mut data: VaultData = serde_json::from_slice(&plaintext)?;
         migrate_tags_into_folders(&mut data);
 
-        Ok(Self {
+        let mut vault = Self {
             kdf: file.kdf.clone(),
             wrapped_key: file.wrapped_key.clone(),
             vault_key,
             data,
-        })
+        };
+
+        // Deletions expire by the clock, so the moment to notice is when the
+        // vault is opened. Pruning only as new ones are recorded would keep a
+        // vault that stopped deleting things carrying its last tombstones for
+        // as long as it existed.
+        vault.prune_tombstones(unix_now());
+        Ok(vault)
     }
 
     /// Re-encrypts the current contents into a serializable [`VaultFile`].
     pub fn seal(&self) -> Result<VaultFile> {
         let aad = associated_data(FORMAT_VERSION, &self.kdf)?;
-        let plaintext = serde_json::to_vec(&self.data)?;
+        // Every password in the vault, in the clear, in one buffer. Wrapped so
+        // it is wiped when this returns rather than handed back to the
+        // allocator intact.
+        //
+        // Only the buffer that comes out is wiped, and that is a real limit of
+        // this rather than something to gloss over: `to_vec` grows by
+        // reallocating, and each abandoned buffer is freed with its share of
+        // the JSON still in it before this wrapper ever sees the final one.
+        let plaintext = Zeroizing::new(serde_json::to_vec(&self.data)?);
         let payload = crypto::seal(&self.vault_key, &plaintext, &aad)?;
 
         Ok(VaultFile {
@@ -540,11 +631,36 @@ impl UnlockedVault {
     /// Only the wrapped key is re-derived; items are untouched, so this is fast
     /// regardless of vault size. Call [`UnlockedVault::seal`] afterwards to
     /// persist — the new KDF header also changes the payload's associated data.
+    ///
+    /// The cost parameters are raised to the current defaults on the way past.
+    /// The header carries them so that an old vault keeps opening after the
+    /// defaults go up, and that tolerance was doing all the work: `open`
+    /// honours whatever the file says and nothing ever rewrote it, so a vault
+    /// created in 2024 would still be deriving with 2024's parameters in 2030.
+    /// A password change is the one moment when re-deriving is free.
     pub fn change_password(&mut self, new_password: &str) -> Result<()> {
+        self.change_password_with_params(new_password, upgraded(self.kdf.params))
+    }
+
+    /// The same, with the cost chosen by the caller.
+    ///
+    /// Exists for the same reason [`UnlockedVault::create_with_params`] does:
+    /// something has to be able to pick cheap parameters, or every test that
+    /// touches a password pays for two full derivations. A caller that uses
+    /// this is opting out of the upgrade above and keeping whatever it passed
+    /// until someone changes the password again.
+    pub fn change_password_with_params(
+        &mut self,
+        new_password: &str,
+        params: KdfParams,
+    ) -> Result<()> {
+        params.validate()?;
+
         let kdf = KdfHeader {
             algorithm: KDF_ALGORITHM.to_string(),
-            salt: crypto::random_bytes(SALT_LEN),
-            params: self.kdf.params,
+            // Not a secret: the salt is written to the file in the clear.
+            salt: crypto::random_bytes(SALT_LEN).to_vec(),
+            params,
         };
 
         let aad = associated_data(FORMAT_VERSION, &kdf)?;
@@ -684,7 +800,10 @@ impl UnlockedVault {
     /// associated data: it is the one field the server *does* see, so binding
     /// it stops a ciphertext being replayed under a different id.
     pub fn seal_item(&self, item: &Item) -> Result<Sealed> {
-        let plaintext = serde_json::to_vec(item)?;
+        // Wiped on the way out, with the same caveat as `seal`: `to_vec`
+        // reallocates as it grows, so the buffers it abandoned on the way to
+        // this one are freed with the item's password still in them.
+        let plaintext = Zeroizing::new(serde_json::to_vec(item)?);
         crypto::seal(&self.vault_key, &plaintext, item.id.as_bytes())
     }
 
@@ -703,6 +822,11 @@ impl UnlockedVault {
     /// What applying a remote change amounts to. Separate from `add` because
     /// that one mints a new id, which is exactly wrong here.
     pub fn upsert(&mut self, item: Item) {
+        // Any tombstone for this id goes: the item is here, and a record
+        // saying otherwise is a message to the server asking it to delete
+        // something this machine is holding.
+        self.data.tombstones.retain(|grave| grave.id != item.id);
+
         match self.data.items.iter_mut().find(|held| held.id == item.id) {
             Some(existing) => *existing = item,
             None => self.data.items.push(item),
@@ -719,6 +843,10 @@ impl UnlockedVault {
 
     pub fn add(&mut self, item: Item) -> Uuid {
         let id = item.id;
+        // A fresh id will not collide with a tombstone, but `Item` lets a
+        // caller choose one, and the rule is the same as in `upsert`: nothing
+        // that is present may also be recorded as deleted.
+        self.data.tombstones.retain(|grave| grave.id != id);
         self.data.items.push(item);
         id
     }
@@ -838,6 +966,12 @@ impl UnlockedVault {
         self.data.items = ordered;
     }
 
+    /// Removes an item and records that it was removed.
+    ///
+    /// The tombstone is the point. Dropping the item on its own is why a
+    /// delete never left this machine: sync pushes what it can see, and an
+    /// item that is merely absent looks exactly like one the other device has
+    /// not sent yet, so the next pull hands the deleted item straight back.
     pub fn remove(&mut self, id: Uuid) -> Result<Item> {
         let index = self
             .data
@@ -845,7 +979,93 @@ impl UnlockedVault {
             .iter()
             .position(|item| item.id == id)
             .ok_or(Error::ItemNotFound(id))?;
-        Ok(self.data.items.remove(index))
+
+        let item = self.data.items.remove(index);
+        self.record_tombstone(id, unix_now());
+        Ok(item)
+    }
+
+    /// Deletions this vault remembers, oldest first.
+    pub fn tombstones(&self) -> &[Tombstone] {
+        &self.data.tombstones
+    }
+
+    /// Whether this vault knows the item was deleted rather than never seen.
+    pub fn tombstone(&self, id: Uuid) -> Option<Tombstone> {
+        self.data.tombstones.iter().copied().find(|t| t.id == id)
+    }
+
+    fn record_tombstone(&mut self, id: Uuid, at: u64) {
+        // One record per id. An item can be deleted, arrive again from a peer,
+        // and be deleted a second time; what matters is the latest deletion.
+        self.data.tombstones.retain(|grave| grave.id != id);
+        self.data.tombstones.push(Tombstone { id, deleted_at: at });
+        self.prune_tombstones(at);
+    }
+
+    /// Drops deletions nothing will ask about any more, and caps the list.
+    ///
+    /// Takes `now` rather than reading the clock so the retention window is a
+    /// thing a test can stand at either side of. A tombstone stamped in the
+    /// future — a peer whose clock is wrong — is kept rather than treated as
+    /// ancient, which is what the saturating subtraction is for.
+    pub fn prune_tombstones(&mut self, now: u64) {
+        self.data
+            .tombstones
+            .retain(|grave| now.saturating_sub(grave.deleted_at) <= TOMBSTONE_RETENTION);
+
+        if self.data.tombstones.len() > TOMBSTONE_CAPACITY {
+            // From the front, so the deletions most likely to still be news to
+            // another device are the ones that survive.
+            let excess = self.data.tombstones.len() - TOMBSTONE_CAPACITY;
+            self.data.tombstones.drain(..excess);
+        }
+    }
+
+    /// Seals a proof that a device holding the vault key deleted this item.
+    ///
+    /// The server is told about deletions, and the server is not trusted to
+    /// invent them: a delete it makes up on its own removes a credential from
+    /// every machine on the account. A proof is a tiny AEAD under the vault
+    /// key — which never leaves the client — so the server can store it, hand
+    /// it back, and never mint one.
+    ///
+    /// Bound to the item id, the same way [`UnlockedVault::seal_item`] binds
+    /// an item to its own id, so a proof cannot be replayed against a
+    /// different credential. It also carries a tag distinguishing it from a
+    /// sealed item, so the two can never stand in for one another.
+    pub fn seal_deletion(&self, tombstone: &Tombstone) -> Result<Sealed> {
+        let plaintext = serde_json::to_vec(tombstone)?;
+        crypto::seal(&self.vault_key, &plaintext, &deletion_aad(tombstone.id))
+    }
+
+    /// Opens a deletion proof, failing if it was not made for `id`.
+    pub fn open_deletion(&self, id: Uuid, sealed: &Sealed) -> Result<Tombstone> {
+        let plaintext = crypto::open(&self.vault_key, sealed, &deletion_aad(id))?;
+        let tombstone: Tombstone = serde_json::from_slice(&plaintext)?;
+
+        // The AEAD already bound the id, so this can only fire for a proof
+        // some future writer sealed under an id other than the one inside it.
+        // Cheap, and the alternative is trusting two fields to agree.
+        if tombstone.id != id {
+            return Err(Error::Malformed("deletion proof names another item"));
+        }
+        Ok(tombstone)
+    }
+}
+
+/// The current defaults, unless what the vault already has is stronger.
+///
+/// "Stronger" is judged on every axis at once. Someone who deliberately chose
+/// ten passes must not have seven of them taken away by a default of three,
+/// and a rule that upgraded whenever *any* axis improved would do exactly
+/// that. When the defaults do not win outright, the vault keeps what it has.
+fn upgraded(current: KdfParams) -> KdfParams {
+    let defaults = KdfParams::default();
+    if defaults.at_least_as_strong_as(&current) {
+        defaults
+    } else {
+        current
     }
 }
 
@@ -861,10 +1081,12 @@ pub fn unix_now() -> u64 {
 mod tests {
     use super::*;
 
-    /// Weak parameters keep the suite fast; production uses the defaults.
+    /// The cheapest parameters a vault will open with; production uses the
+    /// defaults. Not weaker than this, because `open` now treats anything
+    /// below the floor as a damaged header — a test vault has to be a vault.
     fn fast() -> KdfParams {
         KdfParams {
-            memory_kib: 8,
+            memory_kib: crypto::MIN_MEMORY_KIB,
             iterations: 1,
             parallelism: 1,
         }
@@ -1123,19 +1345,16 @@ mod tests {
     fn downgrading_the_kdf_parameters_is_detected() {
         // Built with a real work factor so there is something to downgrade to.
         let costly = KdfParams {
-            memory_kib: 64,
-            iterations: 3,
-            parallelism: 1,
+            iterations: 2,
+            ..fast()
         };
         let vault = UnlockedVault::create_with_params("master", costly).unwrap();
         let mut file = vault.seal().unwrap();
 
-        // An attacker weakening the work factor to make brute force cheaper.
-        file.kdf.params = KdfParams {
-            memory_kib: 8,
-            iterations: 1,
-            parallelism: 1,
-        };
+        // An attacker weakening the work factor to make brute force cheaper,
+        // staying inside the accepted range so the cheap check does not catch
+        // it and the associated data has to.
+        file.kdf.params = fast();
 
         assert!(matches!(
             UnlockedVault::open(&file, "master"),
@@ -1144,9 +1363,45 @@ mod tests {
     }
 
     #[test]
+    fn a_header_asking_for_an_impossible_kdf_is_refused_before_deriving() {
+        let mut file = vault_with_one_item("master").seal().unwrap();
+
+        // One flipped byte in a plaintext header. The associated data would
+        // catch this, but only after Argon2 had already been asked for ~256
+        // GiB — and `panic = "abort"` turns a failed allocation of that size
+        // into a crash dump rather than an error.
+        file.kdf.params.memory_kib = 268_435_455;
+
+        let started = std::time::Instant::now();
+        assert!(matches!(
+            UnlockedVault::open(&file, "master"),
+            Err(Error::DamagedFile(_))
+        ));
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(1),
+            "the refusal must arrive instead of the allocation, not after it"
+        );
+    }
+
+    #[test]
+    fn a_vault_cannot_be_written_with_parameters_it_could_not_be_opened_with() {
+        // Worse than an error is a file that saves and never opens again.
+        assert!(matches!(
+            UnlockedVault::create_with_params(
+                "master",
+                KdfParams {
+                    memory_kib: 8,
+                    ..fast()
+                }
+            ),
+            Err(Error::DamagedFile(_))
+        ));
+    }
+
+    #[test]
     fn swapping_the_salt_is_detected() {
         let mut file = vault_with_one_item("master").seal().unwrap();
-        file.kdf.salt = crypto::random_bytes(SALT_LEN);
+        file.kdf.salt = crypto::random_bytes(SALT_LEN).to_vec();
         assert!(matches!(
             UnlockedVault::open(&file, "master"),
             Err(Error::Decrypt)
@@ -1188,7 +1443,9 @@ mod tests {
     #[test]
     fn changing_the_password_keeps_the_contents_readable() {
         let mut vault = vault_with_one_item("old password");
-        vault.change_password("new password").unwrap();
+        vault
+            .change_password_with_params("new password", fast())
+            .unwrap();
         let file = vault.seal().unwrap();
 
         let reopened = UnlockedVault::open(&file, "new password").unwrap();
@@ -1201,7 +1458,9 @@ mod tests {
     #[test]
     fn the_old_password_stops_working_after_a_change() {
         let mut vault = vault_with_one_item("old password");
-        vault.change_password("new password").unwrap();
+        vault
+            .change_password_with_params("new password", fast())
+            .unwrap();
         let file = vault.seal().unwrap();
 
         assert!(matches!(
@@ -1211,12 +1470,51 @@ mod tests {
     }
 
     #[test]
+    fn changing_the_password_raises_an_old_vault_to_the_current_defaults() {
+        // The header carries the cost parameters so an old vault keeps
+        // opening after the defaults are raised. That tolerance was doing all
+        // the work on its own: nothing ever rewrote them, so a vault stayed on
+        // whatever it was created with forever. A password change re-derives
+        // anyway, which makes the upgrade free.
+        let mut vault = vault_with_one_item("old password");
+        assert_ne!(vault.kdf.params, KdfParams::default());
+
+        vault.change_password("new password").unwrap();
+        let file = vault.seal().unwrap();
+
+        assert_eq!(file.kdf.params, KdfParams::default());
+        // And the vault has to still open, which is the half of this that
+        // would be catastrophic to get wrong.
+        let reopened = UnlockedVault::open(&file, "new password").unwrap();
+        assert_eq!(
+            reopened.items()[0].password.as_ref().unwrap().expose(),
+            "correct horse battery staple"
+        );
+    }
+
+    #[test]
+    fn changing_the_password_does_not_weaken_a_stronger_vault() {
+        // Someone who deliberately chose more passes than the defaults keeps
+        // them. An "upgrade" that took them away would be a downgrade.
+        let strong = KdfParams {
+            iterations: KdfParams::default().iterations + 1,
+            ..fast()
+        };
+        let mut vault = UnlockedVault::create_with_params("old password", strong).unwrap();
+        vault.change_password("new password").unwrap();
+
+        assert_eq!(vault.kdf.params, strong);
+    }
+
+    #[test]
     fn changing_the_password_does_not_change_the_vault_key() {
         // The point of the envelope: items are never re-encrypted, so the
         // wrapped key must still unwrap to the same DEK.
         let mut vault = vault_with_one_item("old password");
         let before = vault.seal().unwrap();
-        vault.change_password("new password").unwrap();
+        vault
+            .change_password_with_params("new password", fast())
+            .unwrap();
         let after = vault.seal().unwrap();
 
         assert_ne!(before.kdf.salt, after.kdf.salt);
@@ -1450,6 +1748,211 @@ mod tests {
                 .unwrap(),
             TotpConfig::new("GEZDGNBVGY3TQOJQ").generate_at(59).unwrap()
         );
+    }
+
+    #[test]
+    fn a_delete_leaves_a_record_that_survives_a_seal_and_open() {
+        // Without this the delete never leaves the machine: sync pushes what
+        // it can see, and an item that is merely absent looks like one the
+        // other device has not sent yet, so the next pull hands it back.
+        let mut vault = UnlockedVault::create_with_params("master", fast()).unwrap();
+        let id = vault.add(Item::new("Old bank"));
+        vault.remove(id).unwrap();
+
+        assert_eq!(vault.tombstones().len(), 1);
+        assert_eq!(vault.tombstones()[0].id, id);
+
+        let reopened = UnlockedVault::open(&vault.seal().unwrap(), "master").unwrap();
+        assert_eq!(reopened.tombstones(), vault.tombstones());
+        assert!(reopened.tombstone(id).is_some());
+        assert!(reopened.get(id).is_none());
+    }
+
+    #[test]
+    fn a_vault_written_before_deletes_were_recorded_still_opens() {
+        // The field is defaulted for the same reason every other one here is:
+        // a missing field has to read as "none recorded" rather than as a
+        // corrupt file, and nobody finds that out until it is the only copy.
+        let data: VaultData = serde_json::from_str(r#"{"items":[]}"#).unwrap();
+        assert!(data.tombstones.is_empty());
+    }
+
+    #[test]
+    fn an_item_that_comes_back_is_no_longer_recorded_as_deleted() {
+        // A tombstone for something the vault is holding is an instruction to
+        // the server to delete it. Present and deleted cannot both be true.
+        let mut vault = UnlockedVault::create_with_params("master", fast()).unwrap();
+        let item = Item::new("GitHub");
+        let id = vault.add(item.clone());
+        vault.remove(id).unwrap();
+        assert_eq!(vault.tombstones().len(), 1);
+
+        vault.upsert(item);
+        assert!(vault.tombstones().is_empty());
+        assert!(vault.get(id).is_some());
+    }
+
+    #[test]
+    fn a_deletion_is_remembered_past_the_servers_purge_but_not_forever() {
+        let mut vault = UnlockedVault::create_with_params("master", fast()).unwrap();
+        let id = vault.add(Item::new("Old bank"));
+        vault.remove(id).unwrap();
+
+        let deleted_at = vault.tombstones()[0].deleted_at;
+
+        // Sixty days on: the server purges at thirty, so this is exactly the
+        // window where the client is the only thing that still knows.
+        vault.prune_tombstones(deleted_at + 60 * 24 * 60 * 60);
+        assert_eq!(vault.tombstones().len(), 1, "still inside the window");
+
+        // A year on, nothing is asking any more.
+        vault.prune_tombstones(deleted_at + 365 * 24 * 60 * 60);
+        assert!(vault.tombstones().is_empty());
+    }
+
+    #[test]
+    fn an_expired_deletion_is_dropped_when_the_vault_is_next_opened() {
+        // Retention is measured against the clock, not against how often the
+        // user deletes things. A vault that deleted its last item two years
+        // ago must not still be carrying the record.
+        let mut vault = UnlockedVault::create_with_params("master", fast()).unwrap();
+        let id = vault.add(Item::new("Old bank"));
+        vault.remove(id).unwrap();
+        vault.data.tombstones[0].deleted_at =
+            unix_now().saturating_sub(TOMBSTONE_RETENTION + 24 * 60 * 60);
+
+        let reopened = UnlockedVault::open(&vault.seal().unwrap(), "master").unwrap();
+        assert!(reopened.tombstones().is_empty());
+    }
+
+    #[test]
+    fn a_tombstone_from_a_device_with_a_fast_clock_is_not_treated_as_ancient() {
+        let mut vault = UnlockedVault::create_with_params("master", fast()).unwrap();
+        vault.data.tombstones.push(Tombstone {
+            id: Uuid::new_v4(),
+            deleted_at: 2_000_000_000,
+        });
+
+        // Stamped in the future by a peer whose clock is wrong. Subtracting
+        // the other way round would make it look older than any window.
+        vault.prune_tombstones(1_000_000_000);
+        assert_eq!(vault.tombstones().len(), 1);
+    }
+
+    #[test]
+    fn the_list_of_deletions_is_bounded() {
+        // The whole file is re-encrypted on every write, so a list that only
+        // grows is a vault that gets slower forever.
+        let mut vault = UnlockedVault::create_with_params("master", fast()).unwrap();
+        let oldest = Uuid::new_v4();
+        vault.data.tombstones.push(Tombstone {
+            id: oldest,
+            deleted_at: unix_now(),
+        });
+        for _ in 1..TOMBSTONE_CAPACITY {
+            vault.data.tombstones.push(Tombstone {
+                id: Uuid::new_v4(),
+                deleted_at: unix_now(),
+            });
+        }
+
+        let id = vault.add(Item::new("One too many"));
+        vault.remove(id).unwrap();
+
+        assert_eq!(vault.tombstones().len(), TOMBSTONE_CAPACITY);
+        assert!(
+            vault.tombstone(oldest).is_none(),
+            "the oldest is what gets dropped"
+        );
+        assert!(
+            vault.tombstone(id).is_some(),
+            "and the newest is what is kept"
+        );
+    }
+
+    #[test]
+    fn a_deletion_proof_round_trips() {
+        let mut vault = UnlockedVault::create_with_params("master", fast()).unwrap();
+        let id = vault.add(Item::new("Old bank"));
+        vault.remove(id).unwrap();
+        let tombstone = vault.tombstone(id).unwrap();
+
+        let sealed = vault.seal_deletion(&tombstone).unwrap();
+        assert_eq!(vault.open_deletion(id, &sealed).unwrap(), tombstone);
+    }
+
+    #[test]
+    fn a_deletion_proof_for_one_item_does_not_verify_for_another() {
+        // What the proof is for: the server is told about deletions and must
+        // not be able to invent one, because a delete it makes up removes a
+        // credential from every machine on the account. Replaying a genuine
+        // proof under a different id is the cheapest way to try.
+        let mut vault = UnlockedVault::create_with_params("master", fast()).unwrap();
+        let deleted = vault.add(Item::new("Old bank"));
+        let kept = vault.add(Item::new("Still in use"));
+        vault.remove(deleted).unwrap();
+
+        let sealed = vault
+            .seal_deletion(&vault.tombstone(deleted).unwrap())
+            .unwrap();
+
+        assert!(matches!(
+            vault.open_deletion(kept, &sealed),
+            Err(Error::Decrypt)
+        ));
+        assert!(vault.get(kept).is_some());
+    }
+
+    #[test]
+    fn a_deletion_proof_cannot_be_minted_by_another_vault() {
+        let mut mine = UnlockedVault::create_with_params("master", fast()).unwrap();
+        let theirs = UnlockedVault::create_with_params("master", fast()).unwrap();
+        let id = mine.add(Item::new("Old bank"));
+        mine.remove(id).unwrap();
+
+        let sealed = mine.seal_deletion(&mine.tombstone(id).unwrap()).unwrap();
+        assert!(matches!(
+            theirs.open_deletion(id, &sealed),
+            Err(Error::Decrypt)
+        ));
+    }
+
+    #[test]
+    fn a_sealed_item_cannot_pass_as_a_deletion_proof() {
+        // Both are sealed under the vault key and bound to the same id. The
+        // tag is what stops one standing in for the other at the AEAD layer,
+        // rather than leaving it to whether the JSON happens to parse.
+        let vault = UnlockedVault::create_with_params("master", fast()).unwrap();
+        let item = Item::new("GitHub");
+        let sealed_item = vault.seal_item(&item).unwrap();
+
+        assert!(matches!(
+            vault.open_deletion(item.id, &sealed_item),
+            Err(Error::Decrypt)
+        ));
+
+        let sealed_proof = vault
+            .seal_deletion(&Tombstone {
+                id: item.id,
+                deleted_at: unix_now(),
+            })
+            .unwrap();
+        assert!(matches!(
+            vault.open_item(item.id, &sealed_proof),
+            Err(Error::Decrypt)
+        ));
+    }
+
+    #[test]
+    fn a_deletion_proof_shows_the_server_nothing_but_that_something_went() {
+        let mut vault = UnlockedVault::create_with_params("master", fast()).unwrap();
+        let id = vault.add(Item::new("Barclays"));
+        vault.remove(id).unwrap();
+
+        let wire =
+            serde_json::to_string(&vault.seal_deletion(&vault.tombstone(id).unwrap()).unwrap())
+                .unwrap();
+        assert!(!wire.contains("Barclays"));
     }
 
     #[test]

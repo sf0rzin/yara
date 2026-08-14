@@ -25,6 +25,17 @@ pub enum Error {
     #[error("malformed vault: {0}")]
     Malformed(&'static str),
 
+    /// A header asking for work nobody's software ever wrote.
+    ///
+    /// Separate from [`Error::Decrypt`] on purpose, and not an oracle: the KDF
+    /// parameters sit in the clear in the file, so naming them tells an
+    /// attacker only what they could already read. Returning in milliseconds is
+    /// the whole point — the alternative is attempting the allocation the
+    /// header asked for, and a flipped byte turning 64 MiB into 256 GiB takes
+    /// the process down rather than failing.
+    #[error("that file is damaged: {0}")]
+    DamagedFile(&'static str),
+
     #[error("{0}")]
     InvalidFolder(String),
 
@@ -58,6 +69,11 @@ pub enum Error {
 
     #[error("OTP period must be greater than zero")]
     InvalidPeriod,
+
+    /// A verification window wider than a handful of steps is not clock drift,
+    /// it is a caller asking for every code ever issued to be accepted.
+    #[error("OTP verification skew must be at most {max} steps, got {got}")]
+    InvalidSkew { got: u64, max: u64 },
 
     #[error("item {0} not found")]
     ItemNotFound(uuid::Uuid),

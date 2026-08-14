@@ -6,7 +6,9 @@
 //! that cannot be wiped. The frontend hands over image bytes and gets back a
 //! description of what was found, never the seed.
 
-use image::GenericImageView;
+use std::io::Cursor;
+
+use image::ImageReader;
 
 use crate::error::{Error, Result};
 use crate::totp::TotpConfig;
@@ -22,14 +24,34 @@ const MAX_PIXELS: u32 = 40_000_000;
 /// reported separately from finding nothing at all, because the two mean very
 /// different things to someone trying to work out what went wrong.
 pub fn decode_enrollment(image_bytes: &[u8]) -> Result<TotpConfig> {
-    let image = image::load_from_memory(image_bytes).map_err(|_| Error::ImageDecode)?;
+    // The size is read out of the header and judged before anything is
+    // decoded. Checking after `load_from_memory` returned was checking after
+    // the surface had already been allocated, and the numbers make that a real
+    // problem: a 50000x50000 PNG is a few hundred kilobytes on the wire and
+    // tens of gigabytes decoded. With `panic = "abort"` a failed allocation of
+    // that size is a crash, and a crash dump of this process is a disclosure.
+    let (width, height) = reader(image_bytes)?
+        .into_dimensions()
+        .map_err(|_| Error::ImageDecode)?;
 
-    let (width, height) = image.dimensions();
-    if width.saturating_mul(height) > MAX_PIXELS {
+    if width == 0 || height == 0 || width.saturating_mul(height) > MAX_PIXELS {
         return Err(Error::ImageDecode);
     }
 
+    let image = reader(image_bytes)?
+        .decode()
+        .map_err(|_| Error::ImageDecode)?;
     decode_luma(image.to_luma8())
+}
+
+/// A reader over the bytes with the format already sniffed.
+///
+/// Built twice per decode — once to read the header, once to decode — which
+/// costs a second look at a few bytes and buys the ordering above.
+fn reader(image_bytes: &[u8]) -> Result<ImageReader<Cursor<&[u8]>>> {
+    ImageReader::new(Cursor::new(image_bytes))
+        .with_guessed_format()
+        .map_err(|_| Error::ImageDecode)
 }
 
 /// Finds an enrollment code in raw RGBA pixels.
@@ -218,6 +240,81 @@ mod tests {
             decode_enrollment_rgba(&[], 0, 0),
             Err(Error::ImageDecode)
         ));
+    }
+
+    /// One PNG chunk: length, type, data, CRC over type and data.
+    fn png_chunk(kind: &[u8; 4], data: &[u8]) -> Vec<u8> {
+        let mut chunk = Vec::with_capacity(data.len() + 12);
+        chunk.extend_from_slice(&(data.len() as u32).to_be_bytes());
+
+        let mut covered = kind.to_vec();
+        covered.extend_from_slice(data);
+        chunk.extend_from_slice(&covered);
+        chunk.extend_from_slice(&crc32(&covered).to_be_bytes());
+        chunk
+    }
+
+    fn crc32(bytes: &[u8]) -> u32 {
+        let mut crc = 0xFFFF_FFFFu32;
+        for byte in bytes {
+            crc ^= u32::from(*byte);
+            for _ in 0..8 {
+                crc = if crc & 1 == 1 {
+                    (crc >> 1) ^ 0xEDB8_8320
+                } else {
+                    crc >> 1
+                };
+            }
+        }
+        !crc
+    }
+
+    /// A well-formed PNG whose header claims 50000x50000.
+    ///
+    /// Under a hundred bytes on the wire, 2.5 gigapixels decoded.
+    fn enormous_png() -> Vec<u8> {
+        let mut header = Vec::new();
+        header.extend_from_slice(&50_000u32.to_be_bytes());
+        header.extend_from_slice(&50_000u32.to_be_bytes());
+        header.extend_from_slice(&[8, 0, 0, 0, 0]); // 8-bit greyscale
+
+        let mut png = vec![0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
+        png.extend_from_slice(&png_chunk(b"IHDR", &header));
+        png.extend_from_slice(&png_chunk(b"IDAT", &[0x78, 0x01, 0x01, 0x00, 0x00]));
+        png.extend_from_slice(&png_chunk(b"IEND", &[]));
+        png
+    }
+
+    #[test]
+    fn an_image_that_declares_itself_enormous_is_refused_from_its_header() {
+        // The size limit is only a limit if it is applied before the pixels
+        // are allocated. This file is smaller than this comment and would
+        // decode to tens of gigabytes; under `panic = "abort"` the allocation
+        // failing is a crash, and a crash dump of this process is a
+        // disclosure path.
+        let png = enormous_png();
+        assert!(png.len() < 100, "the point is the amplification");
+
+        let started = std::time::Instant::now();
+        assert!(matches!(decode_enrollment(&png), Err(Error::ImageDecode)));
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(2),
+            "the refusal has to come from the header, not from trying it"
+        );
+    }
+
+    #[test]
+    fn a_zero_sized_image_is_rejected() {
+        let mut header = Vec::new();
+        header.extend_from_slice(&0u32.to_be_bytes());
+        header.extend_from_slice(&0u32.to_be_bytes());
+        header.extend_from_slice(&[8, 0, 0, 0, 0]);
+
+        let mut png = vec![0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
+        png.extend_from_slice(&png_chunk(b"IHDR", &header));
+        png.extend_from_slice(&png_chunk(b"IEND", &[]));
+
+        assert!(matches!(decode_enrollment(&png), Err(Error::ImageDecode)));
     }
 
     #[test]
