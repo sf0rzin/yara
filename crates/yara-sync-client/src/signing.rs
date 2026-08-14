@@ -100,6 +100,41 @@ pub fn sign_request(
     }
 }
 
+/// Signs as the account rather than as a device.
+///
+/// Two requests may not be made by a device key: adding a device and removing
+/// one. If a device could add another, revoking a stolen laptop would be
+/// theatre — the laptop would simply enrol itself again. So those carry the
+/// account key's signature, which a device only holds after unwrapping it with
+/// the password and the recovery kit.
+///
+/// The label is `yara1-account` rather than `yara1`, and deliberately not a
+/// variation on the same word: the two are checked against different keys, and
+/// a header that could be read as either is how a signature made for one ends
+/// up accepted as the other.
+///
+/// There is no device id here because there is not one yet. That is the whole
+/// situation this exists for.
+pub fn sign_as_account(
+    account_id: &str,
+    method: &str,
+    path: &str,
+    body: &[u8],
+    timestamp: i64,
+    nonce: String,
+    sign: impl FnOnce(&[u8]) -> [u8; 64],
+) -> SignedHeaders {
+    let message = canonical(method, path, timestamp, &nonce, body);
+    let signature = base64::engine::general_purpose::STANDARD.encode(sign(&message));
+
+    SignedHeaders {
+        authorization: format!("yara1-account {account_id}"),
+        timestamp: timestamp.to_string(),
+        nonce,
+        signature,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

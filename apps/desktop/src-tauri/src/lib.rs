@@ -1260,6 +1260,32 @@ async fn sync_enrol(
     sync::enrol(Arc::clone(&state), base_url, invite, password, label).await
 }
 
+/// Joins an account this machine has never seen, with the recovery kit.
+///
+/// The other direction from `sync_enrol`: that one creates an account and hands
+/// back a kit, this one consumes a kit somebody wrote down. Until it existed a
+/// second machine could not join at all, and the kit the first machine printed
+/// authorised nothing.
+#[tauri::command]
+async fn sync_join(
+    state: State<'_, Arc<AppState>>,
+    base_url: String,
+    account_id: String,
+    password: String,
+    kit: String,
+    label: Option<String>,
+) -> CommandResult<sync::SyncReport> {
+    sync::join(
+        Arc::clone(&state),
+        base_url,
+        account_id,
+        password,
+        kit,
+        label,
+    )
+    .await
+}
+
 #[tauri::command]
 async fn sync_now(state: State<'_, Arc<AppState>>) -> CommandResult<sync::SyncReport> {
     sync::sync_now(Arc::clone(&state)).await
@@ -1359,6 +1385,7 @@ pub fn run() {
             run_import,
             sync_status,
             sync_enrol,
+            sync_join,
             sync_now,
             sync_forget,
         ])

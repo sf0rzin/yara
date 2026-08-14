@@ -286,3 +286,142 @@ mod deletion_proofs {
         assert!(proven_deletion(&receiver, id, &record).is_none());
     }
 }
+
+/// Registering a device: the third thing the two sides have to agree on.
+///
+/// This one had never been exercised from end to end. The server was hardened
+/// to demand an account-key signature on `POST /api/v1/devices`, and the client
+/// still sent a plain unsigned POST — so the path a second machine has to take
+/// was unreachable from the only code that would ever take it. Each half was
+/// internally consistent and the feature did not exist.
+mod account_registration {
+    use ed25519_dalek::{Signer, SigningKey};
+
+    use yara_sync::auth::{self, NonceCache, Rejection, SignedRequest};
+    use yara_sync_client::signing;
+
+    const NOW: i64 = 1_800_000_000;
+    const ACCOUNT: &str = "acct-join";
+    const PATH: &str = "/api/v1/devices";
+
+    fn account_key() -> SigningKey {
+        SigningKey::from_bytes(&[21u8; 32])
+    }
+
+    /// Signs the way a joining device does, verifies the way the server does.
+    fn round_trip(signer: &SigningKey, body: &[u8]) -> Result<(), Rejection> {
+        let headers = signing::sign_as_account(
+            ACCOUNT,
+            "POST",
+            PATH,
+            body,
+            NOW,
+            signing::fresh_nonce(),
+            |message| signer.sign(message).to_bytes(),
+        );
+
+        // What the server pulls back out of those headers.
+        let account = headers
+            .authorization
+            .strip_prefix("yara1-account ")
+            .expect("the account form, not the device form");
+        assert_eq!(account, ACCOUNT);
+
+        auth::verify(
+            &SignedRequest {
+                method: "POST",
+                path: PATH,
+                timestamp: headers.timestamp.parse().unwrap(),
+                nonce: &headers.nonce,
+                body,
+            },
+            &headers.signature,
+            // The key the server looks up for that account.
+            &account_key().verifying_key(),
+            &mut NonceCache::new(),
+            NOW,
+        )
+    }
+
+    #[test]
+    fn a_registration_signed_by_the_account_key_is_accepted() {
+        assert_eq!(round_trip(&account_key(), br#"{"deviceId":"new"}"#), Ok(()));
+    }
+
+    #[test]
+    fn a_registration_signed_by_another_key_is_refused() {
+        // A stolen laptop's device key must not be able to enrol a second
+        // machine, or revoking the laptop would be theatre.
+        let someone_else = SigningKey::from_bytes(&[99u8; 32]);
+        assert_eq!(
+            round_trip(&someone_else, br#"{"deviceId":"new"}"#),
+            Err(Rejection::BadSignature)
+        );
+    }
+
+    #[test]
+    fn the_public_key_being_registered_is_covered_by_the_signature() {
+        // The body carries the key that is about to gain access, so a captured
+        // registration must not be re-sendable with a different one swapped in.
+        let key = account_key();
+        let headers = signing::sign_as_account(
+            ACCOUNT,
+            "POST",
+            PATH,
+            br#"{"publicKey":"mine"}"#,
+            NOW,
+            signing::fresh_nonce(),
+            |message| key.sign(message).to_bytes(),
+        );
+
+        assert_eq!(
+            auth::verify(
+                &SignedRequest {
+                    method: "POST",
+                    path: PATH,
+                    timestamp: headers.timestamp.parse().unwrap(),
+                    nonce: &headers.nonce,
+                    body: br#"{"publicKey":"theirs"}"#,
+                },
+                &headers.signature,
+                &key.verifying_key(),
+                &mut NonceCache::new(),
+                NOW,
+            ),
+            Err(Rejection::BadSignature)
+        );
+    }
+
+    #[test]
+    fn the_account_form_is_not_the_device_form() {
+        // The two are checked against different keys. A header that could be
+        // read as either is how a signature made for one gets accepted as the
+        // other, so they must not be confusable.
+        let key = account_key();
+        let account = signing::sign_as_account(
+            ACCOUNT,
+            "POST",
+            PATH,
+            b"{}",
+            NOW,
+            signing::fresh_nonce(),
+            |m| key.sign(m).to_bytes(),
+        );
+        let device = signing::sign_request(
+            signing::RequestToSign {
+                account_id: ACCOUNT,
+                device_id: "dev-1",
+                method: "POST",
+                path: PATH,
+                body: b"{}",
+                timestamp: NOW,
+                nonce: signing::fresh_nonce(),
+            },
+            |m| key.sign(m).to_bytes(),
+        );
+
+        assert!(account.authorization.starts_with("yara1-account "));
+        assert!(device.authorization.starts_with("yara1 "));
+        assert!(!device.authorization.starts_with("yara1-account "));
+    }
+}

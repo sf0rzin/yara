@@ -382,6 +382,14 @@ export interface SyncReport {
   pulled: number;
   pushed: number;
   conflicts: number;
+  /**
+   * Deletions the server offered without a proof this account made them.
+   *
+   * Ignored rather than obeyed, and counted rather than swallowed: a run of
+   * these is what a compromised server trying to wipe every enrolled machine
+   * looks like from here, and it is the only place that would ever show.
+   */
+  unprovenDeletes: number;
   revision: number;
 }
 
@@ -397,6 +405,29 @@ export const syncEnrol = (
     baseUrl,
     invite,
     password,
+    label: label ?? null,
+  });
+
+/**
+ * Joins an account this machine has never seen, with a recovery kit.
+ *
+ * The mirror of {@link syncEnrol}: that one creates an account and hands back a
+ * kit, this one spends a kit somebody wrote down. It is for a second machine,
+ * not for resetting a forgotten password — the kit is one half of what unwraps
+ * the account, and the master password is the other.
+ */
+export const syncJoin = (
+  baseUrl: string,
+  accountId: string,
+  password: string,
+  kit: string,
+  label?: string,
+) =>
+  invoke<SyncReport>("sync_join", {
+    baseUrl,
+    accountId,
+    password,
+    kit,
     label: label ?? null,
   });
 
