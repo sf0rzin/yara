@@ -63,7 +63,20 @@ impl Action {
 #[serde(tag = "outcome", rename_all = "snake_case")]
 pub enum Outcome {
     /// Allowed after the user approved it just now.
-    Approved,
+    Approved {
+        /// The grant the approval minted, when it minted one.
+        ///
+        /// Without it a chain of `Reused` entries traced back to "some
+        /// approval, earlier": the uuid they name appeared in no other record,
+        /// so once the grant expired the terms the user consented to were
+        /// unrecoverable.
+        ///
+        /// Optional and defaulted rather than required, because
+        /// `VaultBridge::load_audit` silently drops records it cannot parse —
+        /// a required field here would erase every entry written before it.
+        #[serde(default)]
+        grant: Option<Uuid>,
+    },
     /// Allowed by a grant issued earlier.
     Reused {
         grant: Uuid,
@@ -71,11 +84,35 @@ pub enum Outcome {
     Refused {
         reason: Refusal,
     },
+    /// Allowed, and then the action did not happen: the process could not be
+    /// started. Recorded because the log used to say the command ran, which
+    /// told the user their production password had gone to a process that
+    /// never existed.
+    Failed {
+        error: String,
+    },
 }
 
 impl Outcome {
+    /// A fresh approval that issued no grant, or whose grant is not worth
+    /// naming.
+    pub fn approved() -> Self {
+        Self::Approved { grant: None }
+    }
+
     pub fn was_allowed(&self) -> bool {
-        matches!(self, Self::Approved | Self::Reused { .. })
+        matches!(self, Self::Approved { .. } | Self::Reused { .. })
+    }
+
+    /// The grant this entry was authorised by, whichever way it was
+    /// authorised. What makes a chain of reuses traceable to the prompt that
+    /// started it.
+    pub fn grant(&self) -> Option<Uuid> {
+        match self {
+            Self::Approved { grant } => *grant,
+            Self::Reused { grant } => Some(*grant),
+            Self::Refused { .. } | Self::Failed { .. } => None,
+        }
     }
 }
 
@@ -84,12 +121,50 @@ pub struct Entry {
     pub id: Uuid,
     pub at: u64,
     pub client: ClientId,
+    /// The item that was accessed, or empty when the request was not about one.
+    ///
+    /// A listing names a search term, not an item, and putting the term here
+    /// rendered a history row saying an item called "git" had been accessed
+    /// when no such item exists. Use [`Entry::listing`] for those.
     pub item: String,
-    pub field: Field,
+    /// The field that was asked for, or `None` when the request named none.
+    ///
+    /// A listing asks for no field at all; recording it as `Username` said the
+    /// agent had been through the usernames, which it had not. Defaulted so
+    /// records written before this was optional still parse.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub field: Option<Field>,
     pub action: Action,
     pub outcome: Outcome,
-    /// The justification the client supplied, kept verbatim.
+    /// The justification the client supplied, kept verbatim. Empty when the
+    /// request needed none, which is every request that is not an access.
     pub reason: String,
+    /// What the client searched for, when it searched. `None` for everything
+    /// else, and defaulted so records written before this field parse.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub query: Option<String>,
+}
+
+impl Entry {
+    /// A record of a listing, which touches no item and needs no reason.
+    ///
+    /// Deliberately a constructor rather than an [`Entry`] literal: the fields
+    /// this leaves empty were being filled with text the broker invented —
+    /// `Field::Username` and "listing item names" — and read back as though a
+    /// client had supplied them.
+    pub fn listing(client: ClientId, at: u64, query: Option<String>, matches: usize) -> Self {
+        Self {
+            id: Uuid::new_v4(),
+            at,
+            client,
+            item: String::new(),
+            field: None,
+            action: Action::Listed { matches },
+            outcome: Outcome::approved(),
+            reason: String::new(),
+            query,
+        }
+    }
 }
 
 /// A bounded, append-only log.
@@ -147,10 +222,11 @@ mod tests {
             at,
             client: ClientId::unknown(1),
             item: "db-prod".into(),
-            field: Field::Password,
+            field: Some(Field::Password),
             action,
             outcome,
             reason: "because".into(),
+            query: None,
         }
     }
 
@@ -158,7 +234,7 @@ mod tests {
     fn entries_come_back_most_recent_first() {
         let mut log = AuditLog::new();
         for at in 0..3 {
-            log.record(entry(at, Outcome::Approved, Action::Revealed));
+            log.record(entry(at, Outcome::approved(), Action::Revealed));
         }
 
         let recent = log.recent(3);
@@ -170,7 +246,7 @@ mod tests {
     fn the_log_stays_bounded_and_drops_the_oldest() {
         let mut log = AuditLog::new();
         for at in 0..(CAPACITY as u64 + 50) {
-            log.record(entry(at, Outcome::Approved, Action::Revealed));
+            log.record(entry(at, Outcome::approved(), Action::Revealed));
         }
 
         assert_eq!(log.len(), CAPACITY);
@@ -198,13 +274,13 @@ mod tests {
         let mut log = AuditLog::new();
         log.record(entry(
             1,
-            Outcome::Approved,
+            Outcome::approved(),
             Action::Ran {
                 command: "npm run migrate".into(),
                 env_var: "DATABASE_URL".into(),
             },
         ));
-        log.record(entry(2, Outcome::Approved, Action::Revealed));
+        log.record(entry(2, Outcome::approved(), Action::Revealed));
         log.record(entry(
             3,
             Outcome::Refused {
@@ -261,6 +337,77 @@ mod tests {
             grant: Uuid::new_v4(),
         };
         assert!(reused.was_allowed());
-        assert_ne!(reused, Outcome::Approved);
+        assert_ne!(reused, Outcome::approved());
+    }
+
+    /// A spawn that never happened is not an access that did.
+    #[test]
+    fn a_failed_action_is_not_an_allowed_one() {
+        let failed = Outcome::Failed {
+            error: "could not run npm: not found".into(),
+        };
+        assert!(!failed.was_allowed());
+        assert!(failed.grant().is_none());
+    }
+
+    /// The record a chain of reuses has to be traceable to.
+    #[test]
+    fn an_approval_can_name_the_grant_it_minted() {
+        let id = Uuid::new_v4();
+        let approved = Outcome::Approved { grant: Some(id) };
+
+        assert_eq!(approved.grant(), Some(id));
+        assert_eq!(Outcome::Reused { grant: id }.grant(), Some(id));
+        assert!(approved.was_allowed());
+    }
+
+    /// History written before the grant id existed has to keep parsing.
+    ///
+    /// `VaultBridge::load_audit` drops records it cannot read, so a required
+    /// field would have quietly emptied the Agent access screen of everything
+    /// recorded by an earlier build.
+    #[test]
+    fn an_approval_without_a_grant_id_still_parses() {
+        let old = r#"{"outcome":"approved"}"#;
+        let parsed: Outcome = serde_json::from_str(old).unwrap();
+
+        assert_eq!(parsed, Outcome::Approved { grant: None });
+    }
+
+    /// The same argument for the entry itself: the fields added since have to
+    /// be optional or the whole record goes.
+    #[test]
+    fn an_entry_written_before_the_query_and_optional_field_still_parses() {
+        let old = r#"{
+            "id": "00000000-0000-0000-0000-000000000001",
+            "at": 1,
+            "client": { "pid": 7, "executable": null },
+            "item": "db-prod",
+            "field": "password",
+            "action": { "action": "revealed" },
+            "outcome": { "outcome": "approved" },
+            "reason": "because"
+        }"#;
+
+        let parsed: Entry = serde_json::from_str(old).unwrap();
+        assert_eq!(parsed.field, Some(Field::Password));
+        assert_eq!(parsed.query, None);
+        assert_eq!(parsed.outcome, Outcome::Approved { grant: None });
+    }
+
+    /// A listing is about a search term, not an item.
+    #[test]
+    fn a_listing_names_no_item_no_field_and_no_reason() {
+        let entry = Entry::listing(ClientId::unknown(3), 1, Some("git".into()), 2);
+
+        assert!(
+            entry.item.is_empty(),
+            "putting the query here read as though an item called git had been \
+             accessed, and no such item exists"
+        );
+        assert!(entry.field.is_none());
+        assert!(entry.reason.is_empty(), "the client supplied none");
+        assert_eq!(entry.query.as_deref(), Some("git"));
+        assert_eq!(entry.action, Action::Listed { matches: 2 });
     }
 }

@@ -16,3 +16,6 @@ clap = { version = "4", features = ["derive"] }
 yara-broker.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
+
+[dev-dependencies]
+uuid.workspace = true

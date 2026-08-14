@@ -5,7 +5,7 @@
 //! running vault or a real stdio stream.
 
 use serde_json::{json, Value};
-use yara_broker::protocol::{AccessRequest, Field, Intent, Request, Response};
+use yara_broker::protocol::{AccessRequest, Field, Intent, ItemRef, Request, Response};
 
 use crate::rpc::{codes, Incoming, Outgoing};
 
@@ -284,6 +284,36 @@ fn field_from(args: &Value) -> Result<Field, String> {
     }
 }
 
+/// Stands in for a column with nothing in it, so every row has the same shape.
+const EMPTY: &str = "—";
+
+/// The header for a listing.
+const ITEM_COLUMNS: &str = "id\tname\tusername\ttwo-factor\tfields";
+
+/// One item as a row of [`ITEM_COLUMNS`].
+///
+/// The custom field labels belong here. Both access tools tell the agent to
+/// pass "the exact label as listed by yara_list_items" and the broker compares
+/// byte for byte, so dropping them left the one place a label could be learned
+/// as the one place it was thrown away — and a guessed label comes back as an
+/// empty-field refusal, which reads as "the item has nothing there".
+fn item_row(item: &ItemRef) -> String {
+    let fields = if item.fields.is_empty() {
+        EMPTY.to_string()
+    } else {
+        item.fields.join(", ")
+    };
+
+    format!(
+        "{}\t{}\t{}\t{}\t{}",
+        item.id,
+        item.name,
+        item.username.as_deref().unwrap_or(EMPTY),
+        if item.has_totp { "yes" } else { EMPTY },
+        fields,
+    )
+}
+
 fn text(body: impl Into<String>, is_error: bool) -> Value {
     json!({
         "content": [{ "type": "text", "text": body.into() }],
@@ -310,21 +340,10 @@ fn render(response: Response) -> Value {
             if items.is_empty() {
                 return text("No matching items.", false);
             }
-            let listing = items
-                .iter()
-                .map(|item| {
-                    let username = item.username.as_deref().unwrap_or("—");
-                    format!(
-                        "{}\t{}\t{}\t{}",
-                        item.id,
-                        item.name,
-                        username,
-                        if item.has_totp { "has 2FA" } else { "" }
-                    )
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
-            text(format!("id\tname\tusername\n{listing}"), false)
+            let listing = items.iter().map(item_row).collect::<Vec<_>>().join("\n");
+            // Five names for five columns. The header used to name three of
+            // them, which left the agent to guess what the rest were.
+            text(format!("{ITEM_COLUMNS}\n{listing}"), false)
         }
 
         Response::Ran(output) => {
@@ -648,6 +667,59 @@ mod tests {
         assert!(!is_error(&result));
         assert!(body(&result).contains("db-prod"));
         assert!(matches!(broker.last(), Request::List { .. }));
+    }
+
+    /// The tool description promises the labels of any custom fields, and both
+    /// access tools tell the agent to pass "the exact label as listed by
+    /// yara_list_items". They were never listed, so the only place a label
+    /// could be learned was the place that dropped it — and a guess comes back
+    /// as an empty-field refusal that reads as "the item has nothing there".
+    #[tokio::test]
+    async fn a_listing_carries_the_custom_field_labels() {
+        let broker = FakeBroker::new(Response::Items {
+            items: vec![ItemRef {
+                id: Uuid::nil(),
+                name: "db-prod".into(),
+                username: Some("app".into()),
+                has_password: true,
+                has_totp: false,
+                fields: vec!["Deploy key".into(), "Billing key".into()],
+            }],
+        });
+
+        let result = result_of(&broker, call("yara_list_items", json!({}))).await;
+        let body = body(&result);
+
+        assert!(body.contains("Deploy key"), "{body}");
+        assert!(body.contains("Billing key"), "{body}");
+    }
+
+    /// A header that names three of five columns leaves the agent guessing
+    /// which is which.
+    #[tokio::test]
+    async fn every_column_in_a_listing_is_named_by_the_header() {
+        let broker = FakeBroker::new(Response::Items {
+            items: vec![ItemRef {
+                id: Uuid::nil(),
+                name: "db-prod".into(),
+                username: None,
+                has_password: true,
+                has_totp: true,
+                fields: Vec::new(),
+            }],
+        });
+
+        let result = result_of(&broker, call("yara_list_items", json!({}))).await;
+        let body = body(&result);
+        let mut lines = body.lines();
+
+        let header = lines.next().unwrap();
+        assert_eq!(header, ITEM_COLUMNS);
+
+        let columns = header.split('\t').count();
+        for row in lines {
+            assert_eq!(row.split('\t').count(), columns, "row {row:?}");
+        }
     }
 
     #[tokio::test]

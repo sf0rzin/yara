@@ -284,6 +284,16 @@ impl GrantStore {
     pub fn is_empty(&self) -> bool {
         self.grants.is_empty()
     }
+
+    /// Everything the store is holding, spent and expired included.
+    ///
+    /// [`GrantStore::live`] is what the interface wants. This is how a caller
+    /// proves the store is not quietly growing: every redemption walks the
+    /// whole vector, and each dead grant keeps an item name, an executable
+    /// path and a field label in memory for nothing.
+    pub fn len(&self) -> usize {
+        self.grants.len()
+    }
 }
 
 #[cfg(test)]
