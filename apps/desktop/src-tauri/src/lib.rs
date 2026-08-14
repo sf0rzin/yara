@@ -6,19 +6,21 @@
 //! a plaintext value requires an explicit, separate call for one named item.
 
 mod broker;
+mod clipboard;
 mod state;
 mod sync;
 
 use std::sync::Arc;
 
 use broker::BrokerHandle;
+use clipboard::SecretClipboard;
 use serde::{Deserialize, Serialize};
-use state::AppState;
-use tauri::{Manager, State};
+use state::{AppState, Startup};
+use tauri::{Emitter, Manager, State};
 use uuid::Uuid;
 use yara_core::{
-    Cadence, Field, Item, ItemKind, Strength, Subscription, TotpConfig, UnlockedVault, VaultCounts,
-    VaultFile,
+    Cadence, Field, Item, ItemKind, SecretString, Strength, Subscription, TotpConfig,
+    UnlockedVault, VaultCounts, VaultFile,
 };
 
 /// An item as the frontend sees it: everything except the secrets.
@@ -181,6 +183,22 @@ fn vault_exists(state: State<'_, Arc<AppState>>) -> bool {
     state.vault_path().exists()
 }
 
+/// Which of the three startup situations this machine is in.
+///
+/// What [`vault_exists`] cannot say: a vault file that is missing while a
+/// backup sits beside it is an interrupted save, not a first run, and offering
+/// setup there is how the last surviving copy used to get overwritten.
+#[tauri::command]
+fn vault_startup(state: State<'_, Arc<AppState>>) -> Startup {
+    state.startup()
+}
+
+/// Puts a surviving copy back at the live path after an interrupted save.
+#[tauri::command]
+fn recover_vault(state: State<'_, Arc<AppState>>) -> CommandResult<()> {
+    state.recover()
+}
+
 #[tauri::command]
 fn is_unlocked(state: State<'_, Arc<AppState>>) -> bool {
     state.is_unlocked()
@@ -188,9 +206,18 @@ fn is_unlocked(state: State<'_, Arc<AppState>>) -> bool {
 
 #[tauri::command]
 fn create_vault(state: State<'_, Arc<AppState>>, password: String) -> CommandResult<()> {
-    if state.vault_path().exists() {
-        return Err("a vault already exists at this location".into());
+    match state.startup() {
+        Startup::Setup => {}
+        Startup::Locked => return Err("a vault already exists at this location".into()),
+        // The guard that was missing. A save interrupted between two renames
+        // left no live file, this command happily created an empty vault over
+        // the top, and its first save deleted the backup that was the only
+        // remaining copy of the user's passwords.
+        Startup::Recover => {
+            return Err("there is a vault backup here — recover it rather than replacing it".into())
+        }
     }
+
     let vault = UnlockedVault::create(&password).map_err(to_message)?;
     state.persist(&vault)?;
     state.set_vault(vault);
@@ -219,11 +246,55 @@ fn unlock_vault(
 ///
 /// Also tears down agent access: outstanding approval prompts are abandoned and
 /// every grant is destroyed, since a permission that outlives the key behind it
-/// is a permission to nothing.
+/// is a permission to nothing. And it takes any copied secret off the
+/// clipboard — a vault that locks while a password is still there has not
+/// locked anything.
 #[tauri::command]
-fn lock_vault(state: State<'_, Arc<AppState>>, broker: State<'_, BrokerHandle>) {
+fn lock_vault(app: tauri::AppHandle) {
+    lock_everything(&app);
+}
+
+/// Locks the vault and everything that depends on it holding a key.
+///
+/// Written against an [`AppHandle`](tauri::AppHandle) rather than taking the
+/// three pieces of state as arguments because the callers are three different
+/// shapes: a command, a page-load hook, and the exit event.
+fn lock_everything(app: &tauri::AppHandle) {
+    if let Some(state) = app.try_state::<Arc<AppState>>() {
+        state.clear();
+    }
+    if let Some(broker) = app.try_state::<BrokerHandle>() {
+        broker.on_lock();
+    }
+    if let Some(clipboard) = app.try_state::<Arc<SecretClipboard>>() {
+        clipboard.clear_now();
+    }
+}
+
+/// Locks the vault because the webview reloaded. Says whether it had to.
+///
+/// A reload — F5, which WebView2 honours, a renderer crash, a dev-server
+/// reload — remounts the frontend with empty state while the backend is still
+/// holding the vault key. The user is shown the unlock screen and reasonably
+/// concludes the vault is locked. It was not: the broker went on serving
+/// agents from the same live state, and approval events were delivered to a
+/// webview that no longer had a listener, so an agent's request sat blocked
+/// until it timed out with no dialog ever appearing.
+///
+/// Locking is the answer rather than restoring the session, because it is the
+/// safer of the two and because it is what the screen already claims. Done
+/// here, on the Rust side, so it holds whatever the frontend does or forgets
+/// to do.
+///
+/// The return value is what tells the first page load of a launch from a
+/// genuine reload: at launch there is nothing unlocked, so nothing else needs
+/// tearing down either.
+fn lock_on_reload(state: &AppState) -> bool {
+    if !state.is_unlocked() {
+        return false;
+    }
     state.clear();
-    broker.on_lock();
+    true
 }
 
 #[tauri::command]
@@ -565,13 +636,92 @@ fn estimate_strength(password: String) -> Strength {
     yara_core::health::strength(&password)
 }
 
+/// Re-wraps the vault key under a new master password.
+///
+/// The current password is required and checked first. Without that this
+/// command re-keyed the vault on the word of whoever called it, so anything
+/// executing in the webview — an injected script, a compromised dependency in
+/// the frontend bundle — could have silently changed the master password and
+/// locked the user out of their own vault while it was sitting unlocked in
+/// front of them.
 #[tauri::command]
 fn change_master_password(
     state: State<'_, Arc<AppState>>,
+    current_password: String,
     new_password: String,
 ) -> CommandResult<()> {
+    verify_master_password(&state, &current_password)?;
     state.with_vault_mut(|vault| vault.change_password(&new_password).map_err(to_message))?;
     state.save()
+}
+
+/// Proves the caller knows the current master password.
+///
+/// By re-opening the file on disk, because that is the only thing that can
+/// prove it: the unlocked vault in memory holds the vault key, and nothing
+/// about it depends on the password any more. The file cannot be stale in the
+/// way that matters — the wrapped key changes only when the password does, and
+/// that path always writes.
+///
+/// The vault this opens is dropped immediately, which zeroizes the second copy
+/// of the key it made. Failure says "wrong password or corrupted data" and
+/// means either, as everywhere else.
+fn verify_master_password(state: &AppState, password: &str) -> CommandResult<()> {
+    let bytes = std::fs::read(state.vault_path()).map_err(to_message)?;
+    let file = VaultFile::from_bytes(&bytes).map_err(to_message)?;
+    UnlockedVault::open(&file, password)
+        .map(|_| ())
+        .map_err(to_message)
+}
+
+// ---- clipboard ---------------------------------------------------------
+
+/// Event carrying the outcome of a timed clipboard clear.
+pub const CLIPBOARD_CLEARED_EVENT: &str = "clipboard://cleared";
+
+/// What the frontend is told once a copy's time is up.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClipboardCleared {
+    /// The copy this is about, matching [`clipboard::Copied::token`].
+    pub token: u64,
+    pub result: clipboard::Cleared,
+}
+
+/// Copies a secret, and owns the clearing of it.
+///
+/// Everything the frontend used to do by hand — write, wait, read back,
+/// overwrite — happens here instead, because the webview clipboard can do
+/// neither half properly: it cannot set the formats that keep an entry out of
+/// Clipboard History and the Cloud Clipboard, and its `readText` is
+/// permission-gated, so the clear could fail forever and invisibly while the
+/// interface promised it had happened.
+///
+/// Returns immediately with what the interface is allowed to claim. The clear
+/// arrives later as a [`CLIPBOARD_CLEARED_EVENT`], carrying whether it worked.
+#[tauri::command]
+fn copy_secret(
+    app: tauri::AppHandle,
+    clipboard: State<'_, Arc<SecretClipboard>>,
+    value: String,
+) -> CommandResult<clipboard::Copied> {
+    let clipboard = Arc::clone(clipboard.inner());
+    let copied = clipboard.copy(SecretString::new(value))?;
+
+    let token = copied.token;
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_secs(copied.clears_in)).await;
+        let result = clipboard.clear_copy(token);
+        let _ = app.emit(CLIPBOARD_CLEARED_EVENT, ClipboardCleared { token, result });
+    });
+
+    Ok(copied)
+}
+
+/// Takes a copied secret off the clipboard now rather than on the timer.
+#[tauri::command]
+fn clear_clipboard(clipboard: State<'_, Arc<SecretClipboard>>) -> clipboard::Cleared {
+    clipboard.clear_now()
 }
 
 /// A live grant, as the "Agent access" screen shows it.
@@ -1135,18 +1285,35 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build());
 
-    builder
+    let app = builder
         .setup(|app| {
             let dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&dir)?;
 
             let state = Arc::new(AppState::new(dir.join("vault.yara")));
             app.manage(Arc::clone(&state));
+            app.manage(Arc::new(SecretClipboard::platform()));
             app.manage(broker::start(app.handle(), state));
             Ok(())
         })
+        // A reload must not leave the vault unlocked behind a screen that says
+        // it is locked. See `lock_on_reload` for what that used to cost.
+        .on_page_load(|webview, payload| {
+            if !matches!(payload.event(), tauri::webview::PageLoadEvent::Started) {
+                return;
+            }
+            let app = webview.app_handle();
+            let unlocked = app
+                .try_state::<Arc<AppState>>()
+                .is_some_and(|state| lock_on_reload(&state));
+            if unlocked {
+                lock_everything(app);
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             vault_exists,
+            vault_startup,
+            recover_vault,
             is_unlocked,
             create_vault,
             unlock_vault,
@@ -1174,6 +1341,8 @@ pub fn run() {
             totp_code,
             estimate_strength,
             change_master_password,
+            copy_secret,
+            clear_clipboard,
             list_grants,
             revoke_grant,
             audit_entries,
@@ -1193,6 +1362,71 @@ pub fn run() {
             sync_now,
             sync_forget,
         ])
-        .run(tauri::generate_context!())
+        .build(tauri::generate_context!())
         .expect("error while running tauri application");
+
+    // Built rather than run outright so there is somewhere to answer the exit
+    // event. A password copied thirty seconds before the window closes would
+    // otherwise outlive the program that promised to take it off the
+    // clipboard. Nothing here can help with a kill or a power cut — with
+    // `panic = "abort"` there is no unwinding to hook either — but an ordinary
+    // quit is the common case and it can be handled.
+    app.run(|app, event| {
+        if matches!(event, tauri::RunEvent::Exit) {
+            lock_everything(app);
+        }
+    });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use yara_core::KdfParams;
+
+    /// The cheapest parameters `yara-core` will open a vault with; these tests
+    /// are not about the KDF.
+    fn fast() -> KdfParams {
+        KdfParams {
+            memory_kib: yara_core::crypto::MIN_MEMORY_KIB,
+            iterations: 1,
+            parallelism: 1,
+        }
+    }
+
+    fn state() -> AppState {
+        AppState::new(
+            std::env::temp_dir()
+                .join(format!("yara-lib-{}", Uuid::new_v4()))
+                .join("vault.yara"),
+        )
+    }
+
+    #[test]
+    fn a_reload_locks_a_vault_that_was_open() {
+        let state = state();
+        state.set_vault(UnlockedVault::create_with_params("master", fast()).unwrap());
+
+        assert!(lock_on_reload(&state), "the reload interrupted a session");
+        assert!(
+            !state.is_unlocked(),
+            "the vault must not stay open behind a screen that says it is locked"
+        );
+    }
+
+    #[test]
+    fn the_first_page_load_of_a_launch_has_nothing_to_lock() {
+        // `on_page_load` fires for the first load too, and tearing down the
+        // broker and wiping the clipboard on startup would be wrong.
+        assert!(!lock_on_reload(&state()));
+    }
+
+    #[test]
+    fn a_reload_after_a_lock_is_still_a_no_op() {
+        let state = state();
+        state.set_vault(UnlockedVault::create_with_params("master", fast()).unwrap());
+        state.clear();
+
+        assert!(!lock_on_reload(&state));
+    }
 }

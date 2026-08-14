@@ -60,6 +60,19 @@ pub struct SyncItem {
     pub ciphertext: Option<String>,
     #[serde(default)]
     pub deleted: bool,
+    /// A sealed proof that a device holding the vault key deleted this item.
+    ///
+    /// Separate from `ciphertext` because the server drops the body of a
+    /// tombstone on purpose — the delete has to propagate, the contents do
+    /// not — and this is the one part of a delete that has to survive the
+    /// round trip. Without it a `deleted` flag is just a boolean from a server
+    /// the design does not trust, and [`crate::deletes::proven_deletion`]
+    /// refuses to act on one.
+    ///
+    /// Absent on a live item, and absent on a tombstone written before proofs
+    /// existed. Both read as unproven.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proof: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
