@@ -26,7 +26,7 @@
 use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
 use hkdf::Hkdf;
 use sha2::Sha256;
-use zeroize::{Zeroize, ZeroizeOnDrop};
+use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
 use crate::crypto::{self, KdfParams, Key, Sealed};
 use crate::error::{Error, Result};
@@ -152,6 +152,13 @@ impl AccountKeys {
         salt: &[u8],
         params: KdfParams,
     ) -> Result<Self> {
+        // These parameters come off the wire when a second device joins an
+        // account: the server hands back the `kdf` it was enrolled with, and
+        // the server is the party this whole hierarchy exists to distrust. A
+        // memory cost of 268435455 would ask Argon2 for ~256 GiB, which under
+        // `panic = "abort"` is a crash rather than a failed join.
+        params.validate()?;
+
         // Concatenated, not mixed: the secret key is fixed-length, so there is
         // no boundary a caller could shift to make two different inputs derive
         // the same key.
@@ -178,7 +185,9 @@ impl AccountKeys {
         crypto::seal(&self.enc_key, plaintext, ENC_INFO)
     }
 
-    pub fn unwrap(&self, sealed: &Sealed) -> Result<Vec<u8>> {
+    /// What comes back is the vault key or the account's signing seed, so it
+    /// arrives wrapped in [`Zeroizing`] and is wiped when the caller drops it.
+    pub fn unwrap(&self, sealed: &Sealed) -> Result<Zeroizing<Vec<u8>>> {
         crypto::open(&self.enc_key, sealed, ENC_INFO)
     }
 }
@@ -234,9 +243,11 @@ mod tests {
 
     fn params() -> KdfParams {
         // The real parameters take a second each; these tests are about the
-        // hierarchy, not about how slow Argon2id is.
+        // hierarchy, not about how slow Argon2id is. This is the cheapest
+        // derivation `KdfParams::validate` will run — anything weaker is
+        // treated as a damaged header now, tests included.
         KdfParams {
-            memory_kib: 8,
+            memory_kib: crypto::MIN_MEMORY_KIB,
             iterations: 1,
             parallelism: 1,
         }
@@ -309,7 +320,7 @@ mod tests {
         let b = AccountKeys::derive("hunter2", &secret(), &salt, params()).unwrap();
 
         let sealed = a.wrap(b"payload").unwrap();
-        assert_eq!(b.unwrap(&sealed).unwrap(), b"payload");
+        assert_eq!(b.unwrap(&sealed).unwrap().as_slice(), b"payload");
     }
 
     #[test]
@@ -367,6 +378,39 @@ mod tests {
 
         let message = b"register device dev-2";
         assert_eq!(recovered.sign(message), original.sign(message));
+    }
+
+    #[test]
+    fn derivation_parameters_from_the_server_are_not_taken_on_trust() {
+        // What a joining device is handed is the account's `kdf` as the server
+        // stored it, and the server is precisely the party this hierarchy
+        // exists to distrust. 268435455 KiB is ~256 GiB of Argon2 memory.
+        let hostile = KdfParams {
+            memory_kib: 268_435_455,
+            iterations: 3,
+            parallelism: 4,
+        };
+
+        let started = std::time::Instant::now();
+        assert!(matches!(
+            AccountKeys::derive("hunter2", &secret(), &[3u8; 32], hostile),
+            Err(Error::DamagedFile(_))
+        ));
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(1),
+            "it must refuse before allocating, not after"
+        );
+    }
+
+    #[test]
+    fn what_is_unwrapped_wipes_itself() {
+        // The annotation is the test: this is the vault key on the way back
+        // from the server, and a bare `Vec` would leave it in freed heap.
+        let keys = AccountKeys::derive("hunter2", &secret(), &[3u8; 32], params()).unwrap();
+        let sealed = keys.wrap(b"the-vault-key").unwrap();
+
+        let recovered: Zeroizing<Vec<u8>> = keys.unwrap(&sealed).unwrap();
+        assert_eq!(recovered.as_slice(), b"the-vault-key");
     }
 
     #[test]
