@@ -12,7 +12,7 @@ import {
   type ItemSummary,
   type SubscriptionView,
 } from "../api";
-import { copySecret } from "../lib/clipboard";
+import { useSecretCopy } from "../lib/clipboard";
 import { Icon } from "./Icon";
 import { Tile } from "./Tile";
 import { TotpBadge } from "./TotpBadge";
@@ -34,8 +34,10 @@ interface ItemDetailProps {
  */
 export function ItemDetail({ item }: ItemDetailProps): JSX.Element {
   const [revealed, setRevealed] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Every copy this pane makes goes through here, so the password, a secret
+  // field and a plain username all report in one place and in one voice.
+  const { said, copy, note, clearNow, forget } = useSecretCopy();
   const [billing, setBilling] = useState<SubscriptionView | null>(null);
   const [extras, setExtras] = useState<ItemExtras | null>(null);
   /** Revealed secret fields, keyed by label. */
@@ -44,7 +46,9 @@ export function ItemDetail({ item }: ItemDetailProps): JSX.Element {
 
   // Switching items must not carry the previous one's revealed password, its
   // half-pressed delete, or a notice about something you are no longer looking
-  // at.
+  // at. `forget` draws that line one place further out than the rest: a warning
+  // that a password is still on the clipboard is about the machine, not about
+  // the row, and it stays.
   //
   // Keyed on the id *and* on when the item last changed. On the id alone this
   // never re-ran after an edit — the id is the one thing an edit cannot alter
@@ -53,7 +57,7 @@ export function ItemDetail({ item }: ItemDetailProps): JSX.Element {
   // which makes it exactly the signal for "this is not what you fetched".
   useEffect(() => {
     setRevealed(null);
-    setNotice(null);
+    forget();
     setError(null);
     setBilling(null);
     setExtras(null);
@@ -68,7 +72,7 @@ export function ItemDetail({ item }: ItemDetailProps): JSX.Element {
     void itemExtras(item.id)
       .then(setExtras)
       .catch(() => setExtras(null));
-  }, [item.id, item.updatedAt]);
+  }, [forget, item.id, item.updatedAt]);
 
   // Revealed field values expire the same way the password does, and for the
   // same reason: whoever asked has read it by now, and what stays on screen is
@@ -90,12 +94,6 @@ export function ItemDetail({ item }: ItemDetailProps): JSX.Element {
     return () => clearTimeout(timer);
   }, [revealed]);
 
-  useEffect(() => {
-    if (notice === null) return;
-    const timer = setTimeout(() => setNotice(null), 2_500);
-    return () => clearTimeout(timer);
-  }, [notice]);
-
   async function toggleReveal() {
     if (revealed !== null) {
       setRevealed(null);
@@ -112,16 +110,27 @@ export function ItemDetail({ item }: ItemDetailProps): JSX.Element {
     try {
       // Fetched fresh rather than reused from `revealed`, so copying works
       // whether or not it is currently on screen.
-      await copySecret(await revealPassword(item.id));
-      setNotice("Password copied. Clipboard clears shortly.");
+      //
+      // What is said about it afterwards is not written here on purpose. This
+      // used to promise "Clipboard clears shortly" unconditionally, which was
+      // the app's own wording for something it had no way of knowing.
+      await copy("Password", await revealPassword(item.id));
     } catch (caught) {
       setError(errorMessage(caught));
     }
   }
 
+  /**
+   * A username, a plan name — anything that is not a secret.
+   *
+   * Still the webview clipboard: there is nothing to keep out of Clipboard
+   * History and nothing to wipe twenty seconds later, and routing it through
+   * the backend would put a timer on the user's own clipboard for a value they
+   * copied to paste somewhere.
+   */
   async function copyPlain(label: string, value: string) {
     await navigator.clipboard.writeText(value);
-    setNotice(`${label} copied.`);
+    note(`${label} copied.`);
   }
 
   async function toggleField(label: string) {
@@ -143,11 +152,10 @@ export function ItemDetail({ item }: ItemDetailProps): JSX.Element {
       // or not the value is currently revealed.
       const value = await revealField(item.id, label);
       if (secret) {
-        await copySecret(value);
-        setNotice(`${label} copied. Clipboard clears shortly.`);
+        await copy(label, value);
       } else {
         await navigator.clipboard.writeText(value);
-        setNotice(`${label} copied.`);
+        note(`${label} copied.`);
       }
     } catch (caught) {
       setError(errorMessage(caught));
@@ -184,10 +192,26 @@ export function ItemDetail({ item }: ItemDetailProps): JSX.Element {
             {error}
           </p>
         )}
-        {notice && (
-          <p className="notice">
-            <Icon name="check" size={13} />
-            {notice}
+        {/*
+          One line for every copy, and it says what actually happened rather
+          than what was hoped for. It is a live region because the last word on
+          a copy arrives twenty seconds after the click that made it — nobody is
+          looking at this corner by then, and a screen reader would otherwise
+          never be told the clipboard still holds a password.
+        */}
+        {said && (
+          <p className={said.loud ? "notice notice--loud" : "notice"} role="status">
+            <Icon name={said.loud ? "alert" : "check"} size={13} />
+            <span>{said.message}</span>
+            {said.offerClear && (
+              <button
+                type="button"
+                className="linkish notice__action"
+                onClick={() => void clearNow(said.what)}
+              >
+                Take it off now
+              </button>
+            )}
           </p>
         )}
 

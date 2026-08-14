@@ -7,6 +7,10 @@
  */
 
 import { version as runningVersion } from "../../package.json";
+// Types only, erased at build time: the mock stays a standalone stand-in for
+// the IPC, but the shapes it answers with are the ones the app expects rather
+// than a second opinion about them.
+import type { Cleared, Startup } from "../api";
 
 /**
  * The version an offered update would carry.
@@ -168,8 +172,83 @@ const items: MockItem[] = [
 
 let unlocked = false;
 
+/**
+ * The dev vault's master password.
+ *
+ * `unlock_vault` takes whatever it is given — there is no cryptography here to
+ * refuse anything, and a browser session locked out of an invented vault helps
+ * nobody — but it remembers it. That memory is what gives
+ * `change_master_password` something to check the current password against,
+ * and checking it is the entire reason that command asks for one.
+ */
+let mockMasterPassword = "hunter2";
+
+/** Set once `recover_vault` has run, so startup stops offering the recovery. */
+let mockRecovered = false;
+
 let mockAutoLock: number | null = 15 * 60;
 let mockIcons = true;
+
+/* --- the clipboard ------------------------------------------------------ */
+
+/** Matches `CLIPBOARD_CLEARED_EVENT` in `src-tauri/src/lib.rs`. */
+const CLIPBOARD_CLEARED_EVENT = "clipboard://cleared";
+/** Matches `CLEAR_AFTER_SECONDS` in `src-tauri/src/clipboard.rs`. */
+const CLEAR_AFTER_SECONDS = 20;
+
+/** One of the two reasons `Cleared::Failed` carries a string at all. */
+const CLIPBOARD_REFUSED = "the clipboard could not be opened (Access is denied. (os error 5))";
+
+/** Copies handed out whose clear has not fired yet, by token. */
+const pendingClears = new Map<number, ReturnType<typeof setTimeout>>();
+let clipboardToken = 0;
+/** Whether anything of this app's is still on the imaginary clipboard. */
+let clipboardHolds = false;
+
+/**
+ * `?clipboard=` picks what the timed clear reports.
+ *
+ * `history` is Windows refusing the exclusion formats — the case where the
+ * interface must stop calling the copy private. `failed` is the clear itself
+ * being refused, which leaves the secret sitting there. `taken` is somebody
+ * else's copy arriving first, which is not a failure at all. None of the three
+ * can be produced on demand on a real machine.
+ */
+function askedOfClipboard(): string | null {
+  return new URLSearchParams(window.location.search).get("clipboard");
+}
+
+function clearedAs(outcome: Cleared["outcome"]): Cleared {
+  return outcome === "failed" ? { outcome, detail: CLIPBOARD_REFUSED } : { outcome };
+}
+
+function timedOutcome(): Cleared {
+  const asked = askedOfClipboard();
+  if (asked === "failed") return clearedAs("failed");
+  if (asked === "taken") return clearedAs("alreadyGone");
+  return clearedAs("wiped");
+}
+
+/**
+ * A copy's time being up.
+ *
+ * Mirrors `SecretClipboard::clear_copy`: a copy that a later one has replaced
+ * reports `alreadyGone` rather than emptying a clipboard it no longer owns —
+ * and it still reports, which is exactly the event the frontend's token filter
+ * has to throw away.
+ */
+function fireClear(token: number, forced?: Cleared): void {
+  const timer = pendingClears.get(token);
+  if (timer === undefined) return;
+  clearTimeout(timer);
+  pendingClears.delete(token);
+
+  const superseded = token !== clipboardToken || !clipboardHolds;
+  const result = forced ?? (superseded ? clearedAs("alreadyGone") : timedOutcome());
+  if (result.outcome === "wiped") clipboardHolds = false;
+
+  emit(CLIPBOARD_CLEARED_EVENT, { token, result });
+}
 
 let mockFolders: string[] = ["Work", "Personal"];
 
@@ -335,12 +414,37 @@ function strengthOf(password: string): "weak" | "fair" | "strong" {
 }
 
 const handlers: Record<string, (args: Record<string, unknown>) => unknown> = {
+  // Kept in step with the backend, which still has this command, though nothing
+  // in the interface asks it any more: it cannot tell a first run from a save
+  // that was interrupted, and `vault_startup` was added because those two want
+  // opposite offers.
   vault_exists: () => !new URLSearchParams(window.location.search).has("setup"),
+
+  vault_startup: (): Startup => {
+    if (mockRecovered) return "locked";
+    // `?recover` is the only way this screen will ever be looked at. Reaching
+    // it for real needs a vault file to have vanished between two renames,
+    // which is not a state anybody can arrange on purpose.
+    if (new URLSearchParams(window.location.search).has("recover")) return "recover";
+    return new URLSearchParams(window.location.search).has("setup") ? "setup" : "locked";
+  },
+
+  recover_vault: () => {
+    // `?recover=broken` refuses, so the screen's failure line can be read
+    // without arranging a corrupted backup.
+    if (new URLSearchParams(window.location.search).get("recover") === "broken") {
+      throw new Error("nothing beside this vault could be read as one");
+    }
+    mockRecovered = true;
+  },
+
   is_unlocked: () => unlocked,
-  create_vault: () => {
+  create_vault: (args) => {
+    mockMasterPassword = String(args.password ?? "");
     unlocked = true;
   },
-  unlock_vault: () => {
+  unlock_vault: (args) => {
+    mockMasterPassword = String(args.password ?? "");
     unlocked = true;
   },
   lock_vault: () => {
@@ -676,15 +780,51 @@ const handlers: Record<string, (args: Record<string, unknown>) => unknown> = {
   },
 
   /*
-   * Kept without a caller.
+   * It has a caller now: the Settings screen.
    *
-   * `api.ts` has no binding for this command, so nothing in the interface can
-   * reach it. Removing the handler would be the tidy thing to do and the wrong
-   * one: what is missing is the binding, and whether changing the master
-   * password is offered from the interface at all is a security decision that
-   * belongs with whoever owns that command, not with the mock.
+   * The current password is checked here rather than waved through, because
+   * that check is the whole of what this command is for — it exists so nothing
+   * running inside the webview can re-key a vault on its own say-so, and a mock
+   * that accepted anything would hide the one path worth looking at. The
+   * refusal is worded as the vault words it: both possible causes, neither
+   * confirmed.
    */
-  change_master_password: () => undefined,
+  change_master_password: (args) => {
+    if (String(args.currentPassword ?? "") !== mockMasterPassword) {
+      throw new Error("could not decrypt: wrong password or corrupted data");
+    }
+    mockMasterPassword = String(args.newPassword ?? "");
+  },
+
+  /*
+   * The clipboard, which is a backend concern now.
+   *
+   * The frontend used to write, wait and read back through `navigator`, so a
+   * dev session exercised the real webview clipboard and none of what the
+   * interface now has to say about a copy. These two plus the event below are
+   * what make those sentences reachable in a browser.
+   */
+  copy_secret: () => {
+    const token = ++clipboardToken;
+    clipboardHolds = true;
+    pendingClears.set(
+      token,
+      setTimeout(() => fireClear(token), CLEAR_AFTER_SECONDS * 1000),
+    );
+    return {
+      excludedFromHistory: askedOfClipboard() !== "history",
+      clearsIn: CLEAR_AFTER_SECONDS,
+      token,
+    };
+  },
+
+  clear_clipboard: (): Cleared => {
+    if (!clipboardHolds) return clearedAs("alreadyGone");
+    clipboardHolds = false;
+    // The timer is left running, exactly as the real command leaves it: when it
+    // fires it will find nothing of ours and say so.
+    return clearedAs("wiped");
+  },
 
   // No real decoding here — the mock exists to exercise the interface, and
   // wiring an actual QR decoder into it would just be a second implementation
@@ -941,6 +1081,20 @@ export function installDevMock(): void {
   // In the browser console: __yaraApproval("run" | "reveal" | "shell")
   Object.defineProperty(window, "__yaraApproval", {
     value: (kind: SampleKind = "run") => emit(APPROVAL_EVENT, sample(kind)),
+    configurable: true,
+  });
+
+  /*
+   * In the browser console: __yaraClipboard("wiped" | "alreadyGone" | "failed")
+   *
+   * Brings the outstanding clear forward instead of waiting the twenty seconds
+   * the real one takes. Without it, looking at what the app says when a clear
+   * fails means copying something and then sitting still for twenty seconds,
+   * three times over.
+   */
+  Object.defineProperty(window, "__yaraClipboard", {
+    value: (outcome: Cleared["outcome"] = "wiped") =>
+      fireClear(clipboardToken, clearedAs(outcome)),
     configurable: true,
   });
 

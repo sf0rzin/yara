@@ -1,20 +1,8 @@
 import { useEffect, useRef, useState, type JSX } from "react";
-import {
-  createVault,
-  errorMessage,
-  estimateStrength,
-  unlockVault,
-  type Strength,
-} from "../api";
+import { createVault, errorMessage, unlockVault } from "../api";
 import { Icon } from "../components/Icon";
+import { StrengthMeter, useStrength } from "../components/StrengthMeter";
 import { yaraLogoUrl } from "../components/YaraLogo";
-
-const STRENGTH_STEPS: Record<Strength, number> = { weak: 1, fair: 2, strong: 3 };
-const STRENGTH_WORDS: Record<Strength, string> = {
-  weak: "Too easy to guess",
-  fair: "Reasonable",
-  strong: "Strong",
-};
 
 const LOGO_PIECES = [1, 2, 3, 4, 5, 6] as const;
 
@@ -29,27 +17,14 @@ export function Unlock({
 }: UnlockProps): JSX.Element {
   const [password, setPassword] = useState("");
   const [confirmation, setConfirmation] = useState("");
-  const [strength, setStrength] = useState<Strength | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const passwordRef = useRef<HTMLInputElement>(null);
 
   const isSetup = mode === "setup";
-
-  useEffect(() => {
-    if (!isSetup || password.length === 0) {
-      setStrength(null);
-      return;
-    }
-
-    let active = true;
-    estimateStrength(password)
-      .then((next) => active && setStrength(next))
-      .catch(() => active && setStrength(null));
-    return () => {
-      active = false;
-    };
-  }, [isSetup, password]);
+  // Nothing to measure when unlocking: the password is either the vault's or it
+  // is not, and rating one that already exists would be commentary.
+  const strength = useStrength(isSetup ? password : "");
 
   useEffect(() => {
     const delay = window.matchMedia("(prefers-reduced-motion: reduce)").matches
@@ -150,21 +125,7 @@ export function Unlock({
 
           {isSetup && (
             <>
-              <div className="unlock-strength" aria-live="polite">
-                <span className="unlock-strength__track" aria-hidden="true">
-                  {[1, 2, 3].map((step) => (
-                    <span
-                      key={step}
-                      data-filled={
-                        strength && STRENGTH_STEPS[strength] >= step
-                          ? true
-                          : undefined
-                      }
-                    />
-                  ))}
-                </span>
-                <span>{strength ? STRENGTH_WORDS[strength] : "12 characters minimum"}</span>
-              </div>
+              <StrengthMeter strength={strength} />
 
               <label className="unlock-field">
                 <Icon name="lock" size={15} />

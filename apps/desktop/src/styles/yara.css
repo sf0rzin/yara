@@ -207,6 +207,16 @@ body {
 }
 
 /*
+ * An action offered inside a notice — "Take it off now" beside a clipboard
+ * clear that failed. `.linkish` pushes itself to the top of a flex container,
+ * which is right in a column of form fields and wrong on a single line of text.
+ */
+.notice__action {
+  align-self: center;
+  white-space: nowrap;
+}
+
+/*
  * The update offer. A strip in the flow rather than a modal: an update is never
  * urgent enough to interrupt a vault, and an app that hijacks the screen on
  * every launch teaches people to dismiss without reading.
@@ -2546,6 +2556,45 @@ body {
   text-align: left;
 }
 
+/* -------------------------------------------------------------- recovery */
+
+/*
+ * The recovery screen shares the unlock layer, and departs from it in one way:
+ * it is prose. The unlock screen is a logo and a field, so 360px and centred
+ * text suit it; this one has to explain what happened to somebody who has just
+ * been told their vault file is missing, and three centred sentences at that
+ * measure would read as a crash notice. Wider, ranged left, one action.
+ */
+.recover {
+  display: flex;
+  width: min(440px, calc(100% - 48px));
+  flex-direction: column;
+  gap: var(--space-4);
+  align-items: flex-start;
+}
+
+.recover__title {
+  color: var(--text);
+  font-size: var(--text-title);
+  font-weight: 500;
+  letter-spacing: var(--tracking-title);
+  line-height: 1.35;
+}
+
+.recover__body {
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  line-height: 1.65;
+}
+
+/* Full brightness, no colour: the same way every other consequence in this app
+   is marked. It sits directly above the button it is about. */
+.recover__error {
+  color: var(--text);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+}
+
 /* ------------------------------------------------------------ qr capture */
 
 .qr {
@@ -2774,6 +2823,30 @@ body {
   display: flex;
   gap: var(--space-2);
   flex-wrap: wrap;
+}
+
+/*
+ * Changing the master password, on the settings screen.
+ *
+ * A section rather than a dialog: it is the one control here whose consequences
+ * need reading before the first field is touched, and a modal would put that
+ * explanation behind the decision to open it.
+ */
+.master {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+/*
+ * The strength meter comes from the unlock screen, where it sits on near-black
+ * and is dimmed to match. Here it sits among body copy, and 4.28:1 for the one
+ * word that tells you whether the password is any good is under the floor this
+ * palette holds everywhere else.
+ */
+.master .unlock-strength {
+  color: var(--text-muted);
+  font-size: var(--text-xs);
 }
 
 .sync__confirm {

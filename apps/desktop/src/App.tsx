@@ -1,19 +1,29 @@
 import { useEffect, useState, type JSX } from "react";
-import { vaultExists } from "./api";
+import { vaultStartup } from "./api";
 import { TitleBar } from "./components/TitleBar";
 import { YaraLogo } from "./components/YaraLogo";
+import { Recover } from "./screens/Recover";
 import { Unlock } from "./screens/Unlock";
 import { Vault } from "./screens/Vault";
 
-type Screen = "loading" | "setup" | "locked" | "unlocked";
+type Screen = "loading" | "setup" | "locked" | "recover" | "unlocked";
 
 export default function App(): JSX.Element {
   const [screen, setScreen] = useState<Screen>("loading");
   const [showLoading, setShowLoading] = useState(false);
 
+  // Three answers, not two. This used to ask `vaultExists`, and a vault file
+  // missing because a save was interrupted is not the same thing as a machine
+  // that has never had one — telling them apart is the difference between
+  // offering to recover the last copy and offering to overwrite it.
   useEffect(() => {
-    vaultExists()
-      .then((exists) => setScreen(exists ? "locked" : "setup"))
+    vaultStartup()
+      .then(setScreen)
+      // Nothing but the IPC itself can fail here: the command reads three paths
+      // and always answers with one of the three. So this is the case where
+      // there is no backend at all, and setup is the state that at least shows
+      // something. It is no longer the dangerous guess it was — creating a
+      // vault where a copy is waiting is refused on the Rust side now.
       .catch(() => setScreen("setup"));
   }, []);
 
@@ -39,6 +49,11 @@ export default function App(): JSX.Element {
             mode={screen === "setup" ? "setup" : "unlock"}
             onAuthenticated={() => setScreen("unlocked")}
           />
+        )}
+
+        {/* The vault is a file again, so what follows is an ordinary unlock. */}
+        {screen === "recover" && (
+          <Recover onRecovered={() => setScreen("locked")} />
         )}
 
         {screen === "loading" && (

@@ -1,19 +1,32 @@
 import { useEffect, useState, type JSX } from "react";
 import { totpCode, type TotpCode } from "../api";
-import { copySecret } from "../lib/clipboard";
 
 const RADIUS = 7;
 const CIRCUMFERENCE = 2 * Math.PI * RADIUS;
 
-interface TotpBadgeProps {
+interface BadgeShape {
   itemId: string;
   /** Larger presentation for the detail panel. */
   prominent?: boolean;
   /** Generic lists only need to say that 2FA exists, without polling a secret. */
   showCode?: boolean;
-  /** Makes the live code an explicit copy control. */
-  copyable?: boolean;
 }
+
+/*
+ * A copyable badge has to be told where its outcome goes.
+ *
+ * Expressed as a union rather than an optional callback on purpose: a copy can
+ * fail to be kept out of Clipboard History, or fail to be wiped afterwards,
+ * and this control is too small to say either. Making `onCopy` mandatory the
+ * moment `copyable` is set means the next person to place one cannot repeat
+ * the version of this component that copied a live credential and threw the
+ * answer away.
+ */
+type TotpBadgeProps = BadgeShape &
+  (
+    | { copyable: true; onCopy: (code: string) => void | Promise<void> }
+    | { copyable?: false; onCopy?: never }
+  );
 
 /**
  * A live TOTP code with a countdown ring.
@@ -23,12 +36,11 @@ interface TotpBadgeProps {
  * code is short-lived and single-use, so it is far less sensitive than the
  * seed that generates it.
  */
-export function TotpBadge({
-  itemId,
-  prominent,
-  showCode = true,
-  copyable = false,
-}: TotpBadgeProps): JSX.Element | null {
+// Taken whole rather than destructured: narrowing on `props.copyable` is what
+// tells the compiler `props.onCopy` is there, and pulling the two apart loses
+// the link between them.
+export function TotpBadge(props: TotpBadgeProps): JSX.Element | null {
+  const { itemId, prominent, showCode = true } = props;
   const [code, setCode] = useState<TotpCode | null>(null);
 
   useEffect(() => {
@@ -99,7 +111,7 @@ export function TotpBadge({
     </>
   );
 
-  if (copyable) {
+  if (props.copyable) {
     return (
       <button
         type="button"
@@ -107,7 +119,15 @@ export function TotpBadge({
         data-prominent={prominent || undefined}
         data-expiring={expiring || undefined}
         aria-label={`Copy one-time code, ${code.secondsRemaining} seconds remaining`}
-        onClick={() => void copySecret(code.code)}
+        // Through the backend, like every other copy of a secret: a one-time
+        // code pasted from Win+V an hour later is useless, but it is still a
+        // credential and it has no business being in the history at all.
+        //
+        // The badge is too small to hold a sentence, so whoever placed it says
+        // what happened. It used to discard the outcome instead, which hid the
+        // one that matters: a wipe that failed leaves the code on the clipboard
+        // long after the thirty seconds it is good for.
+        onClick={() => void props.onCopy(code.code)}
       >
         {content}
       </button>
