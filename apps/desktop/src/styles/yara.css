@@ -1,3 +1,26 @@
+/*
+ * The interface, in one file.
+ *
+ * This used to be two. app.css was the base and this file loaded after it and
+ * overrode about a third of it, which meant a single component's box model was
+ * split across two files a thousand lines apart and the winner was whichever
+ * one you had not opened. Sixty-odd selectors appeared in both. One pair
+ * disagreed outright: `.row` carried `height: 50px` over there and
+ * `min-height: 48px` here, and the fixed height won silently.
+ *
+ * Where a rule appeared in both, only the declaration that was actually
+ * winning survives, so nothing moved on screen except the row height noted at
+ * `.row`. The comments came across with the rules they explain.
+ *
+ * Order is document order: tokens, base, the primitives everything is built
+ * from, the window chrome and shell, then structure, then components, then the
+ * breakpoints last. Within a section, a base rule always precedes the
+ * modifiers and states that qualify it — several pairs here are the same
+ * weight and are separated by source order alone.
+ */
+
+/* ---------------------------------------------------------------- tokens */
+
 :root {
   --bg: #0b0b0a;
   --sidebar: #1b1b19;
@@ -7,7 +30,6 @@
   --border: #292826;
   --border-strong: #393834;
   --border-faint: #242421;
-  --separator-opaque: #292826;
   --control-bg: #242421;
   --control-bg-hover: #292926;
   --control-bg-selected: #302f2c;
@@ -17,7 +39,14 @@
   --text: #f0efeb;
   --text-strong-secondary: #c3c1bb;
   --text-secondary: #999791;
-  --text-muted: #777570;
+  /*
+   * Muted carries content, not decoration: the username under an item's name,
+   * a field's label, the count beside a heading. It was #777570, which reads
+   * 4.28:1 on --bg and only 3.55:1 on a popover — under the 4.5:1 body-text
+   * floor everywhere it was used, and worst exactly where the type is
+   * smallest. This value clears 4.5:1 against every surface in the palette.
+   */
+  --text-muted: #8b8984;
   --text-disabled: #55534f;
   --inverse-bg: #eeede8;
   --inverse-text: #171716;
@@ -44,6 +73,8 @@
   --row-height: 34px;
   --shadow-popover: 0 16px 40px rgba(0, 0, 0, 0.42);
 }
+
+/* ------------------------------------------------------------------ base */
 
 body {
   padding: 0;
@@ -98,20 +129,437 @@ body {
   height: 30px;
 }
 
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* ------------------------------------------------------------ primitives */
+
 /*
- * Window chrome stays above the app, but only the first 32px are draggable.
+ * One definition, where there used to be two — and then, later, four.
  *
- * Pinned to the window edge. These were inset by 16px to line up with the
+ * A second `.section-label` set padding while this one set margin, and both
+ * applied to every label in the app: 8px of padding *and* 8px of margin below
+ * the text, 16px of padding *and* 24px of margin above a spaced one. The
+ * labels ended up floating between their groups rather than belonging to the
+ * one underneath.
+ *
+ * A group label wants to sit close to what it labels and far from what came
+ * before. That is the whole trick, and it only works if the two numbers are
+ * actually different.
+ *
+ * The sentence-case treatment lives here for the same reason. It used to be
+ * spelled out separately for three scopes — the sidebar, the folders head and
+ * the detail sections — so every label nobody had thought to scope kept the
+ * old uppercase-with-tracking setting at the smallest size in the file: the
+ * popover's heading, the context menu's, and the ones in Settings, Import and
+ * Subscriptions. Whatever a label looks like, it looks like that everywhere;
+ * only spacing is anyone's business per context.
+ */
+.section-label {
+  margin-bottom: var(--space-1);
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  font-weight: 520;
+}
+
+.section-label--spaced {
+  margin-top: var(--space-5);
+}
+
+.kbd {
+  color: var(--text-disabled);
+  font-family: var(--font-sans);
+  font-size: var(--text-label);
+  font-weight: 500;
+  letter-spacing: 0.02em;
+}
+
+.empty {
+  padding: var(--space-10) 0;
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  text-align: center;
+}
+
+.notice {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+}
+
+/*
+ * No status colour is available, so anything the user must not miss is raised
+ * to full-brightness text next to the muted copy around it, and given an icon.
+ */
+.notice--loud {
+  color: var(--text);
+}
+
+/*
+ * The update offer. A strip in the flow rather than a modal: an update is never
+ * urgent enough to interrupt a vault, and an app that hijacks the screen on
+ * every launch teaches people to dismiss without reading.
+ */
+.update {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  margin-bottom: var(--space-4);
+  background: var(--surface);
+  border: 1px solid var(--border-faint);
+  border-radius: var(--radius-lg);
+  color: var(--text-muted);
+}
+
+.update__text {
+  flex: 1;
+  min-width: 0;
+}
+
+.update__title {
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--text);
+}
+
+.update__notes {
+  margin-top: 2px;
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+/* --------------------------------------------------------- form controls */
+
+.input-label {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+}
+
+.input {
+  width: 100%;
+  height: 38px;
+  padding: 0 var(--space-3);
+  background: var(--bg);
+  border: 1px solid var(--border-faint);
+  border-radius: var(--radius-md);
+  color: var(--text);
+  font-size: var(--text-base);
+  transition: border-color var(--duration) var(--ease);
+}
+
+.input::placeholder {
+  color: var(--text-muted);
+}
+
+.input:hover {
+  border-color: var(--border);
+}
+
+/*
+ * The border brightens, and the ring from global.css is left alone.
+ *
+ * This rule used to add `outline: none`, which beat `:focus-visible` on
+ * specificity and loaded later — so a keyboard user tabbing into a field got
+ * nothing but the border change below, worth 1.68:1 against the field's own
+ * fill where WCAG 1.4.11 asks 3:1. Suppressing pointer focus is already
+ * handled once, globally.
+ */
+.input:focus {
+  border-color: var(--border-strong);
+}
+
+.input--area {
+  height: auto;
+  padding: var(--space-2) var(--space-3);
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.input-hint {
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  line-height: 1.5;
+}
+
+.linkish {
+  align-self: flex-start;
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  transition: color var(--duration-fast) var(--ease);
+}
+
+.linkish:hover {
+  color: var(--text);
+}
+
+/*
+ * The switch.
+ *
+ * It replaces a native checkbox, which is not a style preference: an unstyled
+ * checkbox paints itself with the operating system's accent colour when
+ * checked, and this interface has no accent colour by rule. On Windows that
+ * meant the one blue object in the entire app sat in the privacy settings.
+ *
+ * Still a real input underneath, so the label still toggles it, the keyboard
+ * still reaches it, and screen readers still call it a checkbox.
+ */
+.switch {
+  appearance: none;
+  position: relative;
+  flex: none;
+  width: 34px;
+  height: 20px;
+  margin: 0;
+  background: var(--control-bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  cursor: pointer;
+  transition:
+    background var(--duration) var(--ease),
+    border-color var(--duration) var(--ease);
+}
+
+.switch::before {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  background: var(--text-muted);
+  border-radius: 50%;
+  transition:
+    transform var(--duration) var(--ease),
+    background var(--duration) var(--ease);
+}
+
+/* On is an inversion, which is the same move the primary button makes. With no
+   colour available, filling the track is the only unambiguous "yes". */
+.switch:checked {
+  background: var(--inverse-bg);
+  border-color: transparent;
+}
+
+.switch:checked::before {
+  background: var(--inverse-text);
+  transform: translateX(14px);
+}
+
+.switch:hover:not(:checked) {
+  background: var(--control-bg-hover);
+}
+
+/*
+ * The acknowledgement checkbox, for the same reason the switch exists: left
+ * native, it paints itself in the operating system's accent colour.
+ *
+ * A checkbox and not a switch, because the two say different things. A switch
+ * holds a setting you can come back and change; this one records that you did
+ * something once, and the sentence beside it is in the past tense.
+ */
+.checkbox {
+  appearance: none;
+  position: relative;
+  flex: none;
+  width: 16px;
+  height: 16px;
+  /* Nudged onto the first line of a sentence that wraps: the box is 16px and
+     the line it sits against is taller than that. */
+  margin: 2px 0 0;
+  background: var(--control-bg);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-xs);
+  cursor: pointer;
+  transition:
+    background var(--duration) var(--ease),
+    border-color var(--duration) var(--ease);
+}
+
+.checkbox:hover:not(:checked) {
+  background: var(--control-bg-hover);
+}
+
+.checkbox:checked {
+  background: var(--inverse-bg);
+  border-color: transparent;
+}
+
+/* The tick is drawn from two borders rather than set as a glyph, which would
+   inherit the font's metrics and sit off-centre in a 16px box. */
+.checkbox:checked::before {
+  content: "";
+  position: absolute;
+  top: 1px;
+  left: 4.5px;
+  width: 4px;
+  height: 8px;
+  border: solid var(--inverse-text);
+  border-width: 0 1.6px 1.6px 0;
+  transform: rotate(45deg);
+}
+
+/* --------------------------------------------------------------- buttons */
+
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  height: 34px;
+  padding: 0 var(--space-4);
+  border-radius: var(--radius-md);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  white-space: nowrap;
+  transition:
+    background var(--duration) var(--ease),
+    color var(--duration) var(--ease),
+    opacity var(--duration) var(--ease);
+}
+
+.button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/*
+ * The only inverted element in the interface. With no accent colour, contrast
+ * is the whole mechanism for marking the primary action — so exactly one thing
+ * per screen gets to use it.
+ */
+.button--primary {
+  background: var(--inverse-bg);
+  color: var(--inverse-text);
+}
+
+.button--primary:not(:disabled):hover {
+  background: #ffffff;
+}
+
+.button--quiet {
+  color: var(--text-muted);
+}
+
+.button--quiet:hover {
+  background: var(--raised);
+  color: var(--text);
+}
+
+/*
+ * Marks the action inside a region that is not the whole screen. The inverted
+ * treatment is reserved for one element per screen, and a strip that appears
+ * unbidden must not take that slot away from the screen's own primary action —
+ * so emphasis comes from a border and full-brightness text instead.
+ */
+.button--outline {
+  border: 1px solid var(--border-strong);
+  color: var(--text);
+}
+
+.button--outline:not(:disabled):hover {
+  background: var(--raised);
+  border-color: var(--text-disabled);
+}
+
+.icon-button {
+  display: grid;
+  place-items: center;
+  width: var(--control-size);
+  height: var(--control-size);
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  transition:
+    background var(--duration-fast) var(--ease),
+    color var(--duration-fast) var(--ease);
+}
+
+.icon-button:hover:not(:disabled) {
+  background: var(--control-bg);
+  color: var(--text);
+}
+
+.icon-button:disabled {
+  color: var(--text-disabled);
+  cursor: default;
+}
+
+/*
+ * The one icon button that has to be findable rather than discovered: adding
+ * an item is why the toolbar exists. A border is enough — the inverted
+ * treatment is spent elsewhere.
+ */
+.icon-button--bordered {
+  background: var(--control-bg);
+  border: 1px solid var(--control-stroke);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07);
+  color: var(--text-secondary);
+}
+
+.icon-button--tiny {
+  width: 18px;
+  height: 18px;
+  border-radius: var(--radius-xs);
+}
+
+/* -------------------------------------------------------------- titlebar */
+
+/*
+ * The window frame is off, so this strip is the frame. It floats over the
+ * column toolbars rather than taking a row of its own — the toolbars were
+ * already padded away from the top edge, and giving the chrome its own band
+ * would push everything down for no gain.
+ *
+ * Pinned to the window edge. These offsets were 16px, to line up with the
  * floating card the stage used to be; with the stage filling the window, the
  * same offsets pushed the close button 16px in from the corner and cost the
  * top-right of the window its drag region.
  */
 .titlebar {
+  position: fixed;
   top: 0;
   left: 0;
   right: 0;
+  z-index: var(--z-titlebar);
+  display: flex;
   height: 32px;
-  z-index: 100;
+  pointer-events: none;
+}
+
+/*
+ * Only the empty stretch drags. It stops short of the controls so a press on
+ * close cannot be read as the start of a drag — that is what the flex row
+ * buys, and it is horizontal.
+ *
+ * It used to be 14px tall, which made the window awkward to move: a third of
+ * the strip it appears to occupy. It is full height now, which it can afford
+ * to be because the columns no longer put anything under it — see the
+ * `padding-top` on them. The only thing beneath it is the wordmark, and a
+ * wordmark is not a control.
+ */
+.titlebar__drag {
+  flex: 1;
+  height: 100%;
+  pointer-events: auto;
+  -webkit-app-region: drag;
 }
 
 /*
@@ -119,14 +567,11 @@ body {
  *
  * The brand and the vault switch sit in the top 32px by design, and the drag
  * layer covers that band from x=0. It wins the hit test no matter what the
- * sidebar's z-index says — `.sidebar` opens its own stacking context at
- * z-index 2, so nothing inside it can climb over a titlebar at 100, and
+ * sidebar's z-index says — the title bar is a sibling of `.yara-stage`, which
+ * isolates, so nothing painted inside the app can climb over it, and
  * `pointer-events` on the layer above is what decides the click anyway.
  * Measured before this: the top 9.5px of the vault switch returned
  * `titlebar__drag` from elementFromPoint and dragged the window.
- *
- * Raising the whole sidebar instead would put it over `.overlay`, which
- * declares no z-index of its own — every dialog would open behind it.
  *
  * Scoped with `:has()` so the unlock screen, which has no sidebar and no
  * controls up there, keeps the full width to drag by.
@@ -135,16 +580,39 @@ body {
   margin-left: var(--sidebar-width);
 }
 
+/*
+ * A dialog takes the drag strip with it.
+ *
+ * The strip spans the top 32px of the window and lives outside the stage's
+ * stacking context, so no z-index on `.overlay` can get a dialog out from
+ * under it. A full-height dialog starts at y=24 inside the scrim's padding,
+ * which left its first 8px — and the whole top band of the scrim, which is
+ * what dismisses the palette and the item dialog — swallowing presses as
+ * window drags. The window controls keep their own pointer events, so closing
+ * and minimising still work with a dialog open.
+ */
+.titlebar:has(~ .yara-stage .overlay) .titlebar__drag {
+  pointer-events: none;
+}
+
 .titlebar__controls {
+  display: flex;
+  align-items: center;
   gap: 1px;
   padding: 3px 7px 0 0;
+  pointer-events: auto;
 }
 
 .titlebar__button {
+  display: grid;
+  place-items: center;
   width: 27px;
   height: 24px;
   border-radius: 8px;
   color: #5f5d58;
+  transition:
+    background var(--duration-fast) var(--ease),
+    color var(--duration-fast) var(--ease);
 }
 
 .titlebar__button:hover,
@@ -153,7 +621,13 @@ body {
   color: #c6c4be;
 }
 
-/* Main shell. */
+/* ----------------------------------------------------------------- shell */
+
+/*
+ * Navigate, choose, read. The detail is a column rather than an overlay,
+ * because a vault is read by moving between items and covering the list to
+ * show one of them fought that every time.
+ */
 .app,
 .app[data-wide] {
   position: relative;
@@ -164,17 +638,20 @@ body {
   background: #111110;
 }
 
+/* Agent access and Sync are screens, not selections: they take both columns. */
 .app[data-wide] {
   grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
 }
 
-/* Sidebar. */
+/* --------------------------------------------------------------- sidebar */
+
 .sidebar {
   --sidebar-shell-inset: 10px;
   --sidebar-row-inset: 10px;
   position: relative;
-  z-index: 2;
+  z-index: var(--z-sidebar);
   display: flex;
+  flex-direction: column;
   min-width: 0;
   padding: 0 var(--sidebar-shell-inset) var(--sidebar-shell-inset);
   overflow: hidden;
@@ -240,6 +717,20 @@ body {
   gap: 2px;
 }
 
+/*
+ * Spacing only. Everything else about a section label — size, weight, colour,
+ * sentence case — is settled once, on the base rule above.
+ *
+ * The inset is the navigation row's own, so the label aligns with the icons
+ * below it rather than with their text and reads as the head of the column
+ * those icons make.
+ */
+.sidebar__nav .section-label,
+.folders__head .section-label {
+  padding: 0 var(--sidebar-row-inset);
+  margin: 14px 0 5px;
+}
+
 .nav-item {
   display: flex;
   align-items: center;
@@ -252,8 +743,26 @@ body {
   font-size: 12px;
   font-weight: 400;
   line-height: 1.2;
+  letter-spacing: -0.003em;
   text-align: left;
   transition: background 150ms ease, color 150ms ease;
+}
+
+/*
+ * The three states below are all one class plus one qualifier, so nothing but
+ * source order separates them — and a folder row can be in all three at once,
+ * because you can drag an item onto the folder you are already in with the
+ * pointer resting on it. The order here is the one that ships: the drop target
+ * yields its surface to the pointer, the pointer yields to the selection, and
+ * what the drop keeps is its ring.
+ */
+
+/* A drop target lifts the way a selection does. No outline: an outline would
+   be a second visual language for "here", and the surface already says it. */
+.nav-item[data-drop] {
+  background: var(--control-bg-selected);
+  color: var(--text);
+  box-shadow: inset 0 0 0 1px var(--border-strong);
 }
 
 .nav-item:hover {
@@ -261,6 +770,10 @@ body {
   color: #d7d5cf;
 }
 
+/*
+ * Selection is a lift in the surface, not a tint. With no accent available it
+ * is the only mechanism that reads as "this one" without shouting.
+ */
 .nav-item[data-active] {
   background: #302f2c;
   box-shadow: inset 0 0 0 1px #373632, 0 1px 2px rgba(0, 0, 0, 0.18);
@@ -269,33 +782,17 @@ body {
 }
 
 .nav-item__label {
-  position: static;
-  width: auto;
-  height: auto;
   flex: 1;
   min-width: 0;
-  margin: 0;
   overflow: hidden;
-  clip-path: none;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.sidebar__nav .section-label,
-.folders__head .section-label {
-  display: block;
-  padding: 0 var(--sidebar-row-inset);
-  margin: 14px 0 5px;
-  color: #67655f;
-  font-size: 10px;
-  font-weight: 520;
-  letter-spacing: 0;
-  text-transform: none;
 }
 
 .folders__head {
   display: flex;
   align-items: center;
+  gap: var(--space-1);
 }
 
 .folders__head .section-label {
@@ -316,30 +813,22 @@ body {
   margin: 10px;
 }
 
-.sidebar__footer-anchor {
-  position: relative;
-  display: flex;
-  width: 100%;
-  flex-direction: column;
-  gap: 5px;
-  padding-top: 8px;
-  margin-top: 9px;
-  border-top: 1px solid #292826;
-}
-
 .sidebar__utility {
   display: flex;
   align-items: center;
   gap: 9px;
   width: 100%;
   height: 34px;
-  padding: 0 var(--sidebar-row-inset);
   margin: 0;
+  padding: 0 var(--sidebar-row-inset);
   border-radius: 10px;
   color: #918f89;
   font-size: 12px;
   line-height: 1.2;
   text-align: left;
+  transition:
+    background var(--duration-fast) var(--ease),
+    color var(--duration-fast) var(--ease);
 }
 
 .sidebar__utility:hover,
@@ -348,14 +837,20 @@ body {
   color: #deddd8;
 }
 
-.sidebar__utility span {
-  position: static;
-  width: auto;
-  height: auto;
-  margin: 0;
-  overflow: visible;
-  clip-path: none;
-  white-space: normal;
+/*
+ * The footer is the popover's anchor, so the menu rises from the control it
+ * belongs to rather than appearing somewhere on the screen.
+ */
+.sidebar__footer-anchor {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  gap: 5px;
+  width: 100%;
+  padding-top: 8px;
+  margin-top: 9px;
+  border-top: 1px solid #292826;
 }
 
 .sidebar__footer {
@@ -370,6 +865,7 @@ body {
   border-radius: 12px;
   color: #777570;
   text-align: left;
+  transition: background var(--duration) var(--ease);
 }
 
 .sidebar__footer:hover {
@@ -379,10 +875,10 @@ body {
 
 .sidebar__footer-tile {
   display: grid;
-  width: 31px;
-  height: 31px;
   place-items: center;
   flex: none;
+  width: 31px;
+  height: 31px;
   background: #272724;
   border-radius: 9px;
   color: #aaa8a1;
@@ -390,9 +886,9 @@ body {
 
 .sidebar__footer-text {
   display: flex;
-  min-width: 0;
   flex: 1;
   flex-direction: column;
+  min-width: 0;
 }
 
 .sidebar__footer-title {
@@ -402,21 +898,148 @@ body {
 }
 
 .sidebar__footer-sub {
-  color: #696761;
+  color: var(--text-muted);
   font-size: 9px;
+  font-weight: 500;
   font-variant-numeric: proportional-nums;
   letter-spacing: 0;
 }
 
-/* Vault list and detail. The toolbar spans both content columns. */
+/* ----------------------------------------------------------------- menus */
+
+.popover {
+  position: absolute;
+  bottom: calc(100% + var(--space-2));
+  left: var(--space-2);
+  right: var(--space-2);
+  z-index: var(--z-popover);
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-1) 0;
+  background: var(--bg-popover);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-popover);
+}
+
+.popover .section-label {
+  padding: var(--space-2) var(--space-3) var(--space-1);
+}
+
+.popover__options {
+  display: flex;
+  flex-direction: column;
+  padding: 0 var(--space-1);
+}
+
+.popover__item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  height: var(--row-height);
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-xs);
+  color: var(--text-secondary);
+  font-size: var(--text-base);
+  text-align: left;
+  transition:
+    background var(--duration-fast) var(--ease),
+    color var(--duration-fast) var(--ease);
+}
+
+.popover__item:hover {
+  background: var(--control-bg);
+  color: var(--text);
+}
+
+.popover__item[data-chosen] {
+  background: var(--control-bg-selected);
+  color: var(--text);
+  font-weight: 500;
+}
+
+/*
+ * The tick has a reserved slot whether or not it is drawn, so choosing a
+ * different option does not shift every label sideways.
+ */
+.popover__check {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 13px;
+}
+
+.popover__label {
+  flex: 1;
+  min-width: 0;
+}
+
+.popover__separator {
+  height: 1px;
+  margin: var(--space-1) var(--space-3);
+  background: var(--border);
+}
+
+.context-menu-layer {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-context-menu);
+}
+
+/*
+ * The menu that carries the destructive row.
+ *
+ * Deleting an item gets no colour, because there is none to give it. What
+ * marks it is that it stands alone at the bottom with a separator above it and
+ * nothing below — and that the first press only changes the words, so the
+ * second press is the one that means it.
+ */
+.context-menu {
+  position: fixed;
+  width: 220px;
+  padding: var(--space-1) 0;
+  background: var(--bg-popover);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-popover);
+}
+
+/* The context menu carries a folder list now, so its label needs the same
+   inset the popover's own label has rather than the flush one it inherits. */
+.context-menu .section-label {
+  padding: var(--space-2) var(--space-3) var(--space-1);
+  margin: 0;
+}
+
+/* --------------------------------------------------------------- columns */
+
+/*
+ * The columns start below the toolbar, which is taken out of flow.
+ *
+ * The toolbar spans both content columns from the top of the window, so it
+ * cannot be a row inside either of them: it is positioned absolutely and the
+ * columns reserve its 76px instead. Those 76 include the 32px system strip
+ * that the toolbar pads itself away from.
+ *
+ * Without the reservation the columns started at the top of the window and
+ * their contents ran through the chrome: the list's heading sat at y=16 and
+ * its new-item button at y=24, both crossing a boundary they had no idea
+ * about. That is also what forced the drag region down to 14px — it could not
+ * be any taller without swallowing a button.
+ *
+ * The sidebar is deliberately not padded here. Its background runs the full
+ * height, the way a Mac sidebar does, and its brand block reserves the strip
+ * itself.
+ */
 .list-column,
 .detail-column,
 .wide-column {
   display: flex;
+  flex-direction: column;
   min-width: 0;
   padding-top: 76px;
   overflow: hidden;
-  border-left: 0;
 }
 
 .list-column {
@@ -434,7 +1057,7 @@ body {
   top: 0;
   left: var(--sidebar-width);
   right: 0;
-  z-index: 5;
+  z-index: var(--z-toolbar);
   display: flex;
   height: 76px;
   align-items: flex-end;
@@ -455,23 +1078,27 @@ body {
 
 .column__heading {
   display: flex;
-  min-width: 0;
   flex: 1;
+  min-width: 0;
   align-items: baseline;
   gap: 8px;
 }
 
 .column__title {
   flex: none;
+  min-width: 0;
   color: #f0efeb;
   font-size: 16px;
   font-weight: 560;
   letter-spacing: -0.018em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .column__sub {
   margin: 0;
-  color: #66645f;
+  color: var(--text-muted);
   font-size: 10px;
 }
 
@@ -499,49 +1126,57 @@ body {
   justify-content: center;
 }
 
-.auth-view__search {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  height: 34px;
-  padding: 0 10px;
-  background: #1d1d1b;
-  border: 1px solid #292825;
-  border-radius: 10px;
-  color: #6e6c66;
-}
-
-.auth-view__search:focus-within {
-  border-color: #55534e;
-}
-
-.auth-view__search input {
-  min-width: 0;
-  flex: 1;
-  padding: 0;
-  background: transparent;
-  border: 0;
-  outline: 0;
-  color: #e7e6e1;
-  font-size: 11px;
-}
-
 .list-column__items {
   flex: 1;
   padding: 5px 8px 16px;
-  overflow-y: auto;
   border-top: 1px solid #242421;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
+.wide-column__body {
+  flex: 1;
+  padding: 18px 22px 28px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.compact-detail-back {
+  display: none;
+}
+
+/* ------------------------------------------------------------------ rows */
+
 .rows {
+  display: flex;
+  flex-direction: column;
   gap: 2px;
 }
 
+/*
+ * A floor, not a fixed height.
+ *
+ * The base stylesheet this file absorbed set `height: 50px` here, which beat
+ * the `min-height: 48px` written beside the padding below — the two lived a
+ * thousand lines apart in two files and the fixed height won without anyone
+ * choosing it, so a row could not grow for its own contents and the padding
+ * and border added underneath it had nowhere to go. The floor is what was
+ * meant, and it is how every other row in the app is written: the detail
+ * rows, the palette's rows and the sidebar footer all set a minimum and let
+ * the content decide. Rows are 2px shorter than they were.
+ */
 .row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
   min-height: 48px;
   padding: 7px 9px;
   border: 1px solid transparent;
   border-radius: 10px;
+  text-align: left;
+  transition: background var(--duration-fast) var(--ease);
 }
 
 .row:hover {
@@ -554,13 +1189,51 @@ body {
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.16);
 }
 
+/* The row being carried. Dimmed rather than hidden: removing it would close
+   the gap it occupies and shift every row below, which moves the target the
+   user is aiming at. */
+.row[data-lifted] {
+  opacity: 0.4;
+}
+
+/*
+ * Where a dropped row would land. A line rather than a gap: opening a gap
+ * moves every row below it, so the list shifts under the cursor at the exact
+ * moment the user is aiming at something in it.
+ */
+.row[data-drop-edge]::after {
+  content: "";
+  position: absolute;
+  left: var(--space-3);
+  right: var(--space-3);
+  height: 2px;
+  background: var(--text);
+  border-radius: 1px;
+}
+
+.row[data-drop-edge="above"]::after {
+  top: -1px;
+}
+
+.row[data-drop-edge="below"]::after {
+  bottom: -1px;
+}
+
+/*
+ * A tile, not a bare glyph. It gives every row the same left edge whether the
+ * item has a site behind it or only a type, so the names line up.
+ */
 .tile {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
   width: 31px;
   height: 31px;
   background: #242421;
   border: 1px solid #2e2d29;
   border-radius: 9px;
   color: #b9b7b1;
+  overflow: hidden;
 }
 
 .tile--large {
@@ -569,90 +1242,433 @@ body {
   border-radius: 11px;
 }
 
+/*
+ * A monogram tile. Letter-spacing is negative because two capitals set at this
+ * size drift apart and stop reading as one mark.
+ */
+.tile[data-monogram] {
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.tile--large[data-monogram] {
+  font-size: var(--text-lg);
+}
+
+/*
+ * A fetched icon fills the tile rather than sitting in it. Sites ship square
+ * icons with the artwork bleeding to the edge as often as not, and padding
+ * those makes them look shrunken next to a monogram at full size.
+ */
+.tile[data-icon] {
+  background: var(--fill-quaternary);
+}
+
+.tile img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.row[data-selected] .tile {
+  color: var(--text);
+}
+
+.row[data-selected] .tile[data-monogram] {
+  color: var(--text);
+}
+
+.row__text {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
 .row__name {
   color: #deddd8;
   font-size: 12px;
   font-weight: 520;
+  line-height: 18px;
+  letter-spacing: -0.003em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
+/*
+ * The username, and the only thing telling two logins for the same site apart.
+ * It was #706e68, which measured 3.58:1 on a resting row and 2.85:1 once the
+ * row was selected — the state you are in while you read it.
+ */
 .row__sub {
-  color: #706e68;
+  color: var(--text-muted);
   font-size: 9px;
+  line-height: 16px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Selection lifts the surface, so the quiet line has to come up with it or it
+   loses the contrast it had at rest. The tile brightens for the same reason. */
+.row[data-selected] .row__sub {
+  color: var(--text-secondary);
+}
+
+/* Holds the column open for the moment before the skeleton is worth showing,
+   so a fast load does not collapse the list and reopen it. */
+.list-wait {
+  min-height: 250px;
+}
+
+.skeleton-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.skeleton-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 50px;
+  padding: 0 10px;
+}
+
+.skeleton-row__tile,
+.skeleton-row__name,
+.skeleton-row__sub {
+  display: block;
+  background: var(--fill-tertiary);
+  border-radius: var(--radius-xs);
+}
+
+.skeleton-row__tile {
+  flex-shrink: 0;
+  width: 30px;
+  height: 30px;
+  border-radius: var(--radius-md);
+}
+
+.skeleton-row__copy {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.skeleton-row__name {
+  width: 42%;
+  height: 8px;
+}
+
+.skeleton-row__sub {
+  width: 66%;
+  height: 7px;
+  background: var(--fill-quaternary);
+}
+
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  width: 100%;
+  max-width: 280px;
+  margin: 64px auto 0;
+  text-align: left;
+}
+
+.empty-state[data-centred] {
+  justify-content: center;
+  height: 100%;
+  margin-top: 0;
+}
+
+.empty-state__title {
+  font-size: var(--text-lg);
+  font-weight: 550;
+  line-height: 22px;
+}
+
+.empty-state__body {
+  margin-top: var(--space-1);
+  color: var(--text-secondary);
+  font-size: var(--text-base);
+  line-height: 20px;
+}
+
+.empty-state .button {
+  height: 34px;
+  margin-top: var(--space-4);
+}
+
+/* ---------------------------------------------------------------- detail */
+
+.detail {
+  display: contents;
 }
 
 .detail__scroll {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  align-items: flex-start;
   padding: 0 18px 28px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.detail__scroll > * {
+  width: 100%;
+  max-width: 720px;
 }
 
 .detail__header {
+  display: flex;
+  align-items: center;
   gap: 11px;
   padding: 18px 0 16px;
   border-bottom: 1px solid #292826;
+}
+
+.detail__heading {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
 }
 
 .detail__name {
   color: #efeee9;
   font-size: 16px;
   font-weight: 560;
+  letter-spacing: var(--tracking-tight);
+  line-height: 29px;
 }
 
 .detail__host {
-  color: #777570;
+  color: var(--text-muted);
   font-size: 10px;
 }
 
 .detail__section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
   margin-top: 18px;
 }
 
 .detail__section .section-label {
   padding: 0 3px;
   margin-bottom: 6px;
-  color: #6f6d67;
-  font-size: 10px;
-  font-weight: 520;
-  letter-spacing: 0;
-  text-transform: none;
 }
 
+/*
+ * An inset grouped list. The label lives outside the well, which is what lets
+ * it stay quiet without becoming ambiguous — it is not a column header, so it
+ * does not have to compete with the values under it.
+ */
 .group {
-  overflow: hidden;
+  display: flex;
+  flex-direction: column;
   background: #191918;
   border: 1px solid #292825;
   border-radius: 12px;
+  overflow: hidden;
 }
 
 .detail__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
   min-height: 46px;
   padding: 8px 10px;
+  text-align: left;
 }
 
 .detail__row + .detail__row {
-  border-top-color: #292825;
+  border-top: 1px solid #292825;
+}
+
+/*
+ * The rows that hold something taller than a line: the notes block and the
+ * prominent one-time code.
+ *
+ * This had stopped applying. `.detail__row` above restated `min-height: 46px`
+ * from the other stylesheet purely so it could change the padding beside it,
+ * and because the two rules are the same weight the later file won — the
+ * modifier was overridden by the rule it modifies. Same shape of failure as
+ * `.row`, and invisible for the same reason: the two lines were a thousand
+ * apart in two files. The one-time-code row is 16px taller than it has been.
+ */
+.detail__row--tall {
+  min-height: 64px;
 }
 
 .detail__label {
-  color: #777570;
+  flex-shrink: 0;
+  width: 92px;
+  color: var(--text-muted);
   font-size: 10px;
 }
 
-.detail__value,
-.detail__value[data-mono] {
+.detail__row--summary {
+  transition: background var(--duration-fast) var(--ease);
+}
+
+.detail__row--summary:hover {
+  background: var(--control-bg);
+}
+
+.detail__disclosure {
+  color: var(--text-muted);
+  transition: transform var(--duration-fast) var(--ease);
+}
+
+.detail__row--summary[aria-expanded="true"] .detail__disclosure {
+  transform: rotate(90deg);
+}
+
+.detail__value {
+  flex: 1;
+  min-width: 0;
   color: #deddd8;
   font-family: inherit;
   font-size: 12px;
   font-variant-numeric: proportional-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.wide-column__body {
-  padding: 18px 22px 28px;
+/*
+ * `data-mono` no longer switches the family. Keys and codes are set in the
+ * interface face like everything else; what is left of the monospaced
+ * treatment is the extra tracking, which is what makes a run of characters
+ * countable by eye.
+ */
+.detail__value[data-mono] {
+  letter-spacing: 0.02em;
 }
 
-.compact-detail-back {
-  display: none;
+/* Notes keep the line breaks they were typed with — a note is written as
+   lines, and reflowing it into a paragraph loses what the author meant. */
+.detail__notes {
+  flex: 1;
+  min-width: 0;
+  color: var(--text);
+  font-size: var(--text-sm);
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
-/* Authenticator. */
+/* --------------------------------------------------------- custom fields */
+
+.fields {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+/*
+ * Name and value on one line, at a 2:3 split. The name is the shorter of the
+ * two in practice — "API key", "PIN" — and giving it equal width would leave
+ * the value, which is what you are actually checking, truncated first.
+ */
+.fields__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.fields__label {
+  flex: 2;
+  min-width: 0;
+}
+
+.fields__value {
+  flex: 3;
+  min-width: 0;
+}
+
+/* A pressed eye means the value is hidden, so the control shows the state it
+   is in rather than the action it would take. */
+.fields__row .icon-button[aria-pressed="true"] {
+  background: var(--control-bg-selected);
+  color: var(--text);
+}
+
+/* ------------------------------------------------------------------ totp */
+
+.totp {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text-secondary);
+  transition: opacity var(--duration) var(--ease);
+}
+
+.totp--presence {
+  gap: 6px;
+  color: var(--text-secondary);
+}
+
+.totp__presence-label {
+  font-size: var(--text-label);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+.totp[data-expiring] {
+  opacity: 0.45;
+}
+
+.totp__code {
+  display: flex;
+  align-items: baseline;
+  font-family: var(--font-mono);
+  font-size: var(--text-base);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.06em;
+}
+
+.totp[data-prominent] .totp__code {
+  color: var(--text);
+  line-height: 32px;
+}
+
+/* Groups the digits 3-and-3 without inserting a character to copy by mistake. */
+.totp__gap {
+  width: 0.45em;
+}
+
+.totp__ring {
+  transform: rotate(-90deg);
+}
+
+.totp__track {
+  fill: none;
+  stroke: var(--border);
+  stroke-width: 2;
+}
+
+.totp__progress {
+  fill: none;
+  stroke: var(--text-secondary);
+  stroke-width: 2;
+  stroke-linecap: round;
+  transition: stroke-dashoffset 1s linear;
+}
+
+/* --------------------------------------------------------- authenticator */
+
 .auth-view {
   grid-column: 2 / -1;
   display: flex;
@@ -712,8 +1728,44 @@ body {
 }
 
 .auth-view__search {
+  display: flex;
   width: min(360px, 100%);
   flex: 1;
+  align-items: center;
+  gap: 8px;
+  height: 34px;
+  padding: 0 10px;
+  background: #1d1d1b;
+  border: 1px solid #292825;
+  border-radius: 10px;
+  color: #6e6c66;
+}
+
+.auth-view__search:focus-within {
+  border-color: #55534e;
+}
+
+/*
+ * The field is a wrapper with the input's own outline switched off, so the
+ * ring has to be drawn on the wrapper or there is none at all. The border
+ * change above was doing the whole job on its own at 2.20:1 against the fill,
+ * where WCAG 1.4.11 asks 3:1; `--text-secondary` measures 5.78:1 against the
+ * fill and 6.47:1 against the surface behind it.
+ */
+.auth-view__search:has(input:focus-visible) {
+  outline: 2px solid var(--text-secondary);
+  outline-offset: 2px;
+}
+
+.auth-view__search input {
+  min-width: 0;
+  flex: 1;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  outline: 0;
+  color: #e7e6e1;
+  font-size: 11px;
 }
 
 .auth-grid {
@@ -777,7 +1829,7 @@ body {
 }
 
 .auth-card__identity small {
-  color: #706e68;
+  color: var(--text-muted);
   font-size: 9px;
 }
 
@@ -840,10 +1892,439 @@ body {
   color: #706e68;
 }
 
-/* Login and setup. */
+/* ---------------------------------------------------------- agent access */
+
+.grant,
+.audit {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-2);
+  border-radius: var(--radius-sm);
+}
+
+.grant__text,
+.audit__text {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.grant__title,
+.audit__line {
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+}
+
+.grant__sub,
+.audit__sub {
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.audit {
+  color: var(--text-muted);
+}
+
+/* Reveals and refusals are the entries worth spotting in a long list, and
+   brightness is the only channel available for saying so. */
+.audit[data-notable] {
+  color: var(--text-secondary);
+}
+
+.audit[data-notable] .audit__line {
+  color: var(--text);
+}
+
+/* ---------------------------------------------------------------- dialog */
+
+/*
+ * The scrim has to outrank everything it dims.
+ *
+ * It declared no z-index at all, which put it at auto — below the sidebar, the
+ * column toolbar, the context-menu layer and, on a narrow window, the detail
+ * pane. All four painted over the scrim and kept taking clicks through it, and
+ * the detail pane covered the approval dialog outright at 920px with an item
+ * selected, which is reachable because the window's minimum width is 720.
+ */
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-overlay);
+  display: grid;
+  place-items: center;
+  padding: var(--space-6);
+  background: rgb(0 0 0 / 0.55);
+  animation: fade-in var(--duration) var(--ease);
+}
+
+/* Sits above the item dialog: an agent is blocked on this answer. */
+.overlay--front {
+  z-index: var(--z-overlay-front);
+  background: rgb(0 0 0 / 0.72);
+}
+
+.dialog {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  width: 100%;
+  max-width: 420px;
+  max-height: 100%;
+  padding: var(--space-6);
+  background: var(--bg-popover);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-xl);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35), 0 20px 64px -16px rgba(0, 0, 0, 0.7);
+  overflow-y: auto;
+}
+
+.dialog__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.dialog__title {
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 24px;
+  letter-spacing: var(--tracking-tight);
+}
+
+.dialog__foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.approval {
+  max-width: 520px;
+  gap: var(--space-5);
+  padding: 24px;
+}
+
+.approval__head {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+}
+
+.approval__heading {
+  flex: 1;
+  min-width: 0;
+}
+
+.approval__eyebrow {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-1);
+  color: var(--text-strong-secondary);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+}
+
+.approval__mark {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 34px;
+  height: 34px;
+  background: var(--raised);
+  border-radius: var(--radius-md);
+  color: var(--text-secondary);
+}
+
+.approval__identity {
+  margin-top: var(--space-1);
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  line-height: 16px;
+  word-break: break-all;
+}
+
+.approval__facts {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin: 0;
+  padding: var(--space-4);
+  background: var(--bg);
+  border-radius: var(--radius-lg);
+}
+
+.approval__facts > div {
+  display: flex;
+  gap: var(--space-4);
+  min-height: 24px;
+}
+
+.approval__facts dt {
+  flex-shrink: 0;
+  width: 88px;
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}
+
+.approval__facts dd {
+  margin: 0;
+  min-width: 0;
+  color: var(--text);
+  font-size: var(--text-base);
+  line-height: 19px;
+  word-break: break-word;
+}
+
+.approval__command {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+
+/* The reason is written by the requesting program. Presented as a quotation
+   attributed to it, never as something yara is asserting. */
+.approval__reason {
+  padding-left: var(--space-4);
+  border-left: 2px solid var(--border);
+}
+
+.approval__reason-label {
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}
+
+.approval__reason-text {
+  margin-top: var(--space-1);
+  color: var(--text);
+  font-size: var(--text-base);
+  line-height: 20px;
+  word-break: break-word;
+}
+
+.approval__consequence {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  color: var(--text-strong-secondary);
+  font-size: var(--text-base);
+  line-height: 20px;
+}
+
+.approval__actions {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+/* Deny is the inverted button. In a palette with no accent colour the inverted
+   element is what the hand reaches for, so it goes to the safe answer. */
+.approval__actions .button--primary {
+  flex: 1;
+}
+
+.approval__actions .button--quiet {
+  border: 1px solid var(--border-faint);
+}
+
+.approval__more {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  background: var(--raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+
+.approval__more > div {
+  flex: 1;
+  min-width: 0;
+}
+
+.approval__more-title {
+  font-size: var(--text-sm);
+  font-weight: 500;
+}
+
+.approval__more-copy {
+  margin-top: 2px;
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  line-height: 1.45;
+}
+
+.segmented {
+  display: grid;
+  grid-auto-flow: column;
+  gap: 2px;
+  padding: 2px;
+  background: var(--bg);
+  border-radius: var(--radius-md);
+}
+
+.segmented__option {
+  padding: 6px 0;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  transition:
+    background var(--duration-fast) var(--ease),
+    color var(--duration-fast) var(--ease);
+}
+
+.segmented__option:hover {
+  color: var(--text-secondary);
+}
+
+.segmented__option[data-active] {
+  background: var(--raised);
+  color: var(--text);
+}
+
+/* -------------------------------------------------------- search palette */
+
+/*
+ * The search layer.
+ *
+ * Anchored near the top rather than centred: the list grows downward as you
+ * type, and a centred panel would walk up the screen with every keystroke.
+ */
+.overlay--palette {
+  align-items: start;
+  padding-top: 12vh;
+}
+
+.palette {
+  display: flex;
+  width: min(560px, 100%);
+  flex-direction: column;
+  overflow: hidden;
+  background: #1f1f1d;
+  border: 1px solid #34332f;
+  border-radius: 14px;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.5);
+  animation: yara-soft-arrive var(--duration) var(--ease);
+}
+
+.palette__field {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 13px 14px;
+  color: #8a877f;
+  border-bottom: 1px solid #2c2b28;
+}
+
+/*
+ * This field had no focus treatment of any kind: the input switches its own
+ * outline off and nothing put one back. The ring is inset rather than offset
+ * because `.palette` clips its children, and an offset outline on the top row
+ * would be cut off by the corner radius. 5.65:1 against the panel.
+ */
+.palette__field:has(:focus-visible) {
+  outline: 2px solid var(--text-secondary);
+  outline-offset: -2px;
+}
+
+.palette__input {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  color: var(--text, #ece9e3);
+  font-size: 14px;
+  background: none;
+  border: 0;
+  outline: none;
+}
+
+.palette__input::placeholder {
+  color: #6d6b64;
+}
+
+.palette__results {
+  max-height: 336px;
+  margin: 0;
+  padding: 6px;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.palette__row {
+  display: flex;
+  width: 100%;
+  min-height: 46px;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 8px;
+  color: inherit;
+  text-align: left;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  cursor: default;
+}
+
+/*
+ * One highlight, driven by the arrow keys and by the pointer alike. `:hover`
+ * is deliberately not styled: with both, moving the mouse over a list you are
+ * arrowing through would light two rows at once and neither would look like
+ * the one Enter takes.
+ */
+.palette__row[data-active] {
+  background: #2a2926;
+  border-color: #353430;
+}
+
+.palette__text {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.palette__name {
+  overflow: hidden;
+  font-size: 12px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.palette__sub {
+  overflow: hidden;
+  color: #8a877f;
+  font-size: 10px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.palette__flag {
+  padding: 2px 6px;
+  color: #a5a29a;
+  font-size: 9px;
+  letter-spacing: 0.04em;
+  background: #2c2b28;
+  border-radius: 999px;
+}
+
+.palette__empty {
+  margin: 0;
+  padding: 22px 16px;
+  color: #8a877f;
+  font-size: 11px;
+  text-align: center;
+}
+
+/* ---------------------------------------------------------------- unlock */
+
 .unlock-layer {
   position: absolute;
-  z-index: 40;
+  z-index: var(--z-unlock);
   inset: 0;
   display: grid;
   overflow: hidden;
@@ -975,6 +2456,17 @@ body {
   transform: translateY(-1px);
 }
 
+/*
+ * The master password field, and the first thing a keyboard reaches on launch.
+ * What marked it as focused was a border at 2.38:1 against the fill and a 3px
+ * halo at 2.5% white, which is not a visible thing. Same ring as everywhere
+ * else: 6.08:1 against the focused fill, 6.74:1 against the screen behind it.
+ */
+.unlock-field:has(input:focus-visible) {
+  outline: 2px solid var(--text-secondary);
+  outline-offset: 2px;
+}
+
 .unlock-field input {
   min-width: 0;
   flex: 1;
@@ -1025,6 +2517,10 @@ body {
   font-size: 10px;
 }
 
+/*
+ * Strength is shown as filled segments rather than a coloured bar, since the
+ * palette has no red-to-green ramp to lean on. The wording carries the meaning.
+ */
 .unlock-strength__track {
   display: grid;
   width: 90px;
@@ -1048,6 +2544,325 @@ body {
   color: #aaa8a1;
   font-size: 10px;
   text-align: left;
+}
+
+/* ------------------------------------------------------------ qr capture */
+
+.qr {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-6) var(--space-4);
+  background: var(--bg);
+  /* Dashed says "put something here" without needing a colour to say it. */
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-lg);
+  color: var(--text-muted);
+  text-align: center;
+  transition:
+    border-color var(--duration) var(--ease),
+    background var(--duration) var(--ease);
+}
+
+.qr[data-dragging] {
+  background: var(--surface);
+  border-color: var(--text-muted);
+  border-style: solid;
+}
+
+.qr[data-busy] {
+  opacity: 0.6;
+}
+
+.qr__hint {
+  font-size: var(--text-sm);
+  line-height: 1.5;
+}
+
+.qr__actions {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.qr__actions .button {
+  height: 30px;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--border-faint);
+}
+
+.qr--done {
+  flex-direction: row;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-3) var(--space-3) var(--space-4);
+  border-style: solid;
+  border-color: var(--border-faint);
+  text-align: left;
+}
+
+.qr__done-text {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.qr__done-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text);
+  font-size: var(--text-sm);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.qr__done-sub {
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}
+
+.qr__sample {
+  font-family: var(--font-mono);
+  font-size: var(--text-base);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.08em;
+  color: var(--text-secondary);
+}
+
+/* ----------------------------------------------------------------- panel */
+
+/* A plain column of sections. Used by screens that are not item lists. */
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  max-width: 640px;
+}
+
+.panel__note {
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  line-height: 1.6;
+}
+
+/* The same inset well the detail pane uses, so the two read as one system. */
+.panel__section {
+  padding: var(--space-4);
+  background: var(--raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+
+.panel__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.panel__title {
+  font-size: var(--text-base);
+  font-weight: 500;
+}
+
+.panel__count {
+  padding: 0 7px;
+  background: var(--fill-tertiary);
+  border-radius: var(--radius-pill);
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.panel__desc {
+  margin-top: 2px;
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+}
+
+.panel__group {
+  margin-top: var(--space-3);
+  padding-left: var(--space-3);
+  border-left: 1px solid var(--border);
+}
+
+/* -------------------------------------------------------------- settings */
+
+/*
+ * A setting, in the shape the rest of the app already uses for facts: a label
+ * in an inset group, and the reasoning as a caption under it.
+ *
+ * It was a checkbox with the explanation crammed into the same run of text as
+ * the label, so "Show site icons." and the sentence about what leaves the
+ * machine read as one paragraph. The thing you flip and the cost of flipping
+ * it are two different thoughts and now sit on two different lines.
+ */
+.setting__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  min-height: 46px;
+  padding: var(--space-2) var(--space-4);
+  cursor: pointer;
+}
+
+.setting__label {
+  flex: 1;
+  color: var(--text);
+  font-size: var(--text-sm);
+}
+
+/* Sits under the group, not inside it — the same relationship a caption has to
+   a table. Indented to the group's text, so it reads as belonging to it. */
+.setting__caption {
+  padding: var(--space-2) var(--space-4) 0;
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  line-height: 1.5;
+}
+
+/*
+ * The recovery kit itself. Large, monospaced and selectable, because this is
+ * copied by hand onto paper and every character has to be unambiguous — the
+ * alphabet already excludes look-alikes, and the type should not put them back.
+ */
+.kit {
+  padding: var(--space-5);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 18px;
+  letter-spacing: 0.06em;
+  text-align: center;
+  user-select: text;
+  word-break: break-all;
+}
+
+/* ------------------------------------------------------------------ sync */
+
+.sync {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  max-width: 560px;
+}
+
+.sync__form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.sync__lead {
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  line-height: 1.6;
+}
+
+.sync__title {
+  font-size: var(--text-lg);
+  font-weight: 500;
+  letter-spacing: var(--tracking-tight);
+}
+
+.sync__actions {
+  display: flex;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.sync__confirm {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  color: var(--text);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  cursor: pointer;
+}
+
+/* ---------------------------------------------------------------- import */
+
+.import {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  max-width: 560px;
+  margin-bottom: var(--space-6);
+  padding-bottom: var(--space-6);
+  border-bottom: 1px solid var(--border-faint);
+}
+
+.import__list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.import__list li {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--border-faint);
+  font-size: var(--text-sm);
+}
+
+.import__name {
+  color: var(--text);
+}
+
+.import__reason {
+  flex-shrink: 0;
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  text-align: right;
+}
+
+/* --------------------------------------------------------- subscriptions */
+
+.sub__amount {
+  flex-shrink: 0;
+  font-size: var(--text-base);
+  font-variant-numeric: tabular-nums;
+}
+
+/*
+ * The total states how it was derived. A number that quietly spreads yearly
+ * plans and drops usage-based ones is a number somebody later finds wrong.
+ */
+.sub__total {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--space-3) var(--space-2) var(--space-4);
+}
+
+.sub__total-amount {
+  font-size: var(--text-display);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: var(--tracking-tight);
+}
+
+.sub__total-note {
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  line-height: 1.5;
+}
+
+/* ------------------------------------------------------------- keyframes */
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
 }
 
 @keyframes yara-mark-travel {
@@ -1115,126 +2930,7 @@ body {
   to { background: #20201e; }
 }
 
-/*
- * The search layer.
- *
- * Anchored near the top rather than centred: the list grows downward as you
- * type, and a centred panel would walk up the screen with every keystroke.
- */
-.overlay--palette {
-  align-items: start;
-  padding-top: 12vh;
-}
-
-.palette {
-  display: flex;
-  width: min(560px, 100%);
-  flex-direction: column;
-  overflow: hidden;
-  background: #1f1f1d;
-  border: 1px solid #34332f;
-  border-radius: 14px;
-  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.5);
-  animation: yara-soft-arrive var(--duration) var(--ease);
-}
-
-.palette__field {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 13px 14px;
-  color: #8a877f;
-  border-bottom: 1px solid #2c2b28;
-}
-
-.palette__input {
-  flex: 1;
-  min-width: 0;
-  padding: 0;
-  color: var(--text, #ece9e3);
-  font-size: 14px;
-  background: none;
-  border: 0;
-  outline: none;
-}
-
-.palette__input::placeholder {
-  color: #6d6b64;
-}
-
-.palette__results {
-  max-height: 336px;
-  margin: 0;
-  padding: 6px;
-  overflow-y: auto;
-  list-style: none;
-}
-
-.palette__row {
-  display: flex;
-  width: 100%;
-  min-height: 46px;
-  align-items: center;
-  gap: 10px;
-  padding: 7px 8px;
-  color: inherit;
-  text-align: left;
-  background: none;
-  border: 1px solid transparent;
-  border-radius: 9px;
-  cursor: default;
-}
-
-/*
- * One highlight, driven by the arrow keys and by the pointer alike. `:hover`
- * is deliberately not styled: with both, moving the mouse over a list you are
- * arrowing through would light two rows at once and neither would look like
- * the one Enter takes.
- */
-.palette__row[data-active] {
-  background: #2a2926;
-  border-color: #353430;
-}
-
-.palette__text {
-  display: flex;
-  min-width: 0;
-  flex: 1;
-  flex-direction: column;
-  gap: 1px;
-}
-
-.palette__name {
-  overflow: hidden;
-  font-size: 12px;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-
-.palette__sub {
-  overflow: hidden;
-  color: #8a877f;
-  font-size: 10px;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-
-.palette__flag {
-  padding: 2px 6px;
-  color: #a5a29a;
-  font-size: 9px;
-  letter-spacing: 0.04em;
-  background: #2c2b28;
-  border-radius: 999px;
-}
-
-.palette__empty {
-  margin: 0;
-  padding: 22px 16px;
-  color: #8a877f;
-  font-size: 11px;
-  text-align: center;
-}
+/* ----------------------------------------------------------- breakpoints */
 
 @media (max-width: 1180px) {
   .sidebar {
@@ -1270,7 +2966,7 @@ body {
 
   .detail-column {
     position: absolute;
-    z-index: 12;
+    z-index: var(--z-detail-pane);
     top: 76px;
     right: 0;
     bottom: 0;
@@ -1450,13 +3146,31 @@ body {
   }
 }
 
+/*
+ * Reduced motion, in one place and for the whole document.
+ *
+ * This is the only mechanism. tokens.css used to zero --duration-fast and
+ * --duration under the same query, which never fired — the :root block below
+ * it in load order set them back unconditionally — and would not have been
+ * enough anyway, because most of the motion in this file is written as literal
+ * durations rather than as those tokens.
+ *
+ * It was scoped to `.yara-stage *`, which missed the title bar: the strip is a
+ * sibling of the stage, not a descendant, so its hover transitions kept
+ * animating for someone who had asked them not to.
+ *
+ * The iteration count matters as much as the duration. `.auth-card--skeleton`
+ * runs an infinite alternating fade; damped to 1ms and left infinite, it stops
+ * being a pulse and becomes a strobe.
+ */
 @media (prefers-reduced-motion: reduce) {
-  .yara-stage *,
-  .yara-stage *::before,
-  .yara-stage *::after {
+  *,
+  *::before,
+  *::after {
     scroll-behavior: auto !important;
     animation-duration: 1ms !important;
     animation-delay: 0ms !important;
+    animation-iteration-count: 1 !important;
     transition-duration: 1ms !important;
     transition-delay: 0ms !important;
   }

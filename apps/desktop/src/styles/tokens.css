@@ -40,11 +40,17 @@
   --border-faint: rgba(255, 255, 255, 0.06);
 
   /*
-   * Column dividers are opaque rather than alpha. They sit between two
-   * surfaces of different opacity, and an alpha line across that boundary
-   * changes value halfway along.
+   * The scrollbar thumb gets its own value rather than borrowing a border.
+   *
+   * It used to be painted with --border, which measures about 1.2:1 against the
+   * surfaces it crosses — invisible. There is no other overflow affordance in
+   * the app: no fade, no shadow, no gutter. A control you have to see in order
+   * to operate it owes 3:1 under WCAG 1.4.11, and these values clear that
+   * against the lightest region they scroll over, the search palette: 3.19:1
+   * at rest and 4.98:1 under the pointer.
    */
-  --separator-opaque: #242424;
+  --scrollbar-thumb: #6f6d68;
+  --scrollbar-thumb-hover: #8f8d88;
 
   /* Controls: buttons, fields, menu rows. */
   --control-bg: rgba(255, 255, 255, 0.06);
@@ -57,20 +63,29 @@
   --fill-quaternary: rgba(255, 255, 255, 0.05);
 
   /*
-   * Text ramp. --text-muted is the dimmest value used for real content: it
-   * holds ~4.9:1 against --bg, above the 4.5:1 floor for body text. It carries
-   * field labels, which are content rather than decoration, so it was raised
-   * from the 38% originally drafted.
+   * Text ramp. --text-muted is the dimmest value used for real content, so it
+   * has to hold the 4.5:1 body-text floor against the *worst* surface it lands
+   * on rather than against --bg. That worst surface is --bg-popover, which is
+   * the lightest thing muted text ever sits on; measuring against --bg alone is
+   * what let this token ship two steps too dark.
    *
-   * --text-disabled falls to ~1.9:1 and is therefore only for decorative or
-   * genuinely inactive elements — keyboard hints, the provenance line, a
-   * countdown that repeats what a ring already shows.
+   * yara.css redefines the whole palette in opaque colours, so the value that
+   * actually ships is its --text-muted: #8b8984, which measures 5.63:1 against
+   * --bg (#0b0b0a) and 4.67:1 against --bg-popover (#20201e). The alpha below
+   * is the same floor expressed over this file's --bg. The comment used to
+   * claim ~4.9:1 for a value that shipped at 4.28:1 on --bg and 3.55:1 on a
+   * popover, and it carries field labels, which are content rather than
+   * decoration.
+   *
+   * --text-disabled falls to 1.93:1 here and 2.57:1 as shipped, and is
+   * therefore only for decorative or genuinely inactive elements — keyboard
+   * hints, a countdown that repeats what a ring already shows.
    */
   --text: rgba(255, 255, 255, 0.92);
   /* Security-critical secondary copy: executable identity and consequences. */
   --text-strong-secondary: rgba(255, 255, 255, 0.68);
   --text-secondary: rgba(255, 255, 255, 0.58);
-  --text-muted: rgba(255, 255, 255, 0.48);
+  --text-muted: rgba(255, 255, 255, 0.52);
   --text-disabled: rgba(255, 255, 255, 0.22);
 
   /* The one high-contrast element on screen: the primary action. */
@@ -126,11 +141,36 @@
   --duration: 160ms;
 
   /*
-   * Shadows. Two layers each: a tight one that seats the edge, and a wide
-   * soft one that lifts it. One layer alone reads as a sticker.
+   * Shadow. Two layers: a tight one that seats the edge, and a wide soft one
+   * that lifts it. One layer alone reads as a sticker.
    */
   --shadow-popover: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 24px -6px rgba(0, 0, 0, 0.45);
-  --shadow-window: 0 4px 12px -4px rgba(0, 0, 0, 0.4), 0 32px 64px -16px rgba(0, 0, 0, 0.55);
+
+  /*
+   * The stacking order, named in one place.
+   *
+   * Everything from --z-sidebar to --z-overlay-front is compared inside a
+   * single stacking context: .yara-stage isolates, and .app inside it does not
+   * declare a z-index, so a dialog and the sidebar are siblings in the same
+   * ordering. .overlay used to declare nothing at all, which left it at auto
+   * and therefore *below* four siblings that do declare one — the sidebar and
+   * the column toolbar painted over the scrim and stayed clickable through it,
+   * and on a narrow window the detail pane covered the approval dialog
+   * outright. Anything that dims the app has to sit above everything it dims.
+   *
+   * --z-titlebar is deliberately outside that context: the title bar is a
+   * sibling of .yara-stage, so window chrome floats over the app and its own
+   * dialogs no matter what the numbers below say.
+   */
+  --z-sidebar: 2;
+  --z-toolbar: 5;
+  --z-context-menu: 9;
+  --z-detail-pane: 12;
+  --z-popover: 20;
+  --z-unlock: 40;
+  --z-overlay: 60;
+  --z-overlay-front: 70;
+  --z-titlebar: 100;
 
   /* Chrome. */
   --sidebar-width: 220px;
@@ -148,9 +188,15 @@
  * light variant would be a separate design pass, not a media query.
  */
 
-@media (prefers-reduced-motion: reduce) {
-  :root {
-    --duration-fast: 0ms;
-    --duration: 0ms;
-  }
-}
+/*
+ * Reduced motion is handled once, at the bottom of yara.css, and deliberately
+ * not here.
+ *
+ * This file used to zero --duration-fast and --duration under a
+ * prefers-reduced-motion query. It never took effect: a media query adds no
+ * specificity, both selectors are :root, and yara.css sets the same two tokens
+ * unconditionally from a later stylesheet. It could not have worked anyway —
+ * most of the motion in the app is written as literal durations in yara.css,
+ * not as these tokens, so damping the tokens would have left the animations
+ * that matter untouched.
+ */
