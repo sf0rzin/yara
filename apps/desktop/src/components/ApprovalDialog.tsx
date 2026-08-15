@@ -5,7 +5,7 @@ import {
   type ApprovalChoice,
   type ApprovalPrompt,
 } from "../api";
-import { useModalDialog } from "../lib/useModalDialog";
+import { isTopmostDialog, useModalDialog } from "../lib/useModalDialog";
 import { Icon } from "./Icon";
 
 const WINDOW_MINUTES = 15;
@@ -86,11 +86,19 @@ export function ApprovalDialog({
   // the whole time.
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") void answer("deny");
+      // `front: true` already keeps this dialog topmost whenever it is
+      // mounted, so this rarely changes anything today — it is here so this
+      // stays true if that ever stops being the only dialog with the flag.
+      if (event.key === "Escape" && isTopmostDialog(dialogRef.current)) {
+        void answer("deny");
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [answer]);
+    // `dialogRef` is a ref, so it never changes identity and never makes this
+    // effect re-run — it is only in this list because eslint cannot see
+    // through `useModalDialog` to know that the way `useRef` can.
+  }, [answer, dialogRef]);
 
   return (
     <div className="overlay overlay--front" role="presentation">

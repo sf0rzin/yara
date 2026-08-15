@@ -12,7 +12,7 @@ import {
   type NewField,
   type TotpPreview,
 } from "../api";
-import { useModalDialog } from "../lib/useModalDialog";
+import { isTopmostDialog, useModalDialog } from "../lib/useModalDialog";
 import { Icon } from "./Icon";
 import { QrCapture } from "./QrCapture";
 
@@ -114,11 +114,15 @@ export function NewItemDialog({
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") dismiss();
+      // An approval prompt can be open on top of this one — see isTopmostDialog.
+      if (event.key === "Escape" && isTopmostDialog(dialogRef.current)) dismiss();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [dismiss]);
+    // `dialogRef` is a ref, so it never changes identity and never makes this
+    // effect re-run — it is only in this list because eslint cannot see
+    // through `useModalDialog` to know that the way `useRef` can.
+  }, [dismiss, dialogRef]);
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();

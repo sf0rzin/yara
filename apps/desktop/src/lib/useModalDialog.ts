@@ -62,6 +62,25 @@ function topmost(): HTMLElement | undefined {
 }
 
 /**
+ * Whether `container` is the dialog that should currently act on a global key.
+ *
+ * Escape is not handled inside `useModalDialog` — each dialog means something
+ * different by it, `ApprovalDialog` most of all — but `ApprovalDialog`,
+ * `NewItemDialog` and `ImportDialog` each bind their own `window` listener
+ * for it, and this hook is the only thing that knows which dialog is
+ * actually on top when more than one is open. Without this check, an
+ * approval prompt arriving while `NewItemDialog` is open means one Escape
+ * both denies the agent's request and discards the form: neither listener
+ * can see the other, and `stopPropagation` does nothing between two
+ * listeners on the same target. Each of those three calls this before
+ * acting so only the one on top — by the same rule Tab already follows —
+ * responds.
+ */
+export function isTopmostDialog(container: HTMLElement | null): boolean {
+  return container !== null && topmost() === container;
+}
+
+/**
  * Traps Tab inside a dialog, and hands focus back to whatever had it once the
  * dialog is gone.
  *
