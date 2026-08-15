@@ -36,6 +36,9 @@ pub enum Error {
     #[error("that file is damaged: {0}")]
     DamagedFile(&'static str),
 
+    #[error("cannot generate a password: {0}")]
+    InvalidRecipe(&'static str),
+
     #[error("{0}")]
     InvalidFolder(String),
 

@@ -10,7 +10,7 @@ import { version as runningVersion } from "../../package.json";
 // Types only, erased at build time: the mock stays a standalone stand-in for
 // the IPC, but the shapes it answers with are the ones the app expects rather
 // than a second opinion about them.
-import type { Cleared, Startup } from "../api";
+import type { Cleared, PasswordRecipe, Startup } from "../api";
 
 /**
  * The version an offered update would carry.
@@ -413,6 +413,47 @@ function strengthOf(password: string): "weak" | "fair" | "strong" {
   return bits < 50 ? "weak" : bits < 75 ? "fair" : "strong";
 }
 
+function generatedPassword(recipe: PasswordRecipe): string {
+  if (recipe.length < 12) {
+    throw new Error("cannot generate a password: length is below the minimum");
+  }
+  if (recipe.length > 128) {
+    throw new Error("cannot generate a password: length is above the maximum");
+  }
+
+  const classes = [
+    recipe.lowercase ? "abcdefghijklmnopqrstuvwxyz" : "",
+    recipe.uppercase ? "ABCDEFGHIJKLMNOPQRSTUVWXYZ" : "",
+    recipe.digits ? "0123456789" : "",
+    recipe.symbols ? "!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~" : "",
+  ].filter(Boolean);
+  if (classes.length === 0) {
+    throw new Error("cannot generate a password: no character classes are enabled");
+  }
+
+  const randomIndex = (length: number) => {
+    const accepted = 256 - (256 % length);
+    const byte = new Uint8Array(1);
+    do {
+      crypto.getRandomValues(byte);
+    } while (byte[0] >= accepted);
+    return byte[0] % length;
+  };
+
+  const alphabet = classes.join("");
+  const characters = classes.map(
+    (characters) => characters[randomIndex(characters.length)],
+  );
+  while (characters.length < recipe.length) {
+    characters.push(alphabet[randomIndex(alphabet.length)]);
+  }
+  for (let upper = characters.length - 1; upper > 0; upper -= 1) {
+    const other = randomIndex(upper + 1);
+    [characters[upper], characters[other]] = [characters[other], characters[upper]];
+  }
+  return characters.join("");
+}
+
 const handlers: Record<string, (args: Record<string, unknown>) => unknown> = {
   // Kept in step with the backend, which still has this command, though nothing
   // in the interface asks it any more: it cannot tell a first run from a save
@@ -702,6 +743,8 @@ const handlers: Record<string, (args: Record<string, unknown>) => unknown> = {
   },
 
   estimate_strength: (args) => strengthOf(String(args.password ?? "")),
+
+  generate_password: (args) => generatedPassword(args.recipe as PasswordRecipe),
 
   // These used to be stubs — `add_item` returned the string "new" and
   // `delete_item` did nothing — so nothing written in a dev session survived
