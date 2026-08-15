@@ -2595,6 +2595,47 @@ body {
   line-height: 1.5;
 }
 
+/* ---------------------------------------------------------------- crash */
+
+/*
+ * The error boundary's fallback. It shares the unlock layer with recovery
+ * for the same reason recovery does: this can land on top of any state the
+ * app was in, so it has to be able to replace the whole window rather than
+ * assume a parent that is still there to lay it out.
+ */
+.crash {
+  display: flex;
+  width: min(440px, calc(100% - 48px));
+  flex-direction: column;
+  gap: var(--space-4);
+  align-items: flex-start;
+}
+
+.crash__title {
+  color: var(--text);
+  font-size: var(--text-title);
+  font-weight: 500;
+  letter-spacing: var(--tracking-title);
+  line-height: 1.35;
+}
+
+.crash__body {
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  line-height: 1.65;
+}
+
+/* The thrown message. Monospace, the same voice this app uses for anything
+   read off a machine rather than written for a person. */
+.crash__detail {
+  width: 100%;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  overflow-wrap: break-word;
+}
+
 /* ------------------------------------------------------------ qr capture */
 
 .qr {
