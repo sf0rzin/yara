@@ -38,7 +38,10 @@ export function ApprovalDialog({
   const [busyChoice, setBusyChoice] = useState<ApprovalChoice | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [moreOpen, setMoreOpen] = useState(false);
-  const dialogRef = useModalDialog<HTMLDivElement>();
+  // This dialog is pinned above every other overlay by `overlay--front`'s
+  // z-index, so it needs to win the Tab-trap even if something else — the
+  // command palette, `NewItemDialog` — mounts after it while it's still up.
+  const dialogRef = useModalDialog<HTMLDivElement>({ front: true });
 
   const isReveal = prompt.mode === "reveal";
 

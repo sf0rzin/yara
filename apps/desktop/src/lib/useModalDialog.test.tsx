@@ -76,6 +76,48 @@ function DialogBody(): JSX.Element {
   );
 }
 
+/** Two independent dialogs, mounted at once — `Outer` first, `Inner` second. */
+function Outer(): JSX.Element {
+  const ref = useModalDialog<HTMLDivElement>();
+  return (
+    <div ref={ref}>
+      <button type="button">Outer first</button>
+      <button type="button">Outer last</button>
+    </div>
+  );
+}
+
+function Inner(): JSX.Element {
+  const ref = useModalDialog<HTMLDivElement>();
+  return (
+    <div ref={ref}>
+      <button type="button">Inner first</button>
+      <button type="button">Inner last</button>
+    </div>
+  );
+}
+
+/** Stands in for `ApprovalDialog`: pinned to the front regardless of mount order. */
+function Front(): JSX.Element {
+  const ref = useModalDialog<HTMLDivElement>({ front: true });
+  return (
+    <div ref={ref}>
+      <button type="button">Front first</button>
+      <button type="button">Front last</button>
+    </div>
+  );
+}
+
+/** `Front` already open, `Outer` mounting on top of it in a later commit. */
+function FrontThenOuter({ outerOpen }: { outerOpen: boolean }): JSX.Element {
+  return (
+    <>
+      <Front />
+      {outerOpen && <Outer />}
+    </>
+  );
+}
+
 /** A page with a trigger, a dialog it can open, and a way to remove the trigger. */
 function Page(): JSX.Element {
   const [openerPresent, setOpenerPresent] = useState(true);
@@ -178,6 +220,52 @@ describe("useModalDialog", () => {
     await user.click(screen.getByText("Close"));
 
     expect(document.activeElement).toBe(opener);
+  });
+
+  it("only traps Tab in the topmost dialog when two are open at once", async () => {
+    // `Vault.tsx` mounts `ApprovalDialog` over `NewItemDialog` on purpose — an
+    // agent can be blocked waiting on an answer while someone is filling in a
+    // form. Without the stack, both hooks' keydown listeners fire on the same
+    // Tab and both call `preventDefault` and pull focus into their own
+    // dialog; the visible result is right only because the later-registered
+    // listener wins by overwriting the first, and on the way there a real
+    // `focus` event lands on a control in the dialog behind the modal one.
+    const user = userEvent.setup();
+    render(
+      <>
+        <Outer />
+        <Inner />
+      </>,
+    );
+
+    const focused: string[] = [];
+    for (const button of screen.getAllByRole("button")) {
+      button.addEventListener("focus", () => focused.push(button.textContent ?? ""));
+    }
+
+    screen.getByText("Inner last").focus();
+    focused.length = 0; // that call is the setup, not the Tab under test
+
+    await user.tab();
+
+    expect(focused).toEqual(["Inner first"]);
+    expect(document.activeElement).toBe(screen.getByText("Inner first"));
+  });
+
+  it("keeps a front-pinned dialog trapping Tab even when another dialog mounts on top of it later", async () => {
+    // `ApprovalDialog` is pinned above every overlay by CSS (`overlay--front`),
+    // but nothing stops the command palette or `NewItemDialog` from opening
+    // while it's already up — mounting *after* it, in a later commit. A stack
+    // ordered by mount time alone would hand the trap to that later dialog,
+    // even though the front one is what's actually on screen.
+    const user = userEvent.setup();
+    const { rerender } = render(<FrontThenOuter outerOpen={false} />);
+    rerender(<FrontThenOuter outerOpen={true} />);
+
+    screen.getByText("Outer last").focus();
+    await user.tab();
+
+    expect(document.activeElement).toBe(screen.getByText("Front first"));
   });
 
   it("does not throw when the previously focused element is gone by the time the dialog unmounts", async () => {

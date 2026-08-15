@@ -59,6 +59,12 @@ export function NewItemDialog({
   const [busy, setBusy] = useState(false);
 
   const firstField = useRef<HTMLInputElement>(null);
+  // Ordered against the effect below on purpose: `useModalDialog` reads
+  // `document.activeElement` on mount to know what to restore focus to on
+  // the way out, and its effect has to register — and run — before the one
+  // that moves focus into this dialog's own first field. Reversed, the
+  // restore target becomes the dialog's own input instead of whatever the
+  // user was focused on when they opened it.
   const dialogRef = useModalDialog<HTMLFormElement>();
 
   useEffect(() => {
