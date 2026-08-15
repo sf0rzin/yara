@@ -231,29 +231,37 @@ export function ItemDetail({ item }: ItemDetailProps): JSX.Element {
             )}
 
             {item.hasPassword && (
-              <Row
-                label="Password"
-                value={revealed ?? "••••••••••••••••"}
-                mono
-                title={revealed ? undefined : "Hidden until you ask"}
-              >
-                <button
-                  type="button"
-                  className="icon-button"
-                  aria-label={revealed ? "Hide password" : "Reveal password"}
-                  onClick={() => void toggleReveal()}
+              <>
+                <Row
+                  label="Password"
+                  value={revealed ?? "••••••••••••••••"}
+                  mono
+                  title={revealed ? undefined : "Hidden until you ask"}
                 >
-                  <Icon name={revealed ? "eyeOff" : "eye"} size={14} />
-                </button>
-                <button
-                  type="button"
-                  className="icon-button"
-                  aria-label="Copy password"
-                  onClick={() => void copyPassword()}
-                >
-                  <Icon name="copy" size={14} />
-                </button>
-              </Row>
+                  <button
+                    type="button"
+                    className="icon-button"
+                    aria-label={revealed ? "Hide password" : "Reveal password"}
+                    onClick={() => void toggleReveal()}
+                  >
+                    <Icon name={revealed ? "eyeOff" : "eye"} size={14} />
+                  </button>
+                  <button
+                    type="button"
+                    className="icon-button"
+                    aria-label="Copy password"
+                    onClick={() => void copyPassword()}
+                  >
+                    <Icon name="copy" size={14} />
+                  </button>
+                </Row>
+                {item.reused && (
+                  <Row label="Password health" value="This password is reused." />
+                )}
+                {item.missingSecondFactor && (
+                  <Row label="Second factor" value="No second factor is stored." />
+                )}
+              </>
             )}
             {item.hasTotp && (
               <div className="detail__row detail__row--tall">

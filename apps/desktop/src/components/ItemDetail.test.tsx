@@ -27,9 +27,21 @@ const GITHUB: ItemSummary = {
   tags: ["work"],
   hasPassword: true,
   hasTotp: false,
+  reused: false,
+  missingSecondFactor: false,
   updatedAt: 1_753_000_000,
   createdAt: 1_700_000_000,
 };
+
+describe("password health", () => {
+  it("shows reuse and a missing second factor as quiet lines beside the password", () => {
+    render(<ItemDetail item={{ ...GITHUB, reused: true, missingSecondFactor: true }} />);
+
+    expect(screen.getByText("This password is reused.")).toBeTruthy();
+    expect(screen.getByText("No second factor is stored.")).toBeTruthy();
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+});
 
 describe("copying a password", () => {
   beforeEach(() => {
