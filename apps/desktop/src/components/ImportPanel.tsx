@@ -5,7 +5,7 @@ import {
   runImport,
   type ImportPreview,
 } from "../api";
-import { useModalDialog } from "../lib/useModalDialog";
+import { isTopmostDialog, useModalDialog } from "../lib/useModalDialog";
 import { Icon } from "./Icon";
 
 /**
@@ -36,11 +36,15 @@ export function ImportDialog({
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
+      // An approval prompt can be open on top of this one — see isTopmostDialog.
+      if (event.key === "Escape" && isTopmostDialog(dialogRef.current)) onClose();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+    // `dialogRef` is a ref, so it never changes identity and never makes this
+    // effect re-run — it is only in this list because eslint cannot see
+    // through `useModalDialog` to know that the way `useRef` can.
+  }, [onClose, dialogRef]);
 
   return (
     <div className="overlay" onMouseDown={onClose}>

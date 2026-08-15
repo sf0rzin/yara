@@ -2,7 +2,7 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState, type JSX } from "react";
 import { beforeEach, describe, expect, it } from "vitest";
-import { useModalDialog } from "./useModalDialog";
+import { isTopmostDialog, useModalDialog } from "./useModalDialog";
 
 /**
  * The focus trap and focus-restore behaviour shared by every dialog.
@@ -279,5 +279,46 @@ describe("useModalDialog", () => {
     await user.click(screen.getByText("Close"));
 
     expect(screen.queryByText("Inside")).toBeNull();
+  });
+});
+
+describe("isTopmostDialog", () => {
+  // Every dialog that binds its own global key listener — Escape, currently
+  // — has to ask this before acting, or two open at once both act on one
+  // keystroke. See the comment on the export itself for why.
+  it("is true for the only dialog open, and false for no dialog at all", () => {
+    render(<Outer />);
+    const outer = screen.getByText("Outer first").closest("div") as HTMLElement;
+
+    expect(isTopmostDialog(outer)).toBe(true);
+    expect(isTopmostDialog(null)).toBe(false);
+  });
+
+  it("is true only for the more recently mounted of two ordinary dialogs", () => {
+    render(
+      <>
+        <Outer />
+        <Inner />
+      </>,
+    );
+    const outer = screen.getByText("Outer first").closest("div") as HTMLElement;
+    const inner = screen.getByText("Inner first").closest("div") as HTMLElement;
+
+    expect(isTopmostDialog(outer)).toBe(false);
+    expect(isTopmostDialog(inner)).toBe(true);
+  });
+
+  it("is true for the front-pinned dialog even though it mounted first", () => {
+    render(
+      <>
+        <Front />
+        <Outer />
+      </>,
+    );
+    const front = screen.getByText("Front first").closest("div") as HTMLElement;
+    const outer = screen.getByText("Outer first").closest("div") as HTMLElement;
+
+    expect(isTopmostDialog(front)).toBe(true);
+    expect(isTopmostDialog(outer)).toBe(false);
   });
 });
