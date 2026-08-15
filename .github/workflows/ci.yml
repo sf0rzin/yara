@@ -70,7 +70,7 @@ jobs:
 
       - run: cargo test --workspace --locked
 
-  # Two crates that must build away from Windows, for different reasons.
+  # Crates that must build away from Windows, for different reasons.
   #
   # yara-core claims to be free of platform and UI entanglement, and that claim
   # is what keeps the part worth auditing small — a claim nothing enforces
@@ -78,8 +78,17 @@ jobs:
   #
   # yara-sync is the opposite case: Linux is where it actually runs, and the
   # Windows job proves nothing about the binary that ends up on the server.
+  #
+  # yara-broker, yara-cli and yara-mcp are Windows-only in what they *do* — the
+  # transport is a named pipe — but not in what they need to *compile*: every
+  # Windows-specific item is already behind its own `cfg(windows)`, on purpose,
+  # so the rest of each crate stays checked on the platform most contributors
+  # and CI itself run on. Two of those items were only ever referenced from
+  # inside `cfg(windows)` code, so nothing off Windows flagged their imports
+  # as unused until `-D warnings` was pointed at the crate directly — nobody
+  # here had been doing that, which is how it went unnoticed.
   linux:
-    name: Core and sync (Linux)
+    name: Core, sync, and the platform-gated crates (Linux)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -90,9 +99,9 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - run: cargo clippy -p yara-core -p yara-sync --all-targets --locked -- -D warnings
+      - run: cargo clippy -p yara-core -p yara-sync -p yara-broker -p yara-cli -p yara-mcp --all-targets --locked -- -D warnings
 
-      - run: cargo test -p yara-core -p yara-sync --locked
+      - run: cargo test -p yara-core -p yara-sync -p yara-broker -p yara-cli -p yara-mcp --locked
 
   supply-chain:
     name: Advisories and licences

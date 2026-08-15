@@ -10,6 +10,7 @@ use yara_core::SecretString;
 
 use crate::audit::{Action, AuditLog, Entry, Outcome};
 use crate::grant::{ClientId, Grant, GrantStore, Scope};
+#[cfg(windows)]
 use crate::platform::PeerHandle;
 use crate::protocol::{
     self, AccessRequest, CommandOutput, Field, Intent, ItemRef, Refusal, Request, Response,

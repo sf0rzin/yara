@@ -3,7 +3,9 @@
 //! One request, one response, one connection. Nothing is cached and no
 //! credential is ever written to disk on this side.
 
-use crate::protocol::{self, Request, Response};
+#[cfg(windows)]
+use crate::protocol;
+use crate::protocol::{Request, Response};
 
 /// Sends one request to a running yara and returns its answer.
 #[cfg(windows)]
