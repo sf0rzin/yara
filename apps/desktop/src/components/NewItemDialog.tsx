@@ -12,6 +12,7 @@ import {
   type NewField,
   type TotpPreview,
 } from "../api";
+import { useModalDialog } from "../lib/useModalDialog";
 import { Icon } from "./Icon";
 import { QrCapture } from "./QrCapture";
 
@@ -58,6 +59,13 @@ export function NewItemDialog({
   const [busy, setBusy] = useState(false);
 
   const firstField = useRef<HTMLInputElement>(null);
+  // Ordered against the effect below on purpose: `useModalDialog` reads
+  // `document.activeElement` on mount to know what to restore focus to on
+  // the way out, and its effect has to register — and run — before the one
+  // that moves focus into this dialog's own first field. Reversed, the
+  // restore target becomes the dialog's own input instead of whatever the
+  // user was focused on when they opened it.
+  const dialogRef = useModalDialog<HTMLFormElement>();
 
   useEffect(() => {
     firstField.current?.focus();
@@ -164,6 +172,9 @@ export function NewItemDialog({
     <div className="overlay" onMouseDown={dismiss}>
       <form
         className="dialog"
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
         onMouseDown={(event) => event.stopPropagation()}
         onSubmit={(event) => void submit(event)}
         aria-label={editing ? "Edit item" : "New item"}

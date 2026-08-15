@@ -5,6 +5,7 @@ import {
   type ApprovalChoice,
   type ApprovalPrompt,
 } from "../api";
+import { useModalDialog } from "../lib/useModalDialog";
 import { Icon } from "./Icon";
 
 const WINDOW_MINUTES = 15;
@@ -37,6 +38,10 @@ export function ApprovalDialog({
   const [busyChoice, setBusyChoice] = useState<ApprovalChoice | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [moreOpen, setMoreOpen] = useState(false);
+  // This dialog is pinned above every other overlay by `overlay--front`'s
+  // z-index, so it needs to win the Tab-trap even if something else — the
+  // command palette, `NewItemDialog` — mounts after it while it's still up.
+  const dialogRef = useModalDialog<HTMLDivElement>({ front: true });
 
   const isReveal = prompt.mode === "reveal";
 
@@ -89,7 +94,13 @@ export function ApprovalDialog({
 
   return (
     <div className="overlay overlay--front" role="presentation">
-      <div className="dialog approval" role="alertdialog" aria-label="Credential request">
+      <div
+        className="dialog approval"
+        ref={dialogRef}
+        role="alertdialog"
+        aria-modal="true"
+        aria-label="Credential request"
+      >
         <header className="approval__head">
           <span className="approval__mark" aria-hidden="true">
             <Icon name="sparkle" size={16} />

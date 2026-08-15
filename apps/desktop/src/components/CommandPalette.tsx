@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type JSX } from "react";
 import { listItems, errorMessage, type ItemSummary } from "../api";
+import { useModalDialog } from "../lib/useModalDialog";
 import { Icon } from "./Icon";
 import { Tile } from "./Tile";
 
@@ -40,6 +41,7 @@ export function CommandPalette({ onDismiss, onSelect }: CommandPaletteProps): JS
 
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLUListElement>(null);
+  const dialogRef = useModalDialog<HTMLDivElement>();
   // Answers can land out of order. Only the newest request may write.
   const requestRef = useRef(0);
 
@@ -111,7 +113,9 @@ export function CommandPalette({ onDismiss, onSelect }: CommandPaletteProps): JS
     <div className="overlay overlay--palette" onMouseDown={onDismiss}>
       <div
         className="palette"
+        ref={dialogRef}
         role="dialog"
+        aria-modal="true"
         aria-label="Search vault"
         onMouseDown={(event) => event.stopPropagation()}
         onKeyDown={onKeyDown}
