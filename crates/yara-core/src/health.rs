@@ -55,7 +55,7 @@ pub fn estimate_bits(password: &str) -> f64 {
 /// is within reach of offline cracking however many symbol classes it mixes.
 /// Modern guidance leans on length, so length gets a hard floor here rather
 /// than being allowed to trade against variety.
-const MINIMUM_LENGTH: usize = 12;
+pub const MINIMUM_LENGTH: usize = 12;
 
 pub fn strength(password: &str) -> Strength {
     if password.chars().count() < MINIMUM_LENGTH {

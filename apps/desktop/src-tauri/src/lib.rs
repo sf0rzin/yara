@@ -19,7 +19,7 @@ use state::{AppState, Startup};
 use tauri::{Emitter, Manager, State};
 use uuid::Uuid;
 use yara_core::{
-    Cadence, Field, Item, ItemKind, SecretString, Strength, Subscription, TotpConfig,
+    Cadence, Field, Item, ItemKind, Recipe, SecretString, Strength, Subscription, TotpConfig,
     UnlockedVault, VaultCounts, VaultFile,
 };
 
@@ -634,6 +634,14 @@ fn totp_code(state: State<'_, Arc<AppState>>, id: Uuid) -> CommandResult<TotpCod
 #[tauri::command]
 fn estimate_strength(password: String) -> Strength {
     yara_core::health::strength(&password)
+}
+
+/// Deliberately takes no [`State`]: this is needed while the create form is
+/// still being filled, whether or not a vault is already open.
+#[tauri::command]
+fn generate_password(recipe: Recipe) -> CommandResult<String> {
+    let generated = yara_core::generate::password(&recipe).map_err(to_message)?;
+    Ok(generated.expose().to_string())
 }
 
 /// Re-wraps the vault key under a new master password.
@@ -1366,6 +1374,7 @@ pub fn run() {
             reveal_password,
             totp_code,
             estimate_strength,
+            generate_password,
             change_master_password,
             copy_secret,
             clear_clipboard,

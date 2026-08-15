@@ -3,6 +3,7 @@ import {
   addItem,
   clearScannedTotp,
   errorMessage,
+  generatePassword,
   itemExtras,
   revealField,
   revealNotes,
@@ -49,6 +50,7 @@ export function NewItemDialog({
   const [username, setUsername] = useState(editing?.username ?? "");
   const [password, setPassword] = useState("");
   const [passwordTouched, setPasswordTouched] = useState(false);
+  const [generatedPasswordVisible, setGeneratedPasswordVisible] = useState(false);
   const [url, setUrl] = useState(editing?.url ?? "");
   const [notes, setNotes] = useState("");
   const [fields, setFields] = useState<NewField[]>([]);
@@ -167,6 +169,24 @@ export function NewItemDialog({
     }
   }
 
+  async function fillGeneratedPassword() {
+    setError(null);
+    try {
+      const generated = await generatePassword({
+        length: 20,
+        lowercase: true,
+        uppercase: true,
+        digits: true,
+        symbols: true,
+      });
+      setPassword(generated);
+      setPasswordTouched(true);
+      setGeneratedPasswordVisible(true);
+    } catch (caught) {
+      setError(errorMessage(caught));
+    }
+  }
+
   const setField = (index: number, patch: Partial<NewField>) =>
     setFields((current) =>
       current.map((field, at) => (at === index ? { ...field, ...patch } : field)),
@@ -236,16 +256,28 @@ export function NewItemDialog({
 
             <label className="input-label">
               Password
-              <input
-                className="input"
-                type="password"
-                value={password}
-                placeholder={editing ? "Unchanged" : undefined}
-                onChange={(event) => {
-                  setPassword(event.target.value);
-                  setPasswordTouched(true);
-                }}
-              />
+              <div className="fields__row">
+                <input
+                  className="input fields__value"
+                  type={generatedPasswordVisible ? "text" : "password"}
+                  value={password}
+                  placeholder={editing ? "Unchanged" : undefined}
+                  onChange={(event) => {
+                    setPassword(event.target.value);
+                    setPasswordTouched(true);
+                    setGeneratedPasswordVisible(false);
+                  }}
+                />
+                <button
+                  type="button"
+                  className="icon-button icon-button--bordered"
+                  aria-label="Generate password"
+                  title="Generate password"
+                  onClick={() => void fillGeneratedPassword()}
+                >
+                  <Icon name="sparkle" size={14} />
+                </button>
+              </div>
               {/* Said outright, because an empty box that means "keep what is
                   there" is otherwise indistinguishable from one that means
                   "remove it", and the two are opposite instructions. */}

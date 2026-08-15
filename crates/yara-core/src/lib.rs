@@ -23,6 +23,7 @@
 pub mod account;
 pub mod crypto;
 pub mod error;
+pub mod generate;
 pub mod health;
 pub mod import;
 pub mod qr;
@@ -33,6 +34,7 @@ pub mod vault;
 pub use account::{AccountKeypair, AccountKeys, SecretKey};
 pub use crypto::{KdfParams, Key, Sealed};
 pub use error::{Error, Result};
+pub use generate::Recipe;
 pub use health::Strength;
 pub use import::{from_proton_authenticator, Import, Imported, Skipped};
 pub use qr::decode_enrollment;

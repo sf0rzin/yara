@@ -285,6 +285,17 @@ export const totpCode = (id: string) => invoke<TotpCode>("totp_code", { id });
 export const estimateStrength = (password: string) =>
   invoke<Strength>("estimate_strength", { password });
 
+export interface PasswordRecipe {
+  length: number;
+  lowercase: boolean;
+  uppercase: boolean;
+  digits: boolean;
+  symbols: boolean;
+}
+
+export const generatePassword = (recipe: PasswordRecipe) =>
+  invoke<string>("generate_password", { recipe });
+
 /**
  * Re-wraps the vault key under a new master password.
  *
