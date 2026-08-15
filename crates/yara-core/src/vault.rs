@@ -21,6 +21,7 @@
 //! be refused rather than attempted.
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::time::{SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
 use zeroize::Zeroizing;
@@ -714,6 +715,11 @@ impl UnlockedVault {
 
     pub fn items(&self) -> &[Item] {
         &self.data.items
+    }
+
+    /// The ids of every item that shares its password with another item.
+    pub fn reused_passwords(&self) -> HashSet<Uuid> {
+        crate::health::reused(&self.data.items)
     }
 
     /// Item counts by kind, for the sidebar.

@@ -36,6 +36,8 @@ pub struct ItemSummary {
     pub tags: Vec<String>,
     pub has_password: bool,
     pub has_totp: bool,
+    pub reused: bool,
+    pub missing_second_factor: bool,
     pub updated_at: u64,
     pub created_at: u64,
 }
@@ -52,6 +54,10 @@ impl From<&Item> for ItemSummary {
             tags: item.tags.clone(),
             has_password: item.password.is_some(),
             has_totp: item.totp.is_some(),
+            // Reuse is a relationship between items. One item cannot know it,
+            // so list_items and recent_items fill this after seeing the vault.
+            reused: false,
+            missing_second_factor: yara_core::health::missing_second_factor(item),
             updated_at: item.updated_at,
             created_at: item.created_at,
         }
@@ -306,6 +312,7 @@ fn list_items(
     folder: Option<String>,
 ) -> CommandResult<Vec<ItemSummary>> {
     state.with_vault(|vault| {
+        let reused = vault.reused_passwords();
         Ok(vault
             .search(query.as_deref().unwrap_or(""))
             .into_iter()
@@ -331,7 +338,11 @@ fn list_items(
                 Some(wanted) => item.folder.as_ref() == Some(wanted),
                 None => true,
             })
-            .map(ItemSummary::from)
+            .map(|item| {
+                let mut summary = ItemSummary::from(item);
+                summary.reused = reused.contains(&item.id);
+                summary
+            })
             .collect())
     })
 }
@@ -342,10 +353,15 @@ fn recent_items(
     limit: Option<usize>,
 ) -> CommandResult<Vec<ItemSummary>> {
     state.with_vault(|vault| {
+        let reused = vault.reused_passwords();
         Ok(vault
             .recent(limit.unwrap_or(5))
             .into_iter()
-            .map(ItemSummary::from)
+            .map(|item| {
+                let mut summary = ItemSummary::from(item);
+                summary.reused = reused.contains(&item.id);
+                summary
+            })
             .collect())
     })
 }

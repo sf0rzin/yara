@@ -21,6 +21,8 @@ export interface ItemSummary {
   tags: string[];
   hasPassword: boolean;
   hasTotp: boolean;
+  reused: boolean;
+  missingSecondFactor: boolean;
   updatedAt: number;
   createdAt: number;
 }

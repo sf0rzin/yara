@@ -339,22 +339,31 @@ const subView = (itemId: string, sub: MockSubscription) => ({
         : sub.amountMinor,
 });
 
-const summary = (item: MockItem) => ({
-  id: item.id,
-  name: item.name,
-  kind: item.kind,
-  username: item.username,
-  url: item.url,
-  folder: item.folder,
-  tags: item.tags,
-  hasPassword: item.password !== null,
-  hasTotp: item.totpSeed !== null,
-  updatedAt: item.updatedAt,
-  // Invented, like everything else here — but present, because a field the
-  // mock omits renders as "Unknown" or, worse, as a claim the real backend
-  // would never make.
-  createdAt: item.updatedAt - 86_400 * 420,
-});
+const summary = (item: MockItem) => {
+  const reused =
+    item.password !== null &&
+    items.some((other) => other.id !== item.id && other.password === item.password);
+
+  return {
+    id: item.id,
+    name: item.name,
+    kind: item.kind,
+    username: item.username,
+    url: item.url,
+    folder: item.folder,
+    tags: item.tags,
+    hasPassword: item.password !== null,
+    hasTotp: item.totpSeed !== null,
+    reused,
+    missingSecondFactor:
+      item.kind === "login" && item.password !== null && item.totpSeed === null,
+    updatedAt: item.updatedAt,
+    // Invented, like everything else here — but present, because a field the
+    // mock omits renders as "Unknown" or, worse, as a claim the real backend
+    // would never make.
+    createdAt: item.updatedAt - 86_400 * 420,
+  };
+};
 
 function matches(item: MockItem, query: string): boolean {
   const q = query.trim().toLowerCase();
