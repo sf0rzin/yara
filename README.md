@@ -102,6 +102,12 @@ caller identification is a Win32 call; porting those is not planned. `yara-core`
 stays free of platform dependencies anyway, and CI builds it on Linux to keep
 that honest — but the application is not coming to macOS or Linux.
 
+The same is true of `yara-broker`, `yara-cli` and `yara-mcp`: every piece that
+actually needs Windows sits behind its own `cfg(windows)`, and the rest — the
+protocol, the grant store, the audit log — has no reason not to compile
+anywhere else, so CI checks it on Linux too rather than leaving that claim
+unverified.
+
 ## Reporting a vulnerability
 
 Privately, through GitHub — the **Report a vulnerability** button under
