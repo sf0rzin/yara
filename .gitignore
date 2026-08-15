@@ -12,6 +12,7 @@ dist-ssr
 .DS_Store
 .idea
 *.swp
+.claude
 
 # Local vault data must never be committed
 *.yara
