@@ -11,6 +11,7 @@ import "./styles/global.css";
 import "./styles/yara.css";
 
 import App from "./App";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 
 // Lets the interface run in a plain browser during development. Stripped from
 // production builds, and skipped entirely when the real Tauri IPC is present.
@@ -21,6 +22,10 @@ if (import.meta.env.DEV && !("__TAURI_INTERNALS__" in window)) {
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
-    <App />
+    {/* Outside App, not inside: a boundary App renders cannot catch an error
+        App itself throws. */}
+    <ErrorBoundary>
+      <App />
+    </ErrorBoundary>
   </React.StrictMode>,
 );
