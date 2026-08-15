@@ -12,6 +12,7 @@ import {
   type NewField,
   type TotpPreview,
 } from "../api";
+import { useModalDialog } from "../lib/useModalDialog";
 import { Icon } from "./Icon";
 import { QrCapture } from "./QrCapture";
 
@@ -58,6 +59,7 @@ export function NewItemDialog({
   const [busy, setBusy] = useState(false);
 
   const firstField = useRef<HTMLInputElement>(null);
+  const dialogRef = useModalDialog<HTMLFormElement>();
 
   useEffect(() => {
     firstField.current?.focus();
@@ -164,6 +166,9 @@ export function NewItemDialog({
     <div className="overlay" onMouseDown={dismiss}>
       <form
         className="dialog"
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
         onMouseDown={(event) => event.stopPropagation()}
         onSubmit={(event) => void submit(event)}
         aria-label={editing ? "Edit item" : "New item"}

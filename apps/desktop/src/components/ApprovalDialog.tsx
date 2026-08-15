@@ -5,6 +5,7 @@ import {
   type ApprovalChoice,
   type ApprovalPrompt,
 } from "../api";
+import { useModalDialog } from "../lib/useModalDialog";
 import { Icon } from "./Icon";
 
 const WINDOW_MINUTES = 15;
@@ -37,6 +38,7 @@ export function ApprovalDialog({
   const [busyChoice, setBusyChoice] = useState<ApprovalChoice | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [moreOpen, setMoreOpen] = useState(false);
+  const dialogRef = useModalDialog<HTMLDivElement>();
 
   const isReveal = prompt.mode === "reveal";
 
@@ -89,7 +91,13 @@ export function ApprovalDialog({
 
   return (
     <div className="overlay overlay--front" role="presentation">
-      <div className="dialog approval" role="alertdialog" aria-label="Credential request">
+      <div
+        className="dialog approval"
+        ref={dialogRef}
+        role="alertdialog"
+        aria-modal="true"
+        aria-label="Credential request"
+      >
         <header className="approval__head">
           <span className="approval__mark" aria-hidden="true">
             <Icon name="sparkle" size={16} />

@@ -5,6 +5,7 @@ import {
   runImport,
   type ImportPreview,
 } from "../api";
+import { useModalDialog } from "../lib/useModalDialog";
 import { Icon } from "./Icon";
 
 /**
@@ -31,6 +32,8 @@ export function ImportDialog({
   onClose: () => void;
   onImported: () => void;
 }): JSX.Element {
+  const dialogRef = useModalDialog<HTMLDivElement>();
+
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") onClose();
@@ -43,6 +46,7 @@ export function ImportDialog({
     <div className="overlay" onMouseDown={onClose}>
       <div
         className="dialog"
+        ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-label="Import codes"
