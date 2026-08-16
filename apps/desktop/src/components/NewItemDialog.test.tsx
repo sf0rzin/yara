@@ -28,6 +28,10 @@ const GITHUB: ItemSummary = {
   tags: ["work"],
   hasPassword: true,
   hasTotp: false,
+  reused: false,
+  // Follows from `hasTotp: false` on an item that has a password. A fixture
+  // that contradicts the rule it stands in for is a trap for the next test.
+  missingSecondFactor: true,
   updatedAt: 1_753_000_000,
   createdAt: 1_700_000_000,
 };
@@ -43,6 +47,8 @@ const STRIPE: ItemSummary = {
   tags: ["finance"],
   hasPassword: true,
   hasTotp: true,
+  reused: false,
+  missingSecondFactor: false,
   updatedAt: 1_752_600_000,
   createdAt: 1_752_600_000 - 86_400 * 420,
 };
