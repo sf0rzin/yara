@@ -343,10 +343,12 @@ export interface ImportProblem {
 /**
  * What an import would do, before it does any of it.
  *
- * Names only. No seed crosses the IPC boundary at any point — the codes are
- * parsed in the backend and written straight into the vault.
+ * Names only. No seed or password crosses the IPC boundary at any point — an
+ * entry is parsed in the backend and written straight into the vault.
  */
 export interface ImportPreview {
+  /** "Proton Authenticator", "Chrome" or "Bitwarden" — whatever was detected. */
+  format: string;
   ready: string[];
   duplicates: string[];
   skipped: ImportProblem[];

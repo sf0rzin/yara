@@ -793,6 +793,9 @@ const handlers: Record<string, (args: Record<string, unknown>) => unknown> = {
   // were added to fix, on the one screen whose entire job is to show you what
   // is about to happen before it happens.
   preview_import: () => ({
+    // The fixture below is TOTP-only entries, the same shape a real Proton
+    // Authenticator export produces — so that is what it claims to be here.
+    format: "Proton Authenticator",
     ready: importFixture.entries.filter((name) => !alreadyImported(name)),
     duplicates: importFixture.entries.filter(alreadyImported),
     skipped: importFixture.skipped.map((problem) => ({ ...problem })),

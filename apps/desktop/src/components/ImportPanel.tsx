@@ -9,16 +9,18 @@ import { isTopmostDialog, useModalDialog } from "../lib/useModalDialog";
 import { Icon } from "./Icon";
 
 /**
- * Bringing two-factor codes in from another authenticator.
+ * Bringing entries in from another authenticator or password manager.
  *
- * Two steps, never one. The file is plaintext seeds, and the user is entitled
- * to see what is about to enter the vault — and what will be skipped, and why
- * — before it happens rather than after.
+ * Two steps, never one. The file is plaintext — seeds, or passwords, or both
+ * — and the user is entitled to see what is about to enter the vault, which
+ * format it was read as, and what will be skipped and why, before it happens
+ * rather than after.
  *
- * The warning about the file afterwards is not decoration. An export like this
- * is as sensitive as every account in it, it is sitting in Downloads, and
- * unlike a password a leaked seed cannot be rotated without re-enrolling the
- * account it belongs to.
+ * The warning about the file afterwards is not decoration. An export like
+ * this is as sensitive as every account in it and it is sitting in
+ * Downloads; for a seed specifically it is worse than that, since unlike a
+ * password a leaked one cannot be rotated without re-enrolling the account
+ * it belongs to.
  *
  * A dialog, because importing is something you do once and reading codes is
  * something you do daily. This used to sit permanently above the list on the
@@ -73,6 +75,10 @@ function ImportPanel({ onImported }: { onImported: () => void }): JSX.Element {
   const [path, setPath] = useState<string | null>(null);
   const [preview, setPreview] = useState<ImportPreview | null>(null);
   const [added, setAdded] = useState<number | null>(null);
+  // Kept apart from `preview.format` because `confirm` clears the preview on
+  // success — this is what lets the message afterwards still say what kind
+  // of export it was.
+  const [format, setFormat] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -82,14 +88,16 @@ function ImportPanel({ onImported }: { onImported: () => void }): JSX.Element {
       const { open } = await import("@tauri-apps/plugin-dialog");
       const chosen = await open({
         multiple: false,
-        filters: [{ name: "Authenticator export", extensions: ["txt", "json"] }],
+        filters: [{ name: "Export file", extensions: ["txt", "json", "csv"] }],
       });
       if (typeof chosen !== "string") return;
 
       setBusy(true);
       setPath(chosen);
       setAdded(null);
-      setPreview(await previewImport(chosen));
+      const result = await previewImport(chosen);
+      setFormat(result.format);
+      setPreview(result);
     } catch (caught) {
       setError(errorMessage(caught));
       setPreview(null);
@@ -127,14 +135,22 @@ function ImportPanel({ onImported }: { onImported: () => void }): JSX.Element {
           <p className="notice notice--loud">
             <Icon name="check" size={13} />
             {added === 0
-              ? "Nothing new to add — every code was already here."
-              : `Imported ${added} ${added === 1 ? "code" : "codes"}.`}
+              ? "Nothing new to add — every item was already here."
+              : `Imported ${added} ${added === 1 ? "item" : "items"}.`}
           </p>
-          <p className="input-hint">
-            The export you just read is plaintext seeds, one per account. Delete
-            it. A leaked seed cannot be changed the way a password can — the
-            account has to be enrolled again from scratch.
-          </p>
+          {format === "Proton Authenticator" ? (
+            <p className="input-hint">
+              The export you just read is plaintext seeds, one per account.
+              Delete it. A leaked seed cannot be changed the way a password
+              can — the account has to be enrolled again from scratch.
+            </p>
+          ) : (
+            <p className="input-hint">
+              The export you just read is plaintext passwords. Delete it —
+              anyone who finds that file can sign in as you on everything
+              listed in it.
+            </p>
+          )}
           <button type="button" className="button button--quiet" onClick={() => setAdded(null)}>
             Import another
           </button>
@@ -144,8 +160,9 @@ function ImportPanel({ onImported }: { onImported: () => void }): JSX.Element {
       ) : (
         <>
           <p className="sync__lead">
-            Import two-factor codes from a Proton Authenticator plaintext
-            backup. Nothing is written until you have seen what it contains.
+            Import a Proton Authenticator backup, or a password export from
+            Chrome, Edge or Bitwarden. Nothing is written until you have seen
+            what it contains.
           </p>
           <button type="button" className="button button--outline" disabled={busy} onClick={() => void choose()}>
             <Icon name="download" size={14} />
@@ -173,7 +190,7 @@ function Confirm({
   return (
     <>
       <p className="sync__lead">
-        {preview.ready.length} to add
+        Read as a {preview.format} export. {preview.ready.length} to add
         {preview.duplicates.length > 0 && `, ${preview.duplicates.length} already here`}
         {preview.skipped.length > 0 && `, ${preview.skipped.length} that cannot be read`}.
       </p>
@@ -184,7 +201,9 @@ function Confirm({
 
       {/* Matched by seed, not by name: the same code saved under two different
           labels is still the same code, and two items generating identical
-          digits turns the authenticator screen into a guessing game. */}
+          digits turns the authenticator screen into a guessing game. A
+          password-only entry has no seed to match on, so it is never listed
+          here — importing the same one twice makes two items. */}
       {preview.duplicates.length > 0 && (
         <Group label="Already in your vault" names={preview.duplicates} />
       )}
