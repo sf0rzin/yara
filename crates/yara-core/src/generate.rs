@@ -27,6 +27,11 @@ pub struct Recipe {
 /// allocation.
 const MAXIMUM_LENGTH: usize = 128;
 
+/// The shuffle draws an index over the whole password, so raising the maximum
+/// past what one random byte can select from would make `index` refuse and
+/// `draw` panic. The two numbers are coupled and nothing else says so.
+const _: () = assert!(MAXIMUM_LENGTH <= 256);
+
 struct RandomBytes {
     bytes: Zeroizing<Vec<u8>>,
     at: usize,
@@ -71,7 +76,11 @@ fn index(len: usize, bytes: &mut impl Iterator<Item = u8>) -> Option<usize> {
 }
 
 fn draw(len: usize, bytes: &mut RandomBytes) -> usize {
-    index(len, bytes).expect("the operating-system random byte source is endless")
+    // `RandomBytes` never ends, so the only way `index` declines is a `len`
+    // outside a byte's range — which the assertion above `MAXIMUM_LENGTH`
+    // rules out. Naming that here rather than the byte source, so a panic
+    // sends the next reader to the two constants instead of to `crypto`.
+    index(len, bytes).expect("every length drawn from is within a byte's range")
 }
 
 /// Generates a password that contains every enabled character class.
@@ -217,5 +226,48 @@ mod tests {
     fn an_index_discards_the_rejection_zone() {
         let mut bytes = [188, 7].into_iter();
         assert_eq!(index(94, &mut bytes), Some(7));
+    }
+
+    /// The one property none of the tests above can see.
+    ///
+    /// Every enabled class is pushed into the first few slots and only the
+    /// shuffle scatters them. Delete the Fisher-Yates loop and every other
+    /// test here still passes — the length is right, each class is present,
+    /// no disabled class appears, two calls still differ — while the class of
+    /// the leading characters becomes fixed and knowable. That is the failure
+    /// this exists to catch, and an unbiased shuffle quietly becoming biased
+    /// has no other symptom.
+    ///
+    /// The bound is deliberately loose. Natural spread here is a few per cent;
+    /// a shuffle that does not run puts every digit on one position, which is
+    /// several hundred per cent out. Anything between the two would be a bug
+    /// nobody has written yet.
+    #[test]
+    fn the_guaranteed_characters_do_not_stay_where_they_were_placed() {
+        const LENGTH: usize = 12;
+        const DRAWS: usize = 4_000;
+        const TOLERANCE: f64 = 0.35;
+
+        // Digits are the third class pushed, so a dead shuffle parks every one
+        // of them at index 2.
+        let mut digits_at = [0usize; LENGTH];
+        for _ in 0..DRAWS {
+            let generated = password(&all_classes(LENGTH)).unwrap();
+            for (at, byte) in generated.expose().bytes().enumerate() {
+                if byte.is_ascii_digit() {
+                    digits_at[at] += 1;
+                }
+            }
+        }
+
+        let mean = digits_at.iter().sum::<usize>() as f64 / LENGTH as f64;
+        assert!(mean > 0.0, "no digits were generated at all");
+        for (at, count) in digits_at.iter().enumerate() {
+            let deviation = (*count as f64 - mean).abs() / mean;
+            assert!(
+                deviation < TOLERANCE,
+                "position {at} held {count} digits against a mean of {mean:.0}"
+            );
+        }
     }
 }
