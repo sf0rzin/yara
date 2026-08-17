@@ -87,6 +87,7 @@ Tauri rebuild. The mock is dev-only and cannot reach a release build.
 - [x] TOTP (RFC 6238) verified against the RFC test vectors, `otpauth://` parsing
 - [x] QR enrollment by paste, drag-and-drop, or file, decoded in Rust
 - [x] Import two-factor codes from a Proton Authenticator backup
+- [x] Password generator, rejection-sampled so no character is likelier than another
 - [x] Offline password health checks: reuse, strength, missing second factors
 - [x] Desktop UI, auto-lock, clipboard that clears itself
 - [x] Agent broker: protocol, grants, audit log, named pipe transport
