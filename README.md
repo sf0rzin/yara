@@ -82,7 +82,7 @@ Tauri rebuild. The mock is dev-only and cannot reach a release build.
 
 ## Status
 
-- [x] Argon2id + XChaCha20-Poly1305 core, 77 tests
+- [x] Argon2id + XChaCha20-Poly1305 core, 170 tests
 - [x] Vault format with envelope encryption and tamper detection
 - [x] TOTP (RFC 6238) verified against the RFC test vectors, `otpauth://` parsing
 - [x] QR enrollment by paste, drag-and-drop, or file, decoded in Rust
