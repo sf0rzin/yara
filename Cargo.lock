@@ -6435,7 +6435,7 @@ dependencies = [
 
 [[package]]
 name = "yara-broker"
-version = "0.6.2"
+version = "0.6.3"
 dependencies = [
  "serde",
  "serde_json",
@@ -6448,7 +6448,7 @@ dependencies = [
 
 [[package]]
 name = "yara-cli"
-version = "0.6.2"
+version = "0.6.3"
 dependencies = [
  "clap",
  "serde_json",
@@ -6459,7 +6459,7 @@ dependencies = [
 
 [[package]]
 name = "yara-core"
-version = "0.6.2"
+version = "0.6.3"
 dependencies = [
  "argon2",
  "base64 0.22.1",
@@ -6485,7 +6485,7 @@ dependencies = [
 
 [[package]]
 name = "yara-desktop"
-version = "0.6.2"
+version = "0.6.3"
 dependencies = [
  "base64 0.22.1",
  "keyring",
@@ -6509,7 +6509,7 @@ dependencies = [
 
 [[package]]
 name = "yara-mcp"
-version = "0.6.2"
+version = "0.6.3"
 dependencies = [
  "serde",
  "serde_json",
@@ -6520,7 +6520,7 @@ dependencies = [
 
 [[package]]
 name = "yara-sync"
-version = "0.6.2"
+version = "0.6.3"
 dependencies = [
  "axum",
  "base64 0.22.1",
@@ -6540,7 +6540,7 @@ dependencies = [
 
 [[package]]
 name = "yara-sync-client"
-version = "0.6.2"
+version = "0.6.3"
 dependencies = [
  "base64 0.22.1",
  "ed25519-dalek",
