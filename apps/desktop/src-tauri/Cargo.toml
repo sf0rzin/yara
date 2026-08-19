@@ -43,6 +43,7 @@ tauri-plugin-updater = "2"
 # formats on the clipboard alongside the text, and neither the browser API nor
 # the Tauri plugin can do that.
 [target.'cfg(windows)'.dependencies]
+keyring = { version = "3.6", features = ["windows-native"] }
 windows-sys = { version = "0.61", features = [
   "Win32_Foundation",
   "Win32_System_DataExchange",

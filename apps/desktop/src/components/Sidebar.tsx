@@ -12,6 +12,7 @@ interface NavEntry {
 }
 
 interface SidebarProps {
+  vaultName: string;
   view: View;
   lockRemainingMs: number;
   autoLockSeconds: number | null;
@@ -19,6 +20,8 @@ interface SidebarProps {
   onSelect: (view: View) => void;
   onChangeAutoLock: (seconds: number | null) => void;
   onLock: () => void;
+  onLogout: () => void;
+  onCreateVault: () => void;
   onCreateFolder: (name: string) => void;
   onRenameFolder: (from: string, to: string) => void;
   onDeleteFolder: (name: string) => void;
@@ -48,6 +51,7 @@ function isSameView(a: View, b: View): boolean {
 }
 
 export function Sidebar({
+  vaultName,
   view,
   lockRemainingMs,
   autoLockSeconds,
@@ -55,6 +59,8 @@ export function Sidebar({
   onSelect,
   onChangeAutoLock,
   onLock,
+  onLogout,
+  onCreateVault,
   onCreateFolder,
   onRenameFolder,
   onDeleteFolder,
@@ -221,7 +227,7 @@ export function Sidebar({
            * it — and described an action this control does not perform. It
            * opens a menu; locking is one row inside that menu.
            */
-          aria-label={`Vault unlocked. ${lockSummary}. Change when it locks, or lock it now`}
+          aria-label={`${vaultName} unlocked. ${lockSummary}. Open Vault menu`}
           aria-haspopup="menu"
           aria-expanded={menuOpen}
           onClick={() => setMenuOpen((open) => !open)}
@@ -230,7 +236,7 @@ export function Sidebar({
             <Icon name="lock" size={14} />
           </span>
           <span className="sidebar__footer-text">
-            <span className="sidebar__footer-title">Vault unlocked</span>
+            <span className="sidebar__footer-title">{vaultName}</span>
             <span className="sidebar__footer-sub">{lockSummary}</span>
           </span>
           <Icon name="chevronRight" size={13} />
@@ -253,6 +259,14 @@ export function Sidebar({
               // no longer a button to hand focus back to.
               setMenuOpen(false);
               onLock();
+            }}
+            onCreateVault={() => {
+              setMenuOpen(false);
+              onCreateVault();
+            }}
+            onLogout={() => {
+              setMenuOpen(false);
+              onLogout();
             }}
             onDismiss={closeMenu}
           />

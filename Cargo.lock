@@ -1959,9 +1959,9 @@ dependencies = [
 
 [[package]]
 name = "h2"
-version = "0.4.15"
+version = "0.4.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6cb093c84e8bd9b188d4c4a8cb6579fc016968d14c99882163cd3ff402a4f155"
+checksum = "a9f37a958b41b3b19ee2707c06439c0e9e547e847223eb791ecb0cb821c65e27"
 dependencies = [
  "atomic-waker",
  "bytes",
@@ -2584,6 +2584,18 @@ dependencies = [
  "bitflags 2.13.1",
  "serde",
  "unicode-segmentation",
+]
+
+[[package]]
+name = "keyring"
+version = "3.6.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "eebcc3aff044e5944a8fbaf69eb277d11986064cba30c468730e8b9909fb551c"
+dependencies = [
+ "byteorder",
+ "log",
+ "windows-sys 0.60.2",
+ "zeroize",
 ]
 
 [[package]]
@@ -3558,7 +3570,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -6423,7 +6435,7 @@ dependencies = [
 
 [[package]]
 name = "yara-broker"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "serde",
  "serde_json",
@@ -6436,7 +6448,7 @@ dependencies = [
 
 [[package]]
 name = "yara-cli"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "clap",
  "serde_json",
@@ -6447,7 +6459,7 @@ dependencies = [
 
 [[package]]
 name = "yara-core"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "argon2",
  "base64 0.22.1",
@@ -6473,9 +6485,10 @@ dependencies = [
 
 [[package]]
 name = "yara-desktop"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "base64 0.22.1",
+ "keyring",
  "reqwest",
  "serde",
  "serde_json",
@@ -6496,7 +6509,7 @@ dependencies = [
 
 [[package]]
 name = "yara-mcp"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "serde",
  "serde_json",
@@ -6507,7 +6520,7 @@ dependencies = [
 
 [[package]]
 name = "yara-sync"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "axum",
  "base64 0.22.1",
@@ -6527,7 +6540,7 @@ dependencies = [
 
 [[package]]
 name = "yara-sync-client"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "base64 0.22.1",
  "ed25519-dalek",

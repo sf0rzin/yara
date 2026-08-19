@@ -206,9 +206,29 @@ export const vaultExists = () => invoke<boolean>("vault_exists");
  * surviving copy on its own first save. `recover` is that third state, and the
  * interface must never offer to create a vault while it is showing.
  */
-export type Startup = "setup" | "locked" | "recover";
+export type Startup = "setup" | "locked" | "recover" | "select" | "unlocked";
+
+export interface VaultProfile {
+  id: string;
+  name: string;
+  selected: boolean;
+  rememberedUntil: number | null;
+}
 
 export const vaultStartup = () => invoke<Startup>("vault_startup");
+
+export const listVaults = () => invoke<VaultProfile[]>("list_vaults");
+
+export const selectVault = (id: string) =>
+  invoke<void>("select_vault", { id });
+
+/** Returns to the picker without revoking a remembered credential. */
+export const chooseAnotherVault = () =>
+  invoke<void>("choose_another_vault");
+
+/** Permanently deletes one local Vault, its backups and remembered password. */
+export const removeVault = (id: string, confirmation: string) =>
+  invoke<void>("remove_vault", { id, confirmation });
 
 /**
  * Puts a surviving copy back at the live path.
@@ -221,13 +241,16 @@ export const recoverVault = () => invoke<void>("recover_vault");
 
 export const isUnlocked = () => invoke<boolean>("is_unlocked");
 
-export const createVault = (password: string) =>
-  invoke<void>("create_vault", { password });
+export const createVault = (name: string, password: string, remember: boolean) =>
+  invoke<void>("create_vault", { name, password, remember });
 
-export const unlockVault = (password: string) =>
-  invoke<void>("unlock_vault", { password });
+export const unlockVault = (password: string, remember: boolean) =>
+  invoke<void>("unlock_vault", { password, remember });
 
 export const lockVault = () => invoke<void>("lock_vault");
+
+/** Locks, revokes the two-week credential and returns to the vault picker. */
+export const logoutVault = () => invoke<void>("logout_vault");
 
 export const listItems = (filter: ListFilter = {}) =>
   invoke<ItemSummary[]>("list_items", {

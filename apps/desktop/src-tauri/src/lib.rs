@@ -7,6 +7,7 @@
 
 mod broker;
 mod clipboard;
+mod remembered;
 mod state;
 mod sync;
 
@@ -15,7 +16,7 @@ use std::sync::Arc;
 use broker::BrokerHandle;
 use clipboard::SecretClipboard;
 use serde::{Deserialize, Serialize};
-use state::{AppState, Startup};
+use state::{AppState, Startup, VaultProfile};
 use tauri::{Emitter, Manager, State};
 use uuid::Uuid;
 use yara_core::{
@@ -195,8 +196,62 @@ fn vault_exists(state: State<'_, Arc<AppState>>) -> bool {
 /// backup sits beside it is an interrupted save, not a first run, and offering
 /// setup there is how the last surviving copy used to get overwritten.
 #[tauri::command]
-fn vault_startup(state: State<'_, Arc<AppState>>) -> Startup {
-    state.startup()
+fn vault_startup(state: State<'_, Arc<AppState>>, broker: State<'_, BrokerHandle>) -> Startup {
+    let startup = state.startup();
+    if startup != Startup::Locked || state.resume_is_suppressed() {
+        return startup;
+    }
+
+    let Ok(Some(password)) = state.remembered_password() else {
+        return Startup::Locked;
+    };
+    match open_selected_vault(&state, password.expose()) {
+        Ok(vault) => {
+            state.set_vault(vault);
+            state.allow_resume();
+            broker.broker.restore_audit();
+            Startup::Unlocked
+        }
+        Err(_) => {
+            // The vault changed or Credential Manager held a stale entry. Do
+            // not keep retrying a credential that no longer opens this file.
+            let _ = state.forget_selected_remembered();
+            Startup::Locked
+        }
+    }
+}
+
+#[tauri::command]
+fn list_vaults(state: State<'_, Arc<AppState>>) -> Vec<VaultProfile> {
+    state.profiles()
+}
+
+#[tauri::command]
+fn select_vault(state: State<'_, Arc<AppState>>, id: String) -> CommandResult<()> {
+    state.select_profile(&id)
+}
+
+/// Returns to the picker without revoking a remembered credential. This is a
+/// switch, not a log-out; choosing the vault again may still resume it.
+#[tauri::command]
+fn choose_another_vault(app: tauri::AppHandle) -> CommandResult<()> {
+    lock_everything(&app);
+    let state = app
+        .try_state::<Arc<AppState>>()
+        .ok_or_else(|| "vault state is unavailable".to_string())?;
+    state.deselect_profile()
+}
+
+/// Permanently removes one local vault, its recovery copies and any remembered
+/// credential. The picker confirms the consequence before calling this.
+#[tauri::command]
+fn remove_vault(app: tauri::AppHandle, id: String, confirmation: String) -> CommandResult<()> {
+    lock_everything(&app);
+    let state = app
+        .try_state::<Arc<AppState>>()
+        .ok_or_else(|| "vault state is unavailable".to_string())?;
+    state.suppress_resume();
+    state.remove_profile(&id, &confirmation)
 }
 
 /// Puts a surviving copy back at the live path after an interrupted save.
@@ -211,22 +266,17 @@ fn is_unlocked(state: State<'_, Arc<AppState>>) -> bool {
 }
 
 #[tauri::command]
-fn create_vault(state: State<'_, Arc<AppState>>, password: String) -> CommandResult<()> {
-    match state.startup() {
-        Startup::Setup => {}
-        Startup::Locked => return Err("a vault already exists at this location".into()),
-        // The guard that was missing. A save interrupted between two renames
-        // left no live file, this command happily created an empty vault over
-        // the top, and its first save deleted the backup that was the only
-        // remaining copy of the user's passwords.
-        Startup::Recover => {
-            return Err("there is a vault backup here — recover it rather than replacing it".into())
-        }
-    }
-
+fn create_vault(
+    state: State<'_, Arc<AppState>>,
+    password: String,
+    name: Option<String>,
+    remember: Option<bool>,
+) -> CommandResult<()> {
     let vault = UnlockedVault::create(&password).map_err(to_message)?;
-    state.persist(&vault)?;
+    state.add_profile(name.as_deref().unwrap_or("Personal"), &vault)?;
+    state.set_remembered(&password, remember.unwrap_or(false))?;
     state.set_vault(vault);
+    state.allow_resume();
     Ok(())
 }
 
@@ -235,11 +285,12 @@ fn unlock_vault(
     state: State<'_, Arc<AppState>>,
     broker: State<'_, BrokerHandle>,
     password: String,
+    remember: Option<bool>,
 ) -> CommandResult<()> {
-    let bytes = std::fs::read(state.vault_path()).map_err(to_message)?;
-    let file = VaultFile::from_bytes(&bytes).map_err(to_message)?;
-    let vault = UnlockedVault::open(&file, &password).map_err(to_message)?;
+    let vault = open_selected_vault(&state, &password)?;
+    state.set_remembered(&password, remember.unwrap_or(false))?;
     state.set_vault(vault);
+    state.allow_resume();
 
     // The audit log lives in the vault, so this is the first moment it can be
     // read back. Without it the Agent access screen would show only what
@@ -258,6 +309,28 @@ fn unlock_vault(
 #[tauri::command]
 fn lock_vault(app: tauri::AppHandle) {
     lock_everything(&app);
+    if let Some(state) = app.try_state::<Arc<AppState>>() {
+        state.suppress_resume();
+    }
+}
+
+/// A log-out is stronger than a lock: it revokes the remembered credential
+/// and leaves no vault selected, so the next screen is the picker.
+#[tauri::command]
+fn logout_vault(app: tauri::AppHandle) -> CommandResult<()> {
+    lock_everything(&app);
+    let state = app
+        .try_state::<Arc<AppState>>()
+        .ok_or_else(|| "vault state is unavailable".to_string())?;
+    state.suppress_resume();
+    state.forget_selected_remembered()?;
+    state.deselect_profile()
+}
+
+fn open_selected_vault(state: &AppState, password: &str) -> CommandResult<UnlockedVault> {
+    let bytes = std::fs::read(state.vault_path()).map_err(to_message)?;
+    let file = VaultFile::from_bytes(&bytes).map_err(to_message)?;
+    UnlockedVault::open(&file, password).map_err(to_message)
 }
 
 /// Locks the vault and everything that depends on it holding a key.
@@ -676,7 +749,8 @@ fn change_master_password(
 ) -> CommandResult<()> {
     verify_master_password(&state, &current_password)?;
     state.with_vault_mut(|vault| vault.change_password(&new_password).map_err(to_message))?;
-    state.save()
+    state.save()?;
+    state.refresh_remembered(&new_password)
 }
 
 /// Proves the caller knows the current master password.
@@ -1363,11 +1437,16 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             vault_exists,
             vault_startup,
+            list_vaults,
+            select_vault,
+            choose_another_vault,
+            remove_vault,
             recover_vault,
             is_unlocked,
             create_vault,
             unlock_vault,
             lock_vault,
+            logout_vault,
             list_items,
             recent_items,
             vault_counts,
