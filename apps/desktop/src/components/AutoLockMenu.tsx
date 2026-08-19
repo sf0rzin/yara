@@ -26,6 +26,8 @@ interface AutoLockMenuProps {
   triggerRef: React.RefObject<HTMLButtonElement | null>;
   onChoose: (seconds: number | null) => void;
   onLockNow: () => void;
+  onCreateVault: () => void;
+  onLogout: () => void;
   onDismiss: () => void;
 }
 
@@ -34,6 +36,8 @@ export function AutoLockMenu({
   triggerRef,
   onChoose,
   onLockNow,
+  onCreateVault,
+  onLogout,
   onDismiss,
 }: AutoLockMenuProps): JSX.Element {
   const ref = useRef<HTMLDivElement>(null);
@@ -113,6 +117,33 @@ export function AutoLockMenu({
           <span className="popover__check" aria-hidden="true" />
           <span className="popover__label">Lock now</span>
           <kbd className="kbd">Ctrl L</kbd>
+        </button>
+      </div>
+
+      <div className="popover__separator" />
+
+      <div className="popover__options">
+        <button
+          type="button"
+          role="menuitem"
+          className="popover__item"
+          onClick={onCreateVault}
+        >
+          <span className="popover__check" aria-hidden="true">
+            <Icon name="plus" size={12} />
+          </span>
+          <span className="popover__label">Create another Vault</span>
+        </button>
+        <button
+          type="button"
+          role="menuitem"
+          className="popover__item"
+          onClick={onLogout}
+        >
+          <span className="popover__check" aria-hidden="true">
+            <Icon name="logout" size={12} />
+          </span>
+          <span className="popover__label">Log out</span>
         </button>
       </div>
     </div>

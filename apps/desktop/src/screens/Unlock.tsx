@@ -8,20 +8,31 @@ const LOGO_PIECES = [1, 2, 3, 4, 5, 6] as const;
 
 interface UnlockProps {
   mode: "setup" | "unlock";
+  vaultName?: string;
+  hasOtherVaults?: boolean;
   onAuthenticated: () => void;
+  onUseAnother?: () => void;
 }
 
 export function Unlock({
   mode,
+  vaultName,
+  hasOtherVaults = false,
   onAuthenticated,
+  onUseAnother,
 }: UnlockProps): JSX.Element {
+  const isSetup = mode === "setup";
+  const [name, setName] = useState(
+    isSetup && !hasOtherVaults ? "Personal" : "",
+  );
   const [password, setPassword] = useState("");
   const [confirmation, setConfirmation] = useState("");
+  const [remember, setRemember] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const nameRef = useRef<HTMLInputElement>(null);
   const passwordRef = useRef<HTMLInputElement>(null);
 
-  const isSetup = mode === "setup";
   // Nothing to measure when unlocking: the password is either the vault's or it
   // is not, and rating one that already exists would be commentary.
   const strength = useStrength(isSetup ? password : "");
@@ -31,11 +42,11 @@ export function Unlock({
       ? 0
       : 1660;
     const timer = window.setTimeout(
-      () => passwordRef.current?.focus({ preventScroll: true }),
+      () => (isSetup ? nameRef : passwordRef).current?.focus({ preventScroll: true }),
       delay,
     );
     return () => window.clearTimeout(timer);
-  }, [mode]);
+  }, [isSetup, mode]);
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
@@ -55,16 +66,22 @@ export function Unlock({
 
     setBusy(true);
     try {
-      await (isSetup ? createVault(password) : unlockVault(password));
+      await (isSetup
+        ? createVault(name.trim(), password, remember)
+        : unlockVault(password, remember));
       onAuthenticated();
     } catch (caught) {
-      setError(isSetup ? errorMessage(caught) : "That password did not open the vault.");
+      setError(
+        isSetup ? errorMessage(caught) : "That password did not open the vault.",
+      );
       setBusy(false);
     }
   }
 
   const canSubmit =
-    password.length > 0 && (!isSetup || confirmation.length > 0) && !busy;
+    password.length > 0 &&
+    (!isSetup || (name.trim().length > 0 && confirmation.length > 0)) &&
+    !busy;
 
   return (
     <main
@@ -98,6 +115,31 @@ export function Unlock({
           <h1 className="sr-only" id="unlock-title">
             {isSetup ? "Create your Yara vault" : "Unlock Yara"}
           </h1>
+
+          <p className="unlock-context">
+            {isSetup
+              ? hasOtherVaults
+                ? "Create another Vault"
+                : "Create your Vault"
+              : vaultName ?? "Personal"}
+          </p>
+
+          {isSetup && (
+            <label className="unlock-field">
+              <Icon name="folder" size={15} />
+              <input
+                ref={nameRef}
+                type="text"
+                value={name}
+                placeholder="Vault name"
+                aria-label="Vault name"
+                autoComplete="off"
+                maxLength={64}
+                readOnly={busy}
+                onChange={(event) => setName(event.target.value)}
+              />
+            </label>
+          )}
 
           <label className="unlock-field">
             <Icon name="lock" size={15} />
@@ -149,6 +191,32 @@ export function Unlock({
               </label>
             </>
           )}
+
+          <div className="unlock-options">
+            <label className="unlock-remember">
+              <input
+                type="checkbox"
+                checked={remember}
+                disabled={busy}
+                onChange={(event) => setRemember(event.target.checked)}
+              />
+              <span className="unlock-remember__box" aria-hidden="true">
+                {remember && <Icon name="check" size={11} />}
+              </span>
+              <span>Remember for 2 weeks</span>
+            </label>
+
+            {onUseAnother && (
+              <button
+                type="button"
+                className="unlock-switch"
+                disabled={busy}
+                onClick={onUseAnother}
+              >
+                Use another Vault
+              </button>
+            )}
+          </div>
 
           {error && (
             <p className="unlock-error" role="alert">

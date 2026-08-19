@@ -10,7 +10,7 @@ import { version as runningVersion } from "../../package.json";
 // Types only, erased at build time: the mock stays a standalone stand-in for
 // the IPC, but the shapes it answers with are the ones the app expects rather
 // than a second opinion about them.
-import type { Cleared, PasswordRecipe, Startup } from "../api";
+import type { Cleared, PasswordRecipe, Startup, VaultProfile } from "../api";
 
 /**
  * The version an offered update would carry.
@@ -171,6 +171,14 @@ const items: MockItem[] = [
 ];
 
 let unlocked = false;
+let selectedVaultId: string | null = "default";
+let mockVaults: Omit<VaultProfile, "selected">[] = [
+  {
+    id: "default",
+    name: "Personal",
+    rememberedUntil: null,
+  },
+];
 
 /**
  * The dev vault's master password.
@@ -471,12 +479,49 @@ const handlers: Record<string, (args: Record<string, unknown>) => unknown> = {
   vault_exists: () => !new URLSearchParams(window.location.search).has("setup"),
 
   vault_startup: (): Startup => {
+    if (unlocked) return "unlocked";
     if (mockRecovered) return "locked";
     // `?recover` is the only way this screen will ever be looked at. Reaching
     // it for real needs a vault file to have vanished between two renames,
     // which is not a state anybody can arrange on purpose.
     if (new URLSearchParams(window.location.search).has("recover")) return "recover";
-    return new URLSearchParams(window.location.search).has("setup") ? "setup" : "locked";
+    if (new URLSearchParams(window.location.search).has("setup")) return "setup";
+    return selectedVaultId === null ? "select" : "locked";
+  },
+
+  list_vaults: () =>
+    new URLSearchParams(window.location.search).has("setup")
+      ? []
+      : mockVaults.map((vault) => ({
+          ...vault,
+          selected: vault.id === selectedVaultId,
+        })),
+
+  select_vault: (args) => {
+    const id = String(args.id ?? "");
+    if (!mockVaults.some((vault) => vault.id === id)) {
+      throw new Error("that vault is not on this device");
+    }
+    selectedVaultId = id;
+  },
+
+  choose_another_vault: () => {
+    unlocked = false;
+    selectedVaultId = null;
+  },
+
+  remove_vault: (args) => {
+    const id = String(args.id ?? "");
+    const vault = mockVaults.find((candidate) => candidate.id === id);
+    if (!vault) {
+      throw new Error("that vault is not on this device");
+    }
+    if (String(args.confirmation ?? "") !== vault.name) {
+      throw new Error("type the Vault name exactly to confirm removal");
+    }
+    unlocked = false;
+    mockVaults = mockVaults.filter((vault) => vault.id !== id);
+    if (selectedVaultId === id) selectedVaultId = null;
   },
 
   recover_vault: () => {
@@ -491,14 +536,42 @@ const handlers: Record<string, (args: Record<string, unknown>) => unknown> = {
   is_unlocked: () => unlocked,
   create_vault: (args) => {
     mockMasterPassword = String(args.password ?? "");
+    const name = String(args.name ?? "Personal");
+    const id = mockVaults.length === 0 ? "default" : `mock-${mockVaults.length + 1}`;
+    mockVaults = [
+      ...mockVaults,
+      {
+        id,
+        name,
+        rememberedUntil: args.remember ? Math.floor(Date.now() / 1000) + 1_209_600 : null,
+      },
+    ];
+    selectedVaultId = id;
     unlocked = true;
   },
   unlock_vault: (args) => {
     mockMasterPassword = String(args.password ?? "");
+    mockVaults = mockVaults.map((vault) =>
+      vault.id === selectedVaultId
+        ? {
+            ...vault,
+            rememberedUntil: args.remember
+              ? Math.floor(Date.now() / 1000) + 1_209_600
+              : null,
+          }
+        : vault,
+    );
     unlocked = true;
   },
   lock_vault: () => {
     unlocked = false;
+  },
+  logout_vault: () => {
+    unlocked = false;
+    mockVaults = mockVaults.map((vault) =>
+      vault.id === selectedVaultId ? { ...vault, rememberedUntil: null } : vault,
+    );
+    selectedVaultId = null;
   },
 
   list_items: (args) => {

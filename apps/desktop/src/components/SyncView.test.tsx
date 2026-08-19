@@ -40,7 +40,7 @@ describe("changing the master password", () => {
     installDevMock();
     // The mock adopts whatever password opens it, so each test starts from a
     // known one rather than from whatever the test before it left behind.
-    await unlockVault(PASSWORD);
+    await unlockVault(PASSWORD, false);
   });
 
   it("refuses a mismatch without asking the vault to re-key anything", async () => {

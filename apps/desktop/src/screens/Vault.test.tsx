@@ -19,7 +19,14 @@ describe("Vault item list", () => {
   });
 
   it("moves the selection an assistive technology can see with ArrowDown", async () => {
-    render(<Vault onLock={vi.fn()} />);
+    render(
+      <Vault
+        vaultName="Personal"
+        onLock={vi.fn()}
+        onLogout={vi.fn()}
+        onCreateVault={vi.fn()}
+      />,
+    );
 
     await screen.findAllByRole("option");
     const options = screen.getAllByRole("option");

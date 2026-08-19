@@ -8,6 +8,7 @@ import {
   folders as listFolders,
   listItems,
   lockVault,
+  logoutVault,
   recentItems,
   renameFolder,
   reorderFolders,
@@ -40,7 +41,10 @@ import { isItemList, viewSubtitle, viewTitle, type View } from "../views";
 const FALLBACK_AUTO_LOCK = 15 * 60;
 
 interface VaultProps {
+  vaultName: string;
   onLock: () => void;
+  onLogout: () => void;
+  onCreateVault: () => void;
 }
 
 interface ContextMenuState {
@@ -60,7 +64,12 @@ interface ContextMenuState {
  * Screens that are not lists of items — Agent access, Sync — take the list and
  * detail area together rather than pretending to be a selection.
  */
-export function Vault({ onLock }: VaultProps): JSX.Element {
+export function Vault({
+  vaultName,
+  onLock,
+  onLogout,
+  onCreateVault,
+}: VaultProps): JSX.Element {
   const [view, setView] = useState<View>({ kind: "all" });
   const [items, setItems] = useState<ItemSummary[]>([]);
   const [palette, setPalette] = useState(false);
@@ -94,6 +103,14 @@ export function Vault({ onLock }: VaultProps): JSX.Element {
     void lockVault();
     onLock();
   }, [onLock]);
+
+  const logout = useCallback(() => {
+    void logoutVault().finally(onLogout);
+  }, [onLogout]);
+
+  const createAnotherVault = useCallback(() => {
+    void lockVault().finally(onCreateVault);
+  }, [onCreateVault]);
 
   // Stable, because the approval dialog rebinds its Escape-denies listener
   // whenever this changes and this screen re-renders once a second while the
@@ -452,6 +469,7 @@ export function Vault({ onLock }: VaultProps): JSX.Element {
       data-detail-open={compactDetailOpen || undefined}
     >
       <Sidebar
+        vaultName={vaultName}
         view={view}
         lockRemainingMs={lockRemaining}
         autoLockSeconds={autoLock}
@@ -468,6 +486,8 @@ export function Vault({ onLock }: VaultProps): JSX.Element {
           setCompactDetailOpen(false);
         }}
         onLock={lock}
+        onLogout={logout}
+        onCreateVault={createAnotherVault}
         folders={folderNames}
         onCreateFolder={(name) => {
           void createFolder(name)
