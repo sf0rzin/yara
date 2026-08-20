@@ -1113,6 +1113,7 @@ body {
 }
 
 .vault-new-button,
+.vault-import-button,
 .auth-view__actions .button {
   gap: 7px;
   min-width: 0;
@@ -1124,15 +1125,17 @@ body {
 
 /* The slot the list's search field used to occupy. */
 .list-column__action {
+  display: flex;
+  gap: var(--space-2);
   padding: 14px 14px 11px;
 }
 
-/*
- * Full width, because this is the only action in the slot and a button that
- * stops short of the column edge reads as floating in it.
- */
 .list-column__action .vault-new-button {
-  width: 100%;
+  flex: 1;
+  justify-content: center;
+}
+
+.list-column__action .vault-import-button {
   justify-content: center;
 }
 
@@ -1995,6 +1998,10 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
+}
+
+.dialog--import {
+  max-width: 620px;
 }
 
 .dialog__title {
@@ -3154,7 +3161,7 @@ body {
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
-  max-width: 560px;
+  max-width: none;
   margin-bottom: var(--space-6);
   padding-bottom: var(--space-6);
   border-bottom: 1px solid var(--border-faint);
@@ -3164,6 +3171,11 @@ body {
   display: flex;
   flex-direction: column;
   gap: var(--space-1);
+  max-height: 180px;
+  padding-right: var(--space-1);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
 }
 
 .import__list li {
@@ -3182,9 +3194,42 @@ body {
 
 .import__reason {
   flex-shrink: 0;
+  max-width: 55%;
   color: var(--text-muted);
   font-size: var(--text-xs);
   text-align: right;
+  overflow-wrap: anywhere;
+}
+
+.import__list--editable {
+  gap: 0;
+  max-height: 320px;
+}
+
+.import__list .import__edit-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
+  align-items: end;
+  gap: var(--space-2);
+  padding: var(--space-2) 0;
+}
+
+.import__edit-field {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.import__edit-label {
+  color: var(--text-muted);
+  font-size: var(--text-label);
+}
+
+.import__edit-input {
+  height: 32px;
+  padding: 0 var(--space-2);
+  font-size: var(--text-sm);
 }
 
 /* --------------------------------------------------------- subscriptions */

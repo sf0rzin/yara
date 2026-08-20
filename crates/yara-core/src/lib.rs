@@ -36,7 +36,9 @@ pub use crypto::{KdfParams, Key, Sealed};
 pub use error::{Error, Result};
 pub use generate::Recipe;
 pub use health::Strength;
-pub use import::{from_proton_authenticator, Import, Imported, Skipped};
+pub use import::{
+    from_proton_authenticator, from_proton_pass, Import, Imported, ItemImport, Skipped,
+};
 pub use qr::decode_enrollment;
 pub use secret::SecretString;
 pub use totp::{TotpAlgorithm, TotpConfig};

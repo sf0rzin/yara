@@ -24,12 +24,14 @@ base64.workspace = true
 reqwest = { version = "0.13", default-features = false, features = ["rustls", "charset", "http2"] }
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
 tauri = { version = "2", features = [] }
 tauri-plugin-clipboard-manager = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-opener = "2"
 tokio.workspace = true
 uuid.workspace = true
+zeroize.workspace = true
 
 # Neither of these has a mobile implementation, so they are scoped to the
 # targets that can actually run them rather than made plain dependencies.

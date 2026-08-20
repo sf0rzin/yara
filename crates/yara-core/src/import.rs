@@ -1,23 +1,25 @@
-//! Reading two-factor codes out of another authenticator's export.
+//! Reading credentials and two-factor codes out of other applications.
 //!
 //! Pure, like the rest of this crate: it takes the text of an export and
 //! returns what was in it. Nothing here opens a file, and nothing decides what
 //! to do with the result.
 //!
-//! The exports these read are plaintext seeds. That is not a flaw in the
-//! export — it is the only way to move a TOTP seed between programs at all —
-//! but it does mean the file is as sensitive as the accounts behind it, and it
-//! outlives the import unless someone deletes it. The interface says so.
+//! These exports carry plaintext secrets. That is unavoidable when moving
+//! passwords, card details or TOTP seeds between programs, but it does mean
+//! the file is as sensitive as the accounts behind it and outlives the import
+//! unless someone deletes it. The interface says so.
 //!
 //! Nothing is imported silently. Every entry that cannot be read comes back in
 //! `skipped` with a reason, because an import that quietly drops three of
 //! twenty-three codes is worse than one that fails outright: the user finds
 //! out months later, locked out, with the original export long gone.
 
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
+use zeroize::Zeroize;
 
 use crate::error::{Error, Result};
 use crate::totp::TotpConfig;
+use crate::{Field, Item, ItemKind, SecretString};
 
 /// One code that was read successfully.
 #[derive(Debug, Clone)]
@@ -49,6 +51,332 @@ impl Import {
     pub fn total(&self) -> usize {
         self.entries.len() + self.skipped.len()
     }
+}
+
+/// Credential items read from a password-manager export.
+///
+/// Passwords, card numbers and other secret fields stay wrapped in
+/// [`SecretString`]. Their `Debug` output is redacted and callers never need to
+/// expose them merely to preview names or detect an exact re-import.
+#[derive(Debug, Default)]
+pub struct ItemImport {
+    pub entries: Vec<Item>,
+    pub skipped: Vec<Skipped>,
+    /// Recoverable losses, such as a malformed TOTP URI on an otherwise valid
+    /// login. The item is still in `entries`; this list tells the user which
+    /// part needs attention rather than silently dropping the whole login.
+    pub warnings: Vec<Skipped>,
+}
+
+impl ItemImport {
+    pub fn total(&self) -> usize {
+        self.entries.len() + self.skipped.len()
+    }
+}
+
+// ---- Proton Pass ------------------------------------------------------
+
+/// The columns Proton Pass writes today.
+///
+/// Every field is defaulted so an older export missing a newer optional
+/// column can still preserve the columns it does have. The header check below
+/// is what distinguishes this from an arbitrary CSV file.
+#[derive(Deserialize, Zeroize)]
+#[serde(rename_all = "camelCase")]
+struct ProtonPassRow {
+    #[serde(rename = "type", default)]
+    item_type: String,
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    url: String,
+    #[serde(default)]
+    autofill_urls: String,
+    #[serde(default)]
+    email: String,
+    #[serde(default)]
+    username: String,
+    #[serde(default)]
+    password: String,
+    #[serde(default)]
+    note: String,
+    #[serde(default)]
+    totp: String,
+    #[serde(default)]
+    create_time: String,
+    #[serde(default)]
+    modify_time: String,
+    #[serde(default)]
+    vault: String,
+}
+
+/// Card data is JSON inside the CSV's `note` cell. Keeping this model local to
+/// the importer avoids making Proton's export representation part of Yara's
+/// own vault format.
+#[derive(Deserialize, Zeroize)]
+#[serde(rename_all = "camelCase")]
+struct ProtonCard {
+    #[serde(default)]
+    cardholder_name: String,
+    #[serde(default, deserialize_with = "string_or_number")]
+    card_type: String,
+    #[serde(default)]
+    number: String,
+    #[serde(default)]
+    verification_number: String,
+    #[serde(default)]
+    expiration_date: String,
+    #[serde(default)]
+    pin: String,
+    #[serde(default)]
+    note: String,
+}
+
+/// Reads a Proton Pass CSV export.
+///
+/// CSV quoting is delegated to the `csv` crate so commas, quotes and newlines
+/// inside passwords or notes survive exactly. Values are never logged and a
+/// malformed row is reported by its position without printing its contents.
+pub fn from_proton_pass(text: &str) -> Result<ItemImport> {
+    let text = text.trim_start_matches('\u{feff}');
+    let mut reader = csv::ReaderBuilder::new()
+        .flexible(true)
+        .from_reader(text.as_bytes());
+
+    let headers = reader
+        .headers()
+        .map_err(|_| Error::Malformed("not a Proton Pass CSV export"))?;
+    const REQUIRED: &[&str] = &["type", "name", "url", "username", "password", "note"];
+    if REQUIRED
+        .iter()
+        .any(|required| !headers.iter().any(|header| header == *required))
+    {
+        return Err(Error::Malformed("not a Proton Pass CSV export"));
+    }
+
+    let mut import = ItemImport::default();
+    for (position, record) in reader.deserialize::<ProtonPassRow>().enumerate() {
+        let mut row = match record {
+            Ok(row) => row,
+            Err(_) => {
+                import.skipped.push(Skipped {
+                    // Header is line one, so the first record is line two.
+                    name: format!("CSV row {}", position + 2),
+                    reason: "that CSV row could not be read".to_string(),
+                });
+                continue;
+            }
+        };
+
+        let result = proton_pass_item(&row, &mut import.warnings);
+        row.zeroize();
+        match result {
+            Ok(item) => import.entries.push(item),
+            Err(problem) => import.skipped.push(problem),
+        }
+    }
+
+    Ok(import)
+}
+
+fn proton_pass_item(
+    row: &ProtonPassRow,
+    warnings: &mut Vec<Skipped>,
+) -> std::result::Result<Item, Skipped> {
+    let name = row.name.trim().to_string();
+    if name.is_empty() {
+        return Err(Skipped {
+            name: "Unnamed item".to_string(),
+            reason: "the item has no name".to_string(),
+        });
+    }
+
+    let mut item = Item::new(name.clone());
+    item.folder = plain(&row.vault);
+
+    let kind = row.item_type.trim().to_ascii_lowercase();
+    match kind.as_str() {
+        "login" | "alias" => {
+            item.kind = ItemKind::Login;
+            apply_common_fields(&mut item, row, warnings);
+        }
+        "custom" => {
+            item.kind = ItemKind::Note;
+            apply_common_fields(&mut item, row, warnings);
+        }
+        "creditcard" => {
+            item.kind = ItemKind::Card;
+            apply_card_fields(&mut item, row, warnings);
+        }
+        _ => {
+            return Err(Skipped {
+                name,
+                reason: if kind.is_empty() {
+                    "the item type is missing".to_string()
+                } else {
+                    "this item type is not supported yet".to_string()
+                },
+            });
+        }
+    }
+
+    apply_timestamps(&mut item, row, warnings);
+    Ok(item)
+}
+
+fn apply_common_fields(item: &mut Item, row: &ProtonPassRow, warnings: &mut Vec<Skipped>) {
+    let email = plain(&row.email);
+    let username = plain(&row.username);
+    item.username = username.clone().or_else(|| email.clone());
+    if let (Some(email), Some(username)) = (email, username) {
+        if email != username {
+            item.fields.push(Field::new("Email", email));
+        }
+    }
+
+    item.password = secret(&row.password);
+    item.url = plain(&row.url);
+    item.notes = secret(&row.note);
+
+    let mut seen_urls = std::collections::HashSet::new();
+    for value in row.autofill_urls.split(',').filter_map(plain) {
+        if item.url.as_deref() == Some(value.as_str()) || !seen_urls.insert(value.clone()) {
+            continue;
+        }
+        let number = seen_urls.len();
+        let label = if number == 1 {
+            "Additional URL".to_string()
+        } else {
+            format!("Additional URL {number}")
+        };
+        item.fields.push(Field::new(label, value));
+    }
+
+    apply_totp(item, row, warnings);
+}
+
+fn apply_card_fields(item: &mut Item, row: &ProtonPassRow, warnings: &mut Vec<Skipped>) {
+    // These columns are normally empty for cards, but preserving them costs
+    // nothing and makes the importer tolerant of older Proton exports.
+    item.url = plain(&row.url);
+    item.password = secret(&row.password);
+
+    if row.note.trim().is_empty() {
+        apply_totp(item, row, warnings);
+        return;
+    }
+
+    match serde_json::from_str::<ProtonCard>(&row.note) {
+        Ok(mut card) => {
+            push_plain_field(item, "Cardholder", &card.cardholder_name);
+            push_plain_field(item, "Card type", &card.card_type);
+            push_secret_field(item, "Card number", &card.number);
+            push_secret_field(item, "Security code", &card.verification_number);
+            push_plain_field(item, "Expiration", &card.expiration_date);
+            push_secret_field(item, "PIN", &card.pin);
+            item.notes = secret(&card.note);
+            card.zeroize();
+        }
+        Err(_) => {
+            // Raw is better than lost. It remains encrypted as notes and the
+            // preview says why it was not split into individual card fields.
+            item.notes = secret(&row.note);
+            warnings.push(Skipped {
+                name: item.name.clone(),
+                reason: "card details were kept in notes because their structure could not be read"
+                    .to_string(),
+            });
+        }
+    }
+
+    apply_totp(item, row, warnings);
+}
+
+fn apply_totp(item: &mut Item, row: &ProtonPassRow, warnings: &mut Vec<Skipped>) {
+    let Some(uri) = plain(&row.totp) else {
+        return;
+    };
+    match TotpConfig::from_uri(&uri) {
+        Ok(totp) => item.totp = Some(totp),
+        Err(_) => warnings.push(Skipped {
+            name: item.name.clone(),
+            reason: "the login will be imported, but its two-factor code could not be read"
+                .to_string(),
+        }),
+    }
+}
+
+fn apply_timestamps(item: &mut Item, row: &ProtonPassRow, warnings: &mut Vec<Skipped>) {
+    if let Some(created) = timestamp(&row.create_time) {
+        item.created_at = created;
+    } else if !row.create_time.trim().is_empty() {
+        warnings.push(Skipped {
+            name: item.name.clone(),
+            reason: "the original creation time could not be read".to_string(),
+        });
+    }
+
+    if let Some(updated) = timestamp(&row.modify_time) {
+        item.updated_at = updated;
+    } else if !row.modify_time.trim().is_empty() {
+        warnings.push(Skipped {
+            name: item.name.clone(),
+            reason: "the original modification time could not be read".to_string(),
+        });
+    }
+}
+
+fn timestamp(value: &str) -> Option<u64> {
+    value.trim().parse().ok().filter(|value| *value > 0)
+}
+
+fn plain(value: impl AsRef<str>) -> Option<String> {
+    let value = value.as_ref().trim();
+    (!value.is_empty()).then(|| value.to_string())
+}
+
+/// Password whitespace is data. Unlike names and URLs it must never be
+/// trimmed, so a password beginning or ending with a space still works after
+/// the move.
+fn secret(value: &str) -> Option<SecretString> {
+    (!value.is_empty()).then(|| SecretString::new(value))
+}
+
+fn push_plain_field(item: &mut Item, label: &str, value: impl AsRef<str>) {
+    if let Some(value) = plain(value) {
+        item.fields.push(Field::new(label, value));
+    }
+}
+
+fn push_secret_field(item: &mut Item, label: &str, value: impl AsRef<str>) {
+    let value = value.as_ref();
+    if !value.is_empty() {
+        item.fields.push(Field::new(label, value).secret());
+    }
+}
+
+/// Proton has emitted `cardType` as both a label and a numeric enum.
+fn string_or_number<'de, D>(deserializer: D) -> std::result::Result<String, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Scalar {
+        Text(String),
+        Signed(i64),
+        Unsigned(u64),
+        Float(f64),
+        Bool(bool),
+    }
+
+    Ok(match Scalar::deserialize(deserializer)? {
+        Scalar::Text(value) => value,
+        Scalar::Signed(value) => value.to_string(),
+        Scalar::Unsigned(value) => value.to_string(),
+        Scalar::Float(value) => value.to_string(),
+        Scalar::Bool(value) => value.to_string(),
+    })
 }
 
 // ---- Proton Authenticator ----------------------------------------------
@@ -209,6 +537,30 @@ mod tests {
         format!(
             r#"{{"id":"a","content":{{"uri":"{uri}","entry_type":"{kind}","name":"{name}"}},"note":null}}"#
         )
+    }
+
+    fn pass_export(rows: &[Vec<&str>]) -> String {
+        let mut writer = csv::Writer::from_writer(Vec::new());
+        writer
+            .write_record([
+                "type",
+                "name",
+                "url",
+                "autofillUrls",
+                "email",
+                "username",
+                "password",
+                "note",
+                "totp",
+                "createTime",
+                "modifyTime",
+                "vault",
+            ])
+            .unwrap();
+        for row in rows {
+            writer.write_record(row).unwrap();
+        }
+        String::from_utf8(writer.into_inner().unwrap()).unwrap()
     }
 
     #[test]
@@ -385,5 +737,233 @@ mod tests {
     fn an_empty_backup_is_valid_and_empty() {
         let import = from_proton_authenticator(&backup("")).unwrap();
         assert_eq!(import.total(), 0);
+    }
+
+    #[test]
+    fn a_proton_pass_login_preserves_every_credential_field() {
+        let uri = format!("otpauth://totp/GitHub:me?secret={SEED}&issuer=GitHub");
+        let text = pass_export(&[vec![
+            "login",
+            "GitHub",
+            "https://github.com",
+            "https://github.com,https://api.github.com",
+            "me@example.com",
+            "",
+            " pass,word ",
+            "first line\nsecond line",
+            &uri,
+            "1700000000",
+            "1700000100",
+            "Personal",
+        ]]);
+
+        let import = from_proton_pass(&text).unwrap();
+        assert_eq!(import.total(), 1);
+        assert!(import.skipped.is_empty());
+        assert!(import.warnings.is_empty());
+
+        let item = &import.entries[0];
+        assert_eq!(item.name, "GitHub");
+        assert_eq!(item.kind, ItemKind::Login);
+        assert_eq!(item.username.as_deref(), Some("me@example.com"));
+        assert_eq!(item.password.as_ref().unwrap().expose(), " pass,word ");
+        assert_eq!(item.url.as_deref(), Some("https://github.com"));
+        assert_eq!(
+            item.notes.as_ref().unwrap().expose(),
+            "first line\nsecond line"
+        );
+        assert!(item.totp.is_some());
+        assert_eq!(item.folder.as_deref(), Some("Personal"));
+        assert_eq!(item.created_at, 1_700_000_000);
+        assert_eq!(item.updated_at, 1_700_000_100);
+        assert_eq!(item.fields.len(), 1);
+        assert_eq!(item.fields[0].label, "Additional URL");
+        assert_eq!(item.fields[0].value.expose(), "https://api.github.com");
+        assert!(!item.fields[0].secret);
+    }
+
+    #[test]
+    fn a_proton_card_becomes_a_card_with_masked_fields() {
+        let card = serde_json::json!({
+            "cardholderName": "Jane Example",
+            "cardType": 1,
+            "number": "4111111111111111",
+            "verificationNumber": "123",
+            "expirationDate": "12/30",
+            "pin": "9876",
+            "note": "synthetic test card"
+        })
+        .to_string();
+        let text = pass_export(&[vec![
+            "creditCard",
+            "Test Visa",
+            "",
+            "",
+            "",
+            "",
+            "",
+            &card,
+            "",
+            "1700000000",
+            "1700000100",
+            "Cards",
+        ]]);
+
+        let import = from_proton_pass(&text).unwrap();
+        let item = &import.entries[0];
+        assert_eq!(item.kind, ItemKind::Card);
+        assert_eq!(item.notes.as_ref().unwrap().expose(), "synthetic test card");
+
+        let number = item
+            .fields
+            .iter()
+            .find(|field| field.label == "Card number")
+            .unwrap();
+        assert!(number.secret);
+        assert_eq!(number.value.expose(), "4111111111111111");
+
+        let expiry = item
+            .fields
+            .iter()
+            .find(|field| field.label == "Expiration")
+            .unwrap();
+        assert!(!expiry.secret);
+        assert_eq!(expiry.value.expose(), "12/30");
+
+        let card_type = item
+            .fields
+            .iter()
+            .find(|field| field.label == "Card type")
+            .unwrap();
+        assert!(!card_type.secret);
+        assert_eq!(card_type.value.expose(), "1");
+    }
+
+    #[test]
+    fn aliases_and_custom_items_are_kept() {
+        let text = pass_export(&[
+            vec![
+                "alias",
+                "Shopping alias",
+                "",
+                "",
+                "alias@example.test",
+                "",
+                "",
+                "for newsletters",
+                "",
+                "1700000000",
+                "1700000000",
+                "Aliases",
+            ],
+            vec![
+                "custom",
+                "A custom record",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "kept as a secure note",
+                "",
+                "1700000000",
+                "1700000000",
+                "Archive",
+            ],
+        ]);
+
+        let import = from_proton_pass(&text).unwrap();
+        assert_eq!(import.entries.len(), 2);
+        assert_eq!(import.entries[0].kind, ItemKind::Login);
+        assert_eq!(
+            import.entries[0].username.as_deref(),
+            Some("alias@example.test")
+        );
+        assert_eq!(import.entries[1].kind, ItemKind::Note);
+        assert_eq!(
+            import.entries[1].notes.as_ref().unwrap().expose(),
+            "kept as a secure note"
+        );
+    }
+
+    #[test]
+    fn one_bad_pass_row_does_not_hide_the_good_parts_of_another() {
+        let text = pass_export(&[
+            vec![
+                "login",
+                "Good login",
+                "https://example.test",
+                "",
+                "me@example.test",
+                "",
+                "hunter2",
+                "",
+                "not an otpauth URI",
+                "1700000000",
+                "1700000000",
+                "Personal",
+            ],
+            vec![
+                "identity",
+                "Unsupported identity",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "1700000000",
+                "1700000000",
+                "Personal",
+            ],
+            vec![
+                "login",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "1700000000",
+                "1700000000",
+                "Personal",
+            ],
+        ]);
+
+        let import = from_proton_pass(&text).unwrap();
+        assert_eq!(import.entries.len(), 1);
+        assert_eq!(import.skipped.len(), 2);
+        assert_eq!(import.warnings.len(), 1);
+        assert!(import.entries[0].totp.is_none());
+        assert!(import.entries[0].password.is_some());
+        assert_eq!(import.total(), 3);
+    }
+
+    #[test]
+    fn an_arbitrary_csv_is_not_mistaken_for_proton_pass() {
+        assert!(from_proton_pass("name,password\nGitHub,hunter2\n").is_err());
+    }
+
+    #[test]
+    fn a_pass_export_may_start_with_a_byte_order_mark() {
+        let text = pass_export(&[vec![
+            "custom",
+            "Record",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "1700000000",
+            "1700000000",
+            "Personal",
+        ]]);
+        let import = from_proton_pass(&format!("\u{feff}{text}")).unwrap();
+        assert_eq!(import.entries.len(), 1);
     }
 }
