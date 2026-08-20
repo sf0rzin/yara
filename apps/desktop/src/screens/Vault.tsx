@@ -541,10 +541,9 @@ export function Vault({
             </header>
 
             {/*
-              The slot the search field used to hold. A button that fills the
-              top of the list reads as belonging to it, which the old one — a
-              hundred pixels short of the far edge, floating over the detail
-              pane — never did.
+              The slot the search field used to hold. Creation stays primary;
+              import sits beside it because moving an existing vault is an
+              item-list action, not an Authenticator-only setting.
             */}
             <div className="list-column__action">
               <button
@@ -554,6 +553,14 @@ export function Vault({
               >
                 <Icon name="plus" size={14} />
                 <span>New item</span>
+              </button>
+              <button
+                type="button"
+                className="button button--outline vault-import-button"
+                onClick={() => setImporting(true)}
+              >
+                <Icon name="download" size={14} />
+                <span>Import</span>
               </button>
             </div>
 

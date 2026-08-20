@@ -918,17 +918,28 @@ const handlers: Record<string, (args: Record<string, unknown>) => unknown> = {
   // were added to fix, on the one screen whose entire job is to show you what
   // is about to happen before it happens.
   preview_import: () => ({
-    ready: importFixture.entries.filter((name) => !alreadyImported(name)),
+    source: "protonAuthenticator",
+    fileToken: "browser-fixture-v1",
+    ready: importFixture.entries
+      .map((name, index) => ({ index, name, folder: null }))
+      .filter((candidate) => !alreadyImported(candidate.name)),
     duplicates: importFixture.entries.filter(alreadyImported),
     skipped: importFixture.skipped.map((problem) => ({ ...problem })),
+    warnings: [],
   }),
 
-  run_import: () => {
-    const ready = importFixture.entries.filter((name) => !alreadyImported(name));
-    for (const name of ready) {
+  run_import: (args) => {
+    const edits = Array.isArray(args.edits)
+      ? args.edits as Array<{ index: number; name: string; folder: string | null }>
+      : [];
+    const ready = importFixture.entries
+      .map((name, index) => ({ index, name }))
+      .filter((candidate) => !alreadyImported(candidate.name));
+    for (const candidate of ready) {
+      const edit = edits.find((value) => value.index === candidate.index);
       items.push({
         id: String(items.length + 1),
-        name,
+        name: edit?.name.trim() || candidate.name,
         kind: "login",
         // What an authenticator export leaves behind: a code and nothing to log
         // in to. Same shape as Banco Inter above.
@@ -936,7 +947,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => unknown> = {
         password: null,
         url: null,
         notes: null,
-        folder: null,
+        folder: edit?.folder?.trim() || null,
         totpSeed: 60 + items.length,
         fields: [],
         tags: [],

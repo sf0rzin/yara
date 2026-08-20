@@ -1237,14 +1237,42 @@ fn set_auto_lock_seconds(
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ImportPreview {
-    /// Names only. No seed crosses the IPC boundary at any point: the codes
-    /// are parsed, held in the backend, and written straight into the vault.
-    pub ready: Vec<String>,
-    /// Already in the vault, matched by seed. Importing twice should not leave
-    /// two items generating the same code — the authenticator screen becomes
-    /// a guessing game about which one is real.
+    /// Which parser recognised the file, so the interface can describe the
+    /// plaintext it is asking the user to clean up afterwards.
+    pub source: ImportSource,
+    /// Commits the confirmation to the exact bytes that were reviewed. The
+    /// export is read again at confirmation time, but a replacement file at
+    /// the same path is refused rather than importing unseen contents.
+    pub file_token: String,
+    /// Editable, non-secret metadata only. No password, card number, note or
+    /// seed crosses the IPC boundary: everything sensitive stays in the
+    /// backend and goes straight into the encrypted vault.
+    pub ready: Vec<ImportCandidate>,
+    /// Already in the vault. Authenticator entries are matched by seed;
+    /// password-manager items by their credential-bearing fields.
     pub duplicates: Vec<String>,
     pub skipped: Vec<ImportProblem>,
+    /// Items that can be imported but have one recoverable part the user needs
+    /// to inspect, such as a malformed TOTP URI.
+    pub warnings: Vec<ImportProblem>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportCandidate {
+    /// Position among the successfully parsed entries. It remains stable when
+    /// malformed rows before it are skipped and lets equal names be edited
+    /// independently.
+    pub index: usize,
+    pub name: String,
+    pub folder: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ImportSource {
+    ProtonAuthenticator,
+    ProtonPass,
 }
 
 #[derive(Debug, Serialize)]
@@ -1254,59 +1282,148 @@ pub struct ImportProblem {
     pub reason: String,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportEdit {
+    pub index: usize,
+    pub name: String,
+    pub folder: Option<String>,
+}
+
 /// Reads an export and reports what it holds, importing nothing.
 ///
-/// Separate from the write on purpose. The file is plaintext seeds, and a
-/// user is entitled to see what is about to enter their vault — and what will
-/// be skipped — before it happens rather than after.
+/// Separate from the write on purpose. The file contains plaintext secrets,
+/// and a user is entitled to see what is about to enter their vault — and what
+/// will be skipped — before it happens rather than after.
 #[tauri::command]
 fn preview_import(state: State<'_, Arc<AppState>>, path: String) -> CommandResult<ImportPreview> {
-    let (import, existing) = read_import(&state, &path)?;
+    let read = read_import(&path)?;
+    match read.file {
+        ImportFile::Authenticator(import) => {
+            let mut existing = state.with_vault(|vault| {
+                Ok(vault
+                    .items()
+                    .iter()
+                    .filter_map(|item| item.totp.as_ref())
+                    .map(|totp| totp.secret.expose().to_string())
+                    .collect::<std::collections::HashSet<_>>())
+            })?;
+            let mut preview = ImportPreview {
+                source: ImportSource::ProtonAuthenticator,
+                file_token: read.file_token,
+                ready: Vec::new(),
+                duplicates: Vec::new(),
+                skipped: problems(&import.skipped),
+                warnings: Vec::new(),
+            };
 
-    let mut preview = ImportPreview {
-        ready: Vec::new(),
-        duplicates: Vec::new(),
-        skipped: import
-            .skipped
-            .iter()
-            .map(|skip| ImportProblem {
-                name: skip.name.clone(),
-                reason: skip.reason.clone(),
-            })
-            .collect(),
-    };
+            for (index, entry) in import.entries.iter().enumerate() {
+                if existing.insert(entry.totp.secret.expose().to_string()) {
+                    preview.ready.push(ImportCandidate {
+                        index,
+                        name: entry.name.clone(),
+                        folder: None,
+                    });
+                } else {
+                    preview.duplicates.push(entry.name.clone());
+                }
+            }
+            Ok(preview)
+        }
+        ImportFile::ProtonPass(import) => {
+            // Clones keep the read lock short. SecretString's Debug output is
+            // redacted and its equality is constant-time, so neither preview
+            // nor duplicate detection discloses what it compares.
+            let mut existing = state.with_vault(|vault| Ok(vault.items().to_vec()))?;
+            let mut preview = ImportPreview {
+                source: ImportSource::ProtonPass,
+                file_token: read.file_token,
+                ready: Vec::new(),
+                duplicates: Vec::new(),
+                skipped: problems(&import.skipped),
+                warnings: problems(&import.warnings),
+            };
 
-    for entry in &import.entries {
-        if existing.contains(entry.totp.secret.expose()) {
-            preview.duplicates.push(entry.name.clone());
-        } else {
-            preview.ready.push(entry.name.clone());
+            for (index, item) in import.entries.iter().enumerate() {
+                if existing.iter().any(|held| same_import_item(held, item)) {
+                    preview.duplicates.push(item.name.clone());
+                } else {
+                    preview.ready.push(ImportCandidate {
+                        index,
+                        name: item.name.clone(),
+                        folder: item.folder.clone(),
+                    });
+                    // Also catches a duplicate repeated inside the CSV itself.
+                    existing.push(item.clone());
+                }
+            }
+            Ok(preview)
         }
     }
-
-    Ok(preview)
 }
 
 /// Writes everything the preview called ready.
 #[tauri::command]
-fn run_import(state: State<'_, Arc<AppState>>, path: String) -> CommandResult<usize> {
-    let (import, existing) = read_import(&state, &path)?;
-
-    let mut added = 0;
-    for entry in import.entries {
-        if existing.contains(entry.totp.secret.expose()) {
-            continue;
-        }
-
-        let mut item = Item::new(entry.name);
-        item.kind = ItemKind::Login;
-        item.username = entry.totp.account.clone();
-        item.notes = entry.note.map(Into::into);
-        item.totp = Some(entry.totp);
-
-        state.with_vault_mut(|vault| Ok(vault.add(item)))?;
-        added += 1;
+fn run_import(
+    state: State<'_, Arc<AppState>>,
+    path: String,
+    expected_file_token: String,
+    edits: Vec<ImportEdit>,
+) -> CommandResult<usize> {
+    let edits = checked_import_edits(edits)?;
+    let read = read_import(&path)?;
+    if read.file_token != expected_file_token {
+        return Err(
+            "that export changed after the preview; choose it again to review the current contents"
+                .into(),
+        );
     }
+
+    let added = match read.file {
+        ImportFile::Authenticator(import) => state.with_vault_mut(|vault| {
+            let mut existing = vault
+                .items()
+                .iter()
+                .filter_map(|item| item.totp.as_ref())
+                .map(|totp| totp.secret.expose().to_string())
+                .collect::<std::collections::HashSet<_>>();
+            let mut added = 0;
+
+            for (index, entry) in import.entries.into_iter().enumerate() {
+                if !existing.insert(entry.totp.secret.expose().to_string()) {
+                    continue;
+                }
+                let mut item = Item::new(entry.name);
+                item.kind = ItemKind::Login;
+                item.username = entry.totp.account.clone();
+                item.notes = entry.note.map(Into::into);
+                item.totp = Some(entry.totp);
+                apply_import_edit(&mut item, index, &edits);
+                vault.add(item);
+                added += 1;
+            }
+            Ok(added)
+        })?,
+        ImportFile::ProtonPass(import) => state.with_vault_mut(|vault| {
+            let mut added = 0;
+            for (index, mut item) in import.entries.into_iter().enumerate() {
+                apply_import_edit(&mut item, index, &edits);
+                if vault
+                    .items()
+                    .iter()
+                    .any(|held| same_import_item(held, &item))
+                {
+                    continue;
+                }
+                if let Some(folder) = item.folder.clone() {
+                    vault.create_folder(folder);
+                }
+                vault.add(item);
+                added += 1;
+            }
+            Ok(added)
+        })?,
+    };
 
     if added > 0 {
         state.save()?;
@@ -1314,25 +1431,118 @@ fn run_import(state: State<'_, Arc<AppState>>, path: String) -> CommandResult<us
     Ok(added)
 }
 
-/// Parses the file and collects the seeds already held, so both commands agree
-/// on what counts as a duplicate.
-fn read_import(
-    state: &AppState,
-    path: &str,
-) -> CommandResult<(yara_core::Import, std::collections::HashSet<String>)> {
-    let text = std::fs::read_to_string(path).map_err(|_| "could not read that file".to_string())?;
-    let import = yara_core::from_proton_authenticator(&text).map_err(to_message)?;
+fn checked_import_edits(
+    edits: Vec<ImportEdit>,
+) -> CommandResult<std::collections::HashMap<usize, ImportEdit>> {
+    let mut checked = std::collections::HashMap::new();
+    for mut edit in edits {
+        edit.name = edit.name.trim().to_string();
+        if edit.name.is_empty() {
+            return Err("every imported item needs a name".into());
+        }
+        edit.folder = edit
+            .folder
+            .take()
+            .and_then(|folder| (!folder.trim().is_empty()).then(|| folder.trim().to_string()));
+        let index = edit.index;
+        if checked.insert(index, edit).is_some() {
+            return Err("the import contains the same edit more than once".into());
+        }
+    }
+    Ok(checked)
+}
 
-    let existing = state.with_vault(|vault| {
-        Ok(vault
-            .items()
-            .iter()
-            .filter_map(|item| item.totp.as_ref())
-            .map(|totp| totp.secret.expose().to_string())
-            .collect::<std::collections::HashSet<_>>())
-    })?;
+fn apply_import_edit(
+    item: &mut Item,
+    index: usize,
+    edits: &std::collections::HashMap<usize, ImportEdit>,
+) {
+    let Some(edit) = edits.get(&index) else {
+        return;
+    };
+    item.name.clone_from(&edit.name);
+    item.folder.clone_from(&edit.folder);
+}
 
-    Ok((import, existing))
+enum ImportFile {
+    Authenticator(yara_core::Import),
+    ProtonPass(yara_core::ItemImport),
+}
+
+struct ReadImport {
+    file: ImportFile,
+    file_token: String,
+}
+
+/// Detects the export by both extension and header. The header path means a
+/// `.csv` renamed to `.txt` still imports, while an arbitrary text file cannot
+/// be mistaken for a password export merely because of its name.
+fn read_import(path: &str) -> CommandResult<ReadImport> {
+    // The export is plaintext credentials. Wipe the complete input buffer as
+    // soon as parsing finishes instead of waiting for allocator reuse.
+    let text = zeroize::Zeroizing::new(
+        std::fs::read_to_string(path).map_err(|_| "could not read that file".to_string())?,
+    );
+    let file_token = import_file_token(&text);
+    let header = text
+        .trim_start_matches('\u{feff}')
+        .lines()
+        .next()
+        .unwrap_or_default();
+    let csv_header =
+        header.starts_with("type,") && header.split(',').any(|part| part == "password");
+    let csv_extension = std::path::Path::new(path)
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("csv"));
+
+    if csv_header || csv_extension {
+        let file = yara_core::from_proton_pass(&text)
+            .map(ImportFile::ProtonPass)
+            .map_err(to_message)?;
+        return Ok(ReadImport { file, file_token });
+    }
+
+    let file = yara_core::from_proton_authenticator(&text)
+        .map(ImportFile::Authenticator)
+        .map_err(to_message)?;
+    Ok(ReadImport { file, file_token })
+}
+
+fn import_file_token(text: &str) -> String {
+    use sha2::Digest as _;
+    format!("{:x}", sha2::Sha256::digest(text.as_bytes()))
+}
+
+fn problems(skipped: &[yara_core::Skipped]) -> Vec<ImportProblem> {
+    skipped
+        .iter()
+        .map(|problem| ImportProblem {
+            name: problem.name.clone(),
+            reason: problem.reason.clone(),
+        })
+        .collect()
+}
+
+/// The identity of an imported credential, without ids, timestamps, notes or
+/// filing choices. Re-importing the same export stays idempotent even after the
+/// user moves an item or annotates it inside Yara. A note-only item has no
+/// credential-bearing identity, so its encrypted note joins the comparison.
+fn same_import_item(held: &Item, candidate: &Item) -> bool {
+    let credential_bearing = candidate.username.is_some()
+        || candidate.password.is_some()
+        || candidate.url.is_some()
+        || candidate.totp.is_some()
+        || !candidate.fields.is_empty();
+
+    held.name == candidate.name
+        && held.kind == candidate.kind
+        && held.username == candidate.username
+        && held.password == candidate.password
+        && held.url == candidate.url
+        && held.totp == candidate.totp
+        && held.fields == candidate.fields
+        && (credential_bearing || held.notes == candidate.notes)
 }
 
 // ---- sync --------------------------------------------------------------
@@ -1559,5 +1769,82 @@ mod tests {
         state.clear();
 
         assert!(!lock_on_reload(&state));
+    }
+
+    #[test]
+    fn reimporting_a_credential_ignores_notes_and_filing_changes() {
+        let mut held = Item::new("GitHub")
+            .with_username("me")
+            .with_password("hunter2");
+        held.notes = Some("annotated inside Yara".into());
+        held.folder = Some("Work".into());
+
+        let mut incoming = Item::new("GitHub")
+            .with_username("me")
+            .with_password("hunter2");
+        incoming.notes = Some("the old exported note".into());
+        incoming.folder = Some("Proton".into());
+
+        assert!(same_import_item(&held, &incoming));
+    }
+
+    #[test]
+    fn a_changed_password_is_not_hidden_as_a_duplicate() {
+        let held = Item::new("GitHub").with_username("me").with_password("old");
+        let incoming = Item::new("GitHub").with_username("me").with_password("new");
+
+        assert!(!same_import_item(&held, &incoming));
+    }
+
+    #[test]
+    fn note_only_items_compare_their_encrypted_note() {
+        let mut held = Item::new("Recovery codes").with_kind(ItemKind::Note);
+        held.notes = Some("one two three".into());
+        let mut same = Item::new("Recovery codes").with_kind(ItemKind::Note);
+        same.notes = Some("one two three".into());
+        let mut changed = Item::new("Recovery codes").with_kind(ItemKind::Note);
+        changed.notes = Some("four five six".into());
+
+        assert!(same_import_item(&held, &same));
+        assert!(!same_import_item(&held, &changed));
+    }
+
+    #[test]
+    fn import_edits_change_only_the_reviewable_metadata() {
+        let edits = checked_import_edits(vec![ImportEdit {
+            index: 4,
+            name: "  Renamed login  ".into(),
+            folder: Some("  Personal  ".into()),
+        }])
+        .unwrap();
+        let mut item = Item::new("Original")
+            .with_username("me")
+            .with_password("still secret");
+
+        apply_import_edit(&mut item, 4, &edits);
+
+        assert_eq!(item.name, "Renamed login");
+        assert_eq!(item.folder.as_deref(), Some("Personal"));
+        assert_eq!(item.username.as_deref(), Some("me"));
+        assert_eq!(item.password.as_ref().unwrap().expose(), "still secret");
+    }
+
+    #[test]
+    fn an_import_edit_cannot_erase_the_name() {
+        let result = checked_import_edits(vec![ImportEdit {
+            index: 0,
+            name: "   ".into(),
+            folder: None,
+        }]);
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn changing_the_export_changes_its_confirmation_token() {
+        assert_ne!(
+            import_file_token("the reviewed export"),
+            import_file_token("a replacement export")
+        );
     }
 }

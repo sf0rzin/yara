@@ -376,23 +376,35 @@ export interface ImportProblem {
   reason: string;
 }
 
+export interface ImportCandidate {
+  index: number;
+  name: string;
+  folder: string | null;
+}
+
+export type ImportEdit = ImportCandidate;
+
 /**
  * What an import would do, before it does any of it.
  *
- * Names only. No seed crosses the IPC boundary at any point — the codes are
- * parsed in the backend and written straight into the vault.
+ * Editable names and folders plus non-secret reasons only. Passwords, card
+ * data, notes and 2FA seeds stay in the backend.
  */
 export interface ImportPreview {
-  ready: string[];
+  source: "protonAuthenticator" | "protonPass";
+  fileToken: string;
+  ready: ImportCandidate[];
   duplicates: string[];
   skipped: ImportProblem[];
+  warnings: ImportProblem[];
 }
 
 export const previewImport = (path: string) =>
   invoke<ImportPreview>("preview_import", { path });
 
 /** Returns how many items were added. */
-export const runImport = (path: string) => invoke<number>("run_import", { path });
+export const runImport = (path: string, expectedFileToken: string, edits: ImportEdit[]) =>
+  invoke<number>("run_import", { path, expectedFileToken, edits });
 
 export interface SyncStatus {
   enrolled: boolean;
