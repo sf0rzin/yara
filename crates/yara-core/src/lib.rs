@@ -22,6 +22,7 @@
 
 pub mod account;
 pub mod crypto;
+mod csv;
 pub mod error;
 pub mod generate;
 pub mod health;
@@ -36,7 +37,10 @@ pub use crypto::{KdfParams, Key, Sealed};
 pub use error::{Error, Result};
 pub use generate::Recipe;
 pub use health::Strength;
-pub use import::{from_proton_authenticator, Import, Imported, Skipped};
+pub use import::{
+    from_bitwarden_csv, from_chrome_csv, from_csv, from_proton_authenticator, Import, Imported,
+    Skipped,
+};
 pub use qr::decode_enrollment;
 pub use secret::SecretString;
 pub use totp::{TotpAlgorithm, TotpConfig};

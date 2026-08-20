@@ -1237,8 +1237,12 @@ fn set_auto_lock_seconds(
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ImportPreview {
-    /// Names only. No seed crosses the IPC boundary at any point: the codes
-    /// are parsed, held in the backend, and written straight into the vault.
+    /// What the file was read as — "Proton Authenticator", "Chrome" or
+    /// "Bitwarden" — so the interface can say so before the user confirms.
+    pub format: String,
+    /// Names only. No seed or password crosses the IPC boundary at any
+    /// point: an entry is parsed, held in the backend, and written straight
+    /// into the vault.
     pub ready: Vec<String>,
     /// Already in the vault, matched by seed. Importing twice should not leave
     /// two items generating the same code — the authenticator screen becomes
@@ -1261,9 +1265,10 @@ pub struct ImportProblem {
 /// be skipped — before it happens rather than after.
 #[tauri::command]
 fn preview_import(state: State<'_, Arc<AppState>>, path: String) -> CommandResult<ImportPreview> {
-    let (import, existing) = read_import(&state, &path)?;
+    let (format, import, existing) = read_import(&state, &path)?;
 
     let mut preview = ImportPreview {
+        format: format.to_string(),
         ready: Vec::new(),
         duplicates: Vec::new(),
         skipped: import
@@ -1277,7 +1282,7 @@ fn preview_import(state: State<'_, Arc<AppState>>, path: String) -> CommandResul
     };
 
     for entry in &import.entries {
-        if existing.contains(entry.totp.secret.expose()) {
+        if is_duplicate(entry, &existing) {
             preview.duplicates.push(entry.name.clone());
         } else {
             preview.ready.push(entry.name.clone());
@@ -1290,19 +1295,25 @@ fn preview_import(state: State<'_, Arc<AppState>>, path: String) -> CommandResul
 /// Writes everything the preview called ready.
 #[tauri::command]
 fn run_import(state: State<'_, Arc<AppState>>, path: String) -> CommandResult<usize> {
-    let (import, existing) = read_import(&state, &path)?;
+    let (_format, import, existing) = read_import(&state, &path)?;
 
     let mut added = 0;
     for entry in import.entries {
-        if existing.contains(entry.totp.secret.expose()) {
+        if is_duplicate(&entry, &existing) {
             continue;
         }
 
         let mut item = Item::new(entry.name);
         item.kind = ItemKind::Login;
-        item.username = entry.totp.account.clone();
+        // The export's own username first — a password manager's is a login
+        // name, which is what a scanned TOTP's account rarely is.
+        item.username = entry
+            .username
+            .or_else(|| entry.totp.as_ref().and_then(|totp| totp.account.clone()));
+        item.password = entry.password.map(Into::into);
+        item.url = entry.url;
         item.notes = entry.note.map(Into::into);
-        item.totp = Some(entry.totp);
+        item.totp = entry.totp;
 
         state.with_vault_mut(|vault| Ok(vault.add(item)))?;
         added += 1;
@@ -1314,14 +1325,46 @@ fn run_import(state: State<'_, Arc<AppState>>, path: String) -> CommandResult<us
     Ok(added)
 }
 
+/// Whether an entry's TOTP seed is already held by the vault.
+///
+/// The only signal available: a password-only entry has nothing comparable
+/// to match against, so it is never flagged as a duplicate. Importing the
+/// same password twice creates two items rather than silently merging them,
+/// which is the same trade the seed-based check already made — matching on
+/// name would risk treating two different accounts that share a label as one.
+fn is_duplicate(entry: &yara_core::Imported, existing: &std::collections::HashSet<String>) -> bool {
+    entry
+        .totp
+        .as_ref()
+        .is_some_and(|totp| existing.contains(totp.secret.expose()))
+}
+
 /// Parses the file and collects the seeds already held, so both commands agree
 /// on what counts as a duplicate.
 fn read_import(
     state: &AppState,
     path: &str,
-) -> CommandResult<(yara_core::Import, std::collections::HashSet<String>)> {
+) -> CommandResult<(
+    &'static str,
+    yara_core::Import,
+    std::collections::HashSet<String>,
+)> {
     let text = std::fs::read_to_string(path).map_err(|_| "could not read that file".to_string())?;
-    let import = yara_core::from_proton_authenticator(&text).map_err(to_message)?;
+
+    // JSON-vs-CSV first. A JSON file fed to the CSV path would still be
+    // rejected — its braces and colons will not spell out a Chrome or
+    // Bitwarden header — but the error would quote mangled JSON fragments as
+    // the header it found instead of saying the file is not valid JSON.
+    let sniff = text.trim_start_matches('\u{feff}').trim_start();
+    let (format, import) = if sniff.starts_with('{') {
+        let import = yara_core::from_proton_authenticator(&text).map_err(to_message)?;
+        ("Proton Authenticator", import)
+    } else if let Ok(import) = yara_core::from_chrome_csv(&text) {
+        ("Chrome", import)
+    } else {
+        let import = yara_core::from_bitwarden_csv(&text).map_err(to_message)?;
+        ("Bitwarden", import)
+    };
 
     let existing = state.with_vault(|vault| {
         Ok(vault
@@ -1332,7 +1375,7 @@ fn read_import(
             .collect::<std::collections::HashSet<_>>())
     })?;
 
-    Ok((import, existing))
+    Ok((format, import, existing))
 }
 
 // ---- sync --------------------------------------------------------------

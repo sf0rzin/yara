@@ -25,6 +25,15 @@ pub enum Error {
     #[error("malformed vault: {0}")]
     Malformed(&'static str),
 
+    /// An import that could not be matched to any known format.
+    ///
+    /// Carries the header it actually found rather than a fixed message: the
+    /// person reading this is being asked to explain why their export failed,
+    /// and "could not read that file" tells them nothing they did not already
+    /// know.
+    #[error("{0}")]
+    UnrecognisedFormat(String),
+
     /// A header asking for work nobody's software ever wrote.
     ///
     /// Separate from [`Error::Decrypt`] on purpose, and not an oracle: the KDF
